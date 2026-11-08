@@ -22,9 +22,13 @@ struct SandboxAppDetailView: View {
     @State private var showBrowser = false
     @State private var showShare = false
     @State private var showDeleteConfirm = false
+    /// 已锁定应用的二次确认（与列表页同一口径：锁定只拦破坏性动作）.
+    @State private var showLockedDeleteConfirm = false
     @State private var dataExists = false
     @State private var busy = false
     @State private var resigning = false
+    /// 运行环境判定结果（JIT / JITLess / 不可用）. `nil` = 还没判定完.
+    @State private var runtime: SandboxRuntimeSnapshot?
 
     var body: some View {
         List {
@@ -40,10 +44,27 @@ struct SandboxAppDetailView: View {
         .sheet(isPresented: $showBrowser) { browserSheet }
         .sheet(isPresented: $showShare) { ShareSheet(items: [URL(fileURLWithPath: app.appPath)]) }
         .confirmationDialog("删除 \(app.displayName) 的容器？", isPresented: $showDeleteConfirm, titleVisibility: .visible) {
-            Button("删除容器", role: .destructive) { removeContainer() }
+            Button("删除容器", role: .destructive) {
+                // 锁定项多一道确认：先让这枚退场，隔一帧再抬下一枚，否则系统会吞掉后一枚.
+                if app.isLocked {
+                    Task { @MainActor in
+                        // 400ms > 系统 dialog 退场动画（约 0.3s）：早于此抬起会被前一枚吞掉.
+                        try? await Task.sleep(for: .milliseconds(400))
+                        showLockedDeleteConfirm = true
+                    }
+                } else {
+                    removeContainer()
+                }
+            }
             Button("取消", role: .cancel) {}
         } message: {
             Text("包体与可写目录一起移除，不可恢复.")
+        }
+        .confirmationDialog(lockedDeleteTitle, isPresented: $showLockedDeleteConfirm, titleVisibility: .visible) {
+            Button("仍然删除", role: .destructive) { removeContainer() }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("删除会移除包体与可写目录，不可恢复.")
         }
         .overlay {
             if busy {
@@ -51,6 +72,7 @@ struct SandboxAppDetailView: View {
             }
         }
         .onAppear { refreshDataState() }
+        .task { await loadRuntime() }
         .toastHost()
     }
 
@@ -61,6 +83,7 @@ struct SandboxAppDetailView: View {
     @ViewBuilder
     private var content: some View {
         identitySection
+        statusSection
         storageSection
         notesSection
     }
@@ -86,6 +109,55 @@ struct SandboxAppDetailView: View {
         .rowInList
     }
 
+    /// 运行环境：JIT 是否生效、要不要走 JITLess、有没有开发证书.
+    ///
+    /// 判定本身来自 `SandboxRuntimeStatus.snapshot()`（csops + systemhook 探测 + 证书盘查），
+    /// 这里只负责展示 —— 不给启动按钮：容器内启动还没接（见 `notesCard`）.
+    private var statusSection: some View {
+        Section {
+            statusCard
+        }
+    }
+
+    private var statusCard: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            statusRows
+        }
+        .padding(AppMetrics.cardPadding)
+        .background(RoundedRectangle(cornerRadius: AppRadius.card, style: .continuous)
+                    .fill(AppSurface.card))
+        .rowInList
+    }
+
+    /// 首行小标题 + 模式一行 + 结论一行. 三处的字都取快照自己的字符串，不另写文案.
+    @ViewBuilder
+    private var statusRows: some View {
+        statusHead
+        infoRow("模式", runtime?.mode.label ?? "判定中")
+        if let runtime {
+            AppHairline()
+            statusDetail(runtime.detail)
+        }
+    }
+
+    /// 卡片首行的小标题（与 `notesCard` 同形）：`infoRow` 自带**前置**发丝，
+    /// 没有这一行，卡片顶部会多出一条悬空的线.
+    private var statusHead: some View {
+        Label("运行环境", systemImage: "bolt")
+            .font(AppFont.footnote)
+            .foregroundStyle(.primary)
+            .padding(.bottom, 4)
+    }
+
+    private func statusDetail(_ text: String) -> some View {
+        Text(text)
+            .font(AppFont.caption)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.vertical, 7)
+            .textSelection(.enabled)
+    }
+
     /// 图标 + 名称两行. 单独抽出来让 identityCard 的 body 只剩属性引用.
     private var identityHead: some View {
         HStack(alignment: .center, spacing: 12) {
@@ -95,14 +167,22 @@ struct SandboxAppDetailView: View {
                     .font(AppFont.title3)
                     .foregroundStyle(.primary)
                     .lineLimit(2)
-                Text(app.executable ?? "无主二进制")
-                    .font(AppFont.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                if let executableSubtitle {
+                    Text(executableSubtitle)
+                        .font(AppFont.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
             }
             Spacer(minLength: 8)
         }
         .padding(.bottom, 12)
+    }
+
+    /// 主二进制名只在**与显示名不同**时才出现：同名再写一行就是同一行字重复（真机截图病点）.
+    private var executableSubtitle: String? {
+        guard let executable = app.executable, executable != app.displayName else { return nil }
+        return executable
     }
 
     /// 目录与可写家目录状态.
@@ -114,25 +194,52 @@ struct SandboxAppDetailView: View {
 
     private var storageCard: some View {
         VStack(alignment: .leading, spacing: 0) {
-            pathRow(title: "包体目录", path: app.appPath)
-            AppHairline()
-            pathRow(title: "可写目录", path: dataPathText)
-            AppHairline()
-            HStack(spacing: 8) {
-                Text("可写目录状态")
-                    .font(AppFont.caption)
-                    .foregroundStyle(.secondary)
-                Spacer(minLength: 4)
-                SizePill(text: dataExists ? "已就绪" : "未创建",
-                         tint: dataExists ? AppTheme.success : AppTheme.pending,
-                         level: .compact)
-            }
-            .padding(.vertical, 8)
+            storageRows
         }
         .padding(AppMetrics.cardPadding)
         .background(RoundedRectangle(cornerRadius: AppRadius.card, style: .continuous)
                     .fill(AppSurface.card))
         .rowInList
+    }
+
+    /// 目录两行 + 可写目录状态. 没有可写目录时不给假路径，只给「未创建」徽章.
+    @ViewBuilder
+    private var storageRows: some View {
+        SandboxPathRow(title: "包体目录", path: app.appPath)
+        AppHairline()
+        if let dataPath = app.dataPath {
+            SandboxPathRow(title: "可写目录", path: dataPath)
+            AppHairline()
+            dataStatusRow
+        } else {
+            dataMissingRow
+        }
+    }
+
+    private var dataStatusRow: some View {
+        HStack(spacing: 8) {
+            Text("可写目录状态")
+                .font(AppFont.caption)
+                .foregroundStyle(.secondary)
+            Spacer(minLength: 4)
+            SizePill(text: dataExists ? "已就绪" : "未就绪",
+                     tint: dataExists ? AppTheme.success : AppTheme.pending,
+                     level: .compact)
+        }
+        .padding(.vertical, 8)
+    }
+
+    /// `dataPath == nil` 的空态：不给「Documents/SandboxApps/... （首次启动时创建）」这种
+    /// 假装成路径的句子，只给一行「未创建」徽章.
+    private var dataMissingRow: some View {
+        HStack(spacing: 8) {
+            Text("可写目录")
+                .font(AppFont.caption)
+                .foregroundStyle(.secondary)
+            Spacer(minLength: 4)
+            SizePill(text: "未创建", tint: AppTheme.pending, level: .compact)
+        }
+        .padding(.vertical, 8)
     }
 
     /// 说明收成一行 footnote（改前是三段长文，被底栏盖掉一半）.
@@ -223,8 +330,8 @@ struct SandboxAppDetailView: View {
         return installedAt.formatted(date: .abbreviated, time: .shortened)
     }
 
-    private var dataPathText: String {
-        app.dataPath ?? "Documents/SandboxApps/Data/Application（首次启动时创建）"
+    private var lockedDeleteTitle: String {
+        "「\(app.displayName)」已锁定. 仍要删除容器？"
     }
 
     // MARK: - 组件
@@ -250,22 +357,6 @@ struct SandboxAppDetailView: View {
         }
     }
 
-    /// 路径行：标题在上、等宽路径在下（长路径中间省略，可长按选中复制）.
-    private func pathRow(title: String, path: String) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(title)
-                .font(AppFont.caption)
-                .foregroundStyle(.secondary)
-            Text(path)
-                .font(.system(.caption, design: .monospaced))
-                .lineLimit(2)
-                .truncationMode(.middle)
-                .textSelection(.enabled)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.vertical, 5)
-    }
-
     @ViewBuilder
     private var browserSheet: some View {
         NavigationStack {
@@ -277,6 +368,16 @@ struct SandboxAppDetailView: View {
 
     private func refreshDataState() {
         dataExists = app.hasDataHome
+    }
+
+    /// 判定放后台线程：csops / access / 证书目录各是一次系统调用，不值当占主线程.
+    ///
+    /// 返回值 `SandboxRuntimeSnapshot` 是 Sendable 值类型，不把任何对象搬过 actor 边界.
+    private func loadRuntime() async {
+        let snapshot = await Task.detached(priority: .userInitiated) {
+            SandboxRuntimeStatus.snapshot()
+        }.value
+        runtime = snapshot
     }
 
     private func createDataHome() {
@@ -327,27 +428,20 @@ struct SandboxAppDetailView: View {
         guard !resigning else { return }
         resigning = true
         Task {
-            let outcome = await Task.detached(priority: .userInitiated) {
-                Result { try SandboxResigner.resign(app) }
-            }.value
+            let outcome = await SandboxContainerActions.resign(app)
             resigning = false
-            switch outcome {
-            case .success(let result):
+            if outcome.ok {
                 AppHaptics.success()
-                LoginLogger.shared.log("[完成] 容器重签 \(app.displayName) \(result.summary)")
-                ToastCenter.shared.show(result.summary, seconds: 3.0)
-            case .failure(let error):
-                ToastCenter.shared.show(error.localizedDescription, seconds: 4.4)
+                LoginLogger.shared.log("[完成] 容器重签 \(app.displayName) \(outcome.text)")
             }
+            ToastCenter.shared.show(outcome.text, seconds: outcome.ok ? 3.0 : 4.4)
         }
     }
 
     private func removeContainer() {
         busy = true
         Task {
-            let result = await Task.detached(priority: .userInitiated) {
-                SandboxContainerStore.remove(app)
-            }.value
+            let result = await SandboxContainerActions.remove(app)
             busy = false
             switch result {
             case .removed:
@@ -365,5 +459,54 @@ struct SandboxAppDetailView: View {
                 ToastCenter.shared.show(message, seconds: 4.0)
             }
         }
+    }
+}
+
+// MARK: - 路径行
+
+/// 目录路径一行：标题在上，等宽路径在下.
+///
+/// 路径**单行中间省略**（改前 `lineLimit(2)` + 中间省略，长路径会在第二行折出
+/// 「...pps/Applications/Gnoix.app」这种半截断口）. 右侧复制按钮把整条路径原样写进剪贴板，
+/// 长按仍可选中文本.
+struct SandboxPathRow: View {
+    let title: String
+    let path: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title)
+                .font(AppFont.caption)
+                .foregroundStyle(.secondary)
+            HStack(spacing: 8) {
+                pathText
+                Spacer(minLength: 4)
+                copyButton
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 5)
+    }
+
+    private var pathText: some View {
+        Text(path)
+            .font(.system(.caption, design: .monospaced))
+            .lineLimit(1)
+            .truncationMode(.middle)
+            .textSelection(.enabled)
+    }
+
+    private var copyButton: some View {
+        Button {
+            AppHaptics.tap()
+            UIPasteboard.general.string = path
+            ToastCenter.shared.show("已复制路径")
+        } label: {
+            Image(systemName: "doc.on.doc")
+                .font(AppFont.caption)
+                .foregroundStyle(AppTheme.accent)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("复制路径")
     }
 }

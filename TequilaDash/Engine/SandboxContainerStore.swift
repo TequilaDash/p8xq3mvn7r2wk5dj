@@ -33,6 +33,10 @@ struct SandboxApp: Identifiable, Hashable, Sendable {
     let dataPath: String?          // .../Data/Application/<UUID>，首次启动才建
     let installedAt: Date?
     let sizeBytes: Int64
+    /// 锁定：删除容器前必须先过一道确认（LCAppInfo.isLocked 同口径）.
+    let isLocked: Bool
+    /// 隐藏：锁定的**子选项**（LCAppSettingsView:220-231）—— `isHidden` 为真时 `isLocked` 必为真.
+    let isHidden: Bool
 
     var sizeText: String { IPADownloadLibrary.sizeText(sizeBytes) }
 
@@ -47,11 +51,19 @@ struct SandboxApp: Identifiable, Hashable, Sendable {
 ///
 /// 原则同 ImportedPackageList：能扫出来的绝不再存一份，存了就必须容忍它缺失 / 损坏
 /// （读不出就当没有，绝不因此让列表变空）。
+///
+/// 锁定 / 隐藏也在这里，因为它们是**磁盘上没有真源的用户开关**：显示名和安装时间还能
+/// 从 Info.plist / 目录日期扫回来，这两个只能由用户点出来，不存就必然丢。
 private struct SandboxRegistry {
     struct Entry {
         var displayName: String?
         var dataUUID: String?
         var installedAt: Date?
+        /// 锁定状态（缺省 = 未锁定）.
+        var isLocked: Bool = false
+        /// 隐藏状态（缺省 = 不隐藏）. 隐藏是锁定的子选项，只能经
+        /// `SandboxContainerStore.setAccess` 写入，由它维持「隐藏 ⇒ 锁定」.
+        var isHidden: Bool = false
     }
 
     var entries: [String: Entry] = [:]
@@ -67,7 +79,9 @@ private struct SandboxRegistry {
             reg.entries[bundleId] = Entry(
                 displayName: dict["displayName"] as? String,
                 dataUUID: dict["dataUUID"] as? String,
-                installedAt: dict["installedAt"] as? Date
+                installedAt: dict["installedAt"] as? Date,
+                isLocked: dict["isLocked"] as? Bool ?? false,
+                isHidden: dict["isHidden"] as? Bool ?? false
             )
         }
         return reg
@@ -80,6 +94,8 @@ private struct SandboxRegistry {
             dict["displayName"] = entry.displayName
             dict["dataUUID"] = entry.dataUUID
             dict["installedAt"] = entry.installedAt
+            dict["isLocked"] = entry.isLocked
+            dict["isHidden"] = entry.isHidden
             apps[bundleId] = dict
         }
         let root: [String: Any] = ["version": 1, "apps": apps]
@@ -151,7 +167,10 @@ enum SandboxContainerStore {
                 appPath: appPath,
                 dataPath: dataPath,
                 installedAt: entry?.installedAt ?? directoryDate(appPath),
-                sizeBytes: directorySize(appPath)
+                sizeBytes: directorySize(appPath),
+                // 隐藏是锁定的子选项：登记里若只有 isHidden（手工改坏的 plist），仍然算锁定.
+                isLocked: (entry?.isLocked ?? false) || (entry?.isHidden ?? false),
+                isHidden: entry?.isHidden ?? false
             ))
         }
         return apps.sorted {
@@ -230,6 +249,25 @@ enum SandboxContainerStore {
         entry.displayName = displayName
         entry.installedAt = installedAt
         registry.entries[bundleId] = entry
+        registry.save(to: registryURL)
+    }
+
+    /// 写入锁定 / 隐藏两个用户开关（只动登记，不碰磁盘）。
+    ///
+    /// 隐藏是锁定的**子选项**（LCAppSettingsView:220-235）：`hidden == true` 时强制
+    /// `locked = true`；解锁则连带清掉隐藏（LC 的 `setLocked(false)` 同口径，解锁前先验身，
+    /// 本仓没有生物识别入口，只由界面上的二次确认承担「确实是本人」这一步）。
+    static func setAccess(for app: SandboxApp, locked: Bool, hidden: Bool) {
+        var registry = SandboxRegistry.load(from: registryURL)
+        var entry = registry.entries[app.id] ?? SandboxRegistry.Entry()
+        if hidden {
+            entry.isHidden = true
+            entry.isLocked = true
+        } else {
+            entry.isHidden = false
+            entry.isLocked = locked
+        }
+        registry.entries[app.id] = entry
         registry.save(to: registryURL)
     }
 
