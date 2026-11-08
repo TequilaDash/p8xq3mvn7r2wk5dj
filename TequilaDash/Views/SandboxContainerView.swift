@@ -838,7 +838,8 @@ struct SandboxAppBanner: View {
         var hue: CGFloat = 0, saturation: CGFloat = 0, brightness: CGFloat = 0, alpha: CGFloat = 0
         average.getHue(&hue, saturation: &saturation, brightness: &brightness, alpha: &alpha)
         if brightness < 0.1 && saturation < 0.1 { return Color(.systemRed) }
-        return Color(hue: hue, saturation: saturation, brightness: max(brightness, 0.3), alpha: 1)
+        // 注意 SwiftUI 的 Color 是 opacity 不是 alpha (UIColor 才用 alpha, run 42483354081 实锤)
+        return Color(hue: hue, saturation: saturation, brightness: max(brightness, 0.3), opacity: 1)
     }
 
     /// 背景 = 主色 50% (LC:159-161); 无图标回落卡片底色.
