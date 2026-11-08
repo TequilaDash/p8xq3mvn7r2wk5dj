@@ -39,6 +39,7 @@ struct SandboxAppSettingsView: View {
         List {
             identitySection
             containerSection
+            networkSection
             lockSection
             actionSection
         }
@@ -216,6 +217,27 @@ struct SandboxAppSettingsView: View {
         )
     }
 
+    // MARK: - 联网管理
+
+    private var netBlockBinding: Binding<Bool> {
+        Binding(
+            get: { UserDefaults.standard.bool(forKey: "TDNetBlock-\(app.id)") },
+            set: { UserDefaults.standard.set($0, forKey: "TDNetBlock-\(app.id)") }
+        )
+    }
+
+    private var networkSection: some View {
+        Section {
+            Toggle(isOn: netBlockBinding) {
+                Text("禁止联网")
+            }
+        } header: {
+            Text("联网管理")
+        } footer: {
+            Text("开启后该容器应用的对外 TCP 连接在启动时被拦截 (connect 返回 EPERM). 重新启动应用后生效.")
+        }
+    }
+
     // MARK: - 操作
 
     private var actionSection: some View {
@@ -378,14 +400,31 @@ struct SandboxAppSettingsView: View {
         dataExists = found?.hasDataHome ?? false
     }
 
-    /// LC 主路启动: 写 LC 键 → 重启自身 → 新进程 main() 分岔进 LiveContainerMain.
+    /// LC 主路启动: 无容器**自动建容器** (LC 首启同款), 有容器直接重启进访客.
     private func launchGuest() {
+        guard !busy else { return }
+        if activeContainer == nil {
+            busy = true
+            Task {
+                await Task.detached(priority: .userInitiated) {
+                    if let fresh = SandboxContainerStore.scan().first(where: { $0.id == app.id }) {
+                        try? SandboxContainerStore.makeDataHome(for: fresh)
+                    }
+                }.value
+                await reloadContainers()
+                busy = false
+                launchGuest()
+            }
+            return
+        }
         guard let uuid = activeContainer else { return }
         AppHaptics.tap()
         let defaults = UserDefaults.standard
         defaults.set((app.appPath as NSString).lastPathComponent, forKey: "selected")
         defaults.set(uuid, forKey: "selectedContainer")
         defaults.set(app.displayName, forKey: "TDLastGuestName")
+        defaults.set(app.id, forKey: "TDLastGuestBundleId")
+        defaults.set(UserDefaults.standard.bool(forKey: "TDNetBlock-\(app.id)"), forKey: "TDGuestNetBlock")
         ToastCenter.shared.show("正在启动 \(app.displayName)…", seconds: 3.0)
         TDLaunchGuestRestart()
     }

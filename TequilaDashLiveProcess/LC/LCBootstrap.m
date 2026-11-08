@@ -523,6 +523,10 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
     if(isLiveProcess) {
         NSURLSCGuestHooksInit();
     }
+    // 联网管理 (本仓功能, LC 没有): 宿主按容器落 TD_NET_BLOCK, 命中即拦访客对外 connect
+    if(getenv("TD_NET_BLOCK") && [getenv("TD_NET_BLOCK") boolValue]) {
+        NetBlockGuestHooksInit();
+    }
     // ignore setting handler from guest app
     litehook_rebind_symbol(LITEHOOK_REBIND_GLOBAL, NSSetUncaughtExceptionHandler, hook_do_nothing, nil);
     
@@ -586,6 +590,9 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
         dlopenBlock();
     }
 
+    if(getenv("TD_NET_BLOCK")) {
+        NetBlockApplyAfterGuestLoad();
+    }
     appExecutableHandle = appHandle;
     const char *dlerr = dlerror();
     

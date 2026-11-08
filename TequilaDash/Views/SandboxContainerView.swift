@@ -579,7 +579,21 @@ struct SandboxContainerView: View {
     /// 照旧进详情页引导建容器; 长按菜单的「详情」入口不变.
     private func launchGuestOrOpenDetail(_ app: SandboxApp) {
         guard let uuid = app.activeContainer else {
-            selectedApp = app
+            // LC 首启同款: 无容器先自动建, 建好再启动 (不把用户甩到管理页).
+            AppHaptics.tap()
+            ToastCenter.shared.show("正在为 \(app.displayName) 创建容器…", seconds: 2.5)
+            Task {
+                await Task.detached(priority: .userInitiated) {
+                    if let fresh = SandboxContainerStore.scan().first(where: { $0.id == app.id }) {
+                        try? SandboxContainerStore.makeDataHome(for: fresh)
+                    }
+                }.value
+                if let fresh = await SandboxContainerStore.scan().first(where: { $0.id == app.id }) {
+                    launchGuestOrOpenDetail(fresh)
+                } else {
+                    selectedApp = app
+                }
+            }
             return
         }
         AppHaptics.tap()
@@ -587,6 +601,8 @@ struct SandboxContainerView: View {
         defaults.set((app.appPath as NSString).lastPathComponent, forKey: "selected")
         defaults.set(uuid, forKey: "selectedContainer")
         defaults.set(app.displayName, forKey: "TDLastGuestName")
+        defaults.set(app.id, forKey: "TDLastGuestBundleId")
+        defaults.set(UserDefaults.standard.bool(forKey: "TDNetBlock-\(app.id)"), forKey: "TDGuestNetBlock")
         ToastCenter.shared.show("正在启动 \(app.displayName)…", seconds: 3.0)
         TDLaunchGuestRestart()
     }

@@ -27,6 +27,25 @@ int main(int argc, char *argv[]) {
         NSString *selected = [defaults stringForKey:@"selected"];
 
         if (selected) {
+            // 防循环守卫: 15 秒内第二次尝试进访客 = 上一次崩了, 清键回壳不变砖.
+            double now = NSProcessInfo.processInfo.systemUptime;
+            double last = [defaults doubleForKey:@"TDGuestBootAt"];
+            if (last > 0 && (now - last) < 15.0) {
+                [defaults removeObjectForKey:@"selected"];
+                [defaults removeObjectForKey:@"selectedContainer"];
+                [defaults removeObjectForKey:@"TDGuestBootAt"];
+                TDHostBoot();
+                return 0;
+            }
+            [defaults setDouble:now forKey:@"TDGuestBootAt"];
+
+            // 联网管理开关 (联网管理页写入, 键随容器)
+            NSString *netBlockKey = [NSString stringWithFormat:@"TDNetBlock-%@", selected];
+            NSString *bundleId = [defaults stringForKey:@"TDLastGuestBundleId"];
+            if (bundleId) netBlockKey = [NSString stringWithFormat:@"TDNetBlock-%@", bundleId];
+            setenv("TD_NET_BLOCK",
+                   [defaults boolForKey:netBlockKey] ? "1" : "0", 1);
+
             // LC_HOME_PATH = SandboxApps 根: 其下 Applications/<name>.app +
             // Data/Application/<UUID> 与 LC 惯例逐层一致 (LCBootstrap docPath 直取).
             NSString *root = [NSHomeDirectory() stringByAppendingPathComponent:@"Documents/SandboxApps"];

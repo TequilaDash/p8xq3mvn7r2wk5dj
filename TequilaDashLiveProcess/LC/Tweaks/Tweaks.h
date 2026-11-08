@@ -13,6 +13,8 @@ void SecItemGuestHooksInit(void);
 void DyldHooksInit(bool hideLiveContainer, bool hookDlopen, uint32_t spoofSDKVersion);
 void NSFMGuestHooksInit(void);
 void NSURLSCGuestHooksInit(void);
+void NetBlockGuestHooksInit(void);
+void NetBlockApplyAfterGuestLoad(void);
 void initDead10ccFix(void);
 void IDFVHookInit(NSUUID* uuid);
 
