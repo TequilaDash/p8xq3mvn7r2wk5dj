@@ -332,3 +332,9 @@ targets:
         OTHER_LDFLAGS:
           - "-framework Foundation"
           - "-framework UIKit"
+        # LC 同款 (LiveContainer.xcodeproj:1910/1952): dyld_bypass_validation.h 的
+        # orig_dyld_* 函数指针是头内暂定定义, Dyld.m 与 dyld_bypass_validation.m 两个 TU
+        # 都 include 它 —— LC 靠 -fcommon 让暂定定义跨 TU 合并 (run 42478527343 实锤
+        # -fno-common 下重复符号). 照抄 LC, 不自创 extern 改写.
+        OTHER_CFLAGS:
+          - "-fcommon"
