@@ -18,6 +18,10 @@
 #include "litehook.h"
 #include "utils.h"
 
+// 本仓适配: 唯一定义点 (头里已改 extern, 见 dyld_bypass_validation.h 注释)
+int (*orig_dyld_fcntl)(int fildes, int cmd, void *param) = 0;
+int (*orig_dyld_mmap)(int fildes, int cmd, void *param) = 0;
+
 static int (*orig_fcntl)(int fildes, int cmd, void *param) = 0;
 
 // Originated from _kernelrpc_mach_vm_protect_trap

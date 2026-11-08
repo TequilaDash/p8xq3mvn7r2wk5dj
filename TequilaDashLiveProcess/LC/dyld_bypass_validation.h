@@ -7,8 +7,11 @@
 static const char mmapSig[] = {0xB0, 0x18, 0x80, 0xD2, 0x01, 0x10, 0x00, 0xD4};
 static const char fcntlSig[] = {0x90, 0x0B, 0x80, 0xD2, 0x01, 0x10, 0x00, 0xD4};
 static const char syscallSig[] = {0x01, 0x10, 0x00, 0xD4};
-int (*orig_dyld_fcntl)(int fildes, int cmd, void *param);
-int (*orig_dyld_mmap)(int fildes, int cmd, void *param);
+// 本仓适配: 原文是头内暂定定义 (无 extern), -fno-common 下多 TU 链接必炸
+// (run 42478527343 实锤: Dyld.o 与 dyld_bypass_validation.o 各一份);
+// 改 extern + 单点定义于 dyld_bypass_validation.m, 链接语义与 LC 等价.
+extern int (*orig_dyld_fcntl)(int fildes, int cmd, void *param);
+extern int (*orig_dyld_mmap)(int fildes, int cmd, void *param);
 
 extern void* __mmap(void *addr, size_t len, int prot, int flags, int fd, off_t offset);
 extern int __fcntl(int fildes, int cmd, void* param);
