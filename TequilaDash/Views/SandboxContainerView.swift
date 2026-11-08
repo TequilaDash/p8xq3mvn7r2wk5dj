@@ -138,6 +138,8 @@ struct SandboxContainerView: View {
     /// 模块页: Tweaks 目录真实清单 + 导入
     @State private var tweakFiles: [String] = []
     @State private var showTweakImporter = false
+    /// 启动重签期间的全页遮罩开关
+    @State private var busy = false
     /// 蜂窝区状态 (设置页 onAppear 从 UserDefaults 同步)
     @State private var cellularEnabled = false
     @State private var cellularMode: CellularTunnelManager.ToggleMode = .auto
@@ -493,8 +495,8 @@ struct SandboxContainerView: View {
                         }
                     }
                     infoRow("版本", Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?")
-                        .onTapGesture { count in
-                            if count >= 5 { developerMode = true }
+                        .onTapGesture(count: 5) {
+                            developerMode = true
                         }
                 } header: {
                     Text("关于")
