@@ -138,6 +138,9 @@ struct SandboxContainerView: View {
     /// 模块页: Tweaks 目录真实清单 + 导入
     @State private var tweakFiles: [String] = []
     @State private var showTweakImporter = false
+    /// 蜂窝区状态 (设置页 onAppear 从 UserDefaults 同步)
+    @State private var cellularEnabled = false
+    @State private var cellularMode: CellularTunnelManager.ToggleMode = .auto
     @State private var deleteTarget: SandboxApp?
     /// 已锁定应用的二次确认目标：第一道确认走 `deleteTarget`，锁定项再走这一道.
     @State private var lockedDeleteTarget: SandboxApp?
