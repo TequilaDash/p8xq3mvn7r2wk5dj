@@ -57,7 +57,8 @@ static NSDictionary *_tdlpRetrievedAppInfo;
 
 - (void)beginRequestWithExtensionContext:(NSExtensionContext *)context {
     _tdlpExtensionContext = context;
-    _tdlpRetrievedAppInfo = context.inputItems.firstObject.userInfo;
+    // id 上不能走点语法 (CI 实锤: property 'userInfo' not found on id), LC 原文也是方括号 (main.m:30)
+    _tdlpRetrievedAppInfo = [context.inputItems.firstObject userInfo];
     // LC 同款 (main.m:32): 控制权交回 LiveProcessMain 等价物
     CFRunLoopStop(CFRunLoopGetMain());
 }
