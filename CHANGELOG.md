@@ -1,3 +1,13 @@
+## [0.3.791] - 2026-11-08
+
+- 沙盒容器.LC 主路启动完整落地：点横幅即启动访客（LC「点 App 即启动」，非多任务路）—— 写 LC 键 → LSApplicationWorkspace 重启自身 → 新进程 main() 分岔进 LiveContainerMain，访客在 TequilaDash 自己的进程里起来（HostGuestEntry.m 双模入口，TequilaDashApp 去 @main、TDHostBoot 拉宿主 UI；访客失败清键回壳不变砖并播报错误）
+
+- 沙盒容器.锁定支持 Face ID：Info.plist 补 NSFaceIDUsageDescription（此前「可免」结论真机证伪 —— 缺该键系统直接落密码锁），.deviceOwnerAuthentication 自动 Face ID 优先、回落密码
+
+- UI.真间距：容器列表页与详情页 List 加 listSectionSpacing(12)，卡片不再互相贴死（owner 截图病点）
+
+- UI.删除「调试: 拉起 LiveProcess 扩展」按钮（自作主张产物，owner 点名清除；扩展多任务链路代码保留备用）
+
 ## [0.3.790] - 2026-11-08
 
 - 沙盒容器.S8 真·跳访客落地：LiveContainer 核心栈**整文件搬运**进扩展 target（LCBootstrap / Dyld / SecItem / NSUserDefaults / NSFileManager / Dead10cc / IDFV / NSURLSession hooks / LCMachOUtils / LCSharedUtils / dyld_bypass_validation 等, 约 3000 行, 不重写只适配），扩展 main.m 收口 userInfo 后直进 LiveContainerMain —— hook 顺序块、NSBundle/CFBundle/ExecPath 覆写、dlopen_nolock、跳进访客 main 全走 LC 原文

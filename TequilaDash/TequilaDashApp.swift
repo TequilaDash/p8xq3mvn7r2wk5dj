@@ -1,13 +1,24 @@
 import SwiftUI
 import UIKit
 
-@main
+// 双模入口 (LC 同款, v0.3.791): 进程入口在 HostGuestEntry.m 的 main() ——
+// 有 LC 的 "selected" 键 = 宿主要求本次启动直接进访客 (LiveContainerMain, 不返回);
+// 没有 = TDHostBoot() 起正常宿主 UI. 所以这里**不再用 @main** (其合成 main 会与
+// HostGuestEntry.m 的 main 重复符号), 宿主 UI 由 TDHostBoot 经 App.main() 拉起.
 struct TequilaDashApp: App {
     init() {
         // 先装崩溃现场记录 —— 越早越好，启动期崩溃也要抓得到.
         // 写 Documents/LoginLogs/crash.log（信号 + 栈帧地址），SSH 可直接 cat.
         CrashGuard.install()
         let previousCrashCount = CrashGuard.previousCrashCount()
+        // 上一次访客启动失败的遗言 (LCBootstrap 写 defaults "error", HostGuestEntry.m
+        // 清键后回壳): 回到宿主 UI 的第一件事就是如实播报, 不让失败无声无息.
+        if let lastError = UserDefaults.standard.string(forKey: "error") {
+            UserDefaults.standard.removeObject(forKey: "error")
+            DispatchQueue.main.async {
+                ToastCenter.shared.show("上次访客启动失败: \(lastError)", seconds: 5.0)
+            }
+        }
         // 注册宿主内置的「模块原生 SwiftUI 界面」.
         // 模块清单（module.json）里 `ui.view` 写的是**注册名**，SwiftUI 视图没法从
         // zip 加载，必须编译进宿主；注册必须在任何 UI 构建之前完成 —— 模块卡片的
@@ -123,4 +134,11 @@ struct TequilaDashApp: App {
                 .tint(AppTheme.accent)
         }
     }
+}
+
+/// C 入口 (HostGuestEntry.m) 的宿主 UI 启动器.
+/// App 协议的 static main() 就是 SwiftUI 的标准启动路径, 与 @main 合成体等价.
+@_cdecl("TDHostBoot")
+func TDHostBoot() {
+    TequilaDashApp.main()
 }

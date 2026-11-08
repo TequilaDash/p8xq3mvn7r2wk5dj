@@ -2,6 +2,11 @@ import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
 
+// LC 主路启动的最后一跳 (Engine/LaunchGuest.m): 重启自身, 重启后的进程在
+// HostGuestEntry.m 的 main() 里看到 "selected" 键即进访客.
+@_silgen_name("TDLaunchGuestRestart")
+private func TDLaunchGuestRestart()
+
 // 沙盒容器 · 列表页（v0.3.785 改版）
 //
 // 用户原话（2026-11-08）：「UI 界面很诡异和别扭，界面也很丑」「这个界面底栏自己独立一个，
@@ -188,6 +193,8 @@ struct SandboxContainerView: View {
             content
         }
         .listStyle(.plain)
+        // 真间距: 与详情页同口径 (卡片之间 12pt, 不再贴死).
+        .listSectionSpacing(12)
         .scrollContentBackground(.hidden)
         .background(AppTheme.surfaceBase)
         .navigationTitle("沙盒容器")
@@ -327,7 +334,7 @@ struct SandboxContainerView: View {
 
     private func banner(_ app: SandboxApp) -> some View {
         SandboxAppBanner(app: app,
-                         onSelect: { openDetail(app) },
+                         onSelect: { launchGuestOrOpenDetail(app) },
                          onOpenData: { dataTarget = app },
                          onShare: { shareTarget = app },
                          onResign: { resign(app) },
@@ -565,6 +572,23 @@ struct SandboxContainerView: View {
             }.value
             await reload()
         }
+    }
+
+    /// LC 主路 (owner 2026-11-08: 「点 App 即启动」, 不是多任务那条): 写 LC 键 →
+    /// 重启自身 → 新进程 main() 分岔进 LiveContainerMain. 无可用容器时不假启动,
+    /// 照旧进详情页引导建容器; 长按菜单的「详情」入口不变.
+    private func launchGuestOrOpenDetail(_ app: SandboxApp) {
+        guard let uuid = app.activeContainer else {
+            selectedApp = app
+            return
+        }
+        AppHaptics.tap()
+        let defaults = UserDefaults.standard
+        defaults.set((app.appPath as NSString).lastPathComponent, forKey: "selected")
+        defaults.set(uuid, forKey: "selectedContainer")
+        defaults.set(app.displayName, forKey: "TDLastGuestName")
+        ToastCenter.shared.show("正在启动 \(app.displayName)…", seconds: 3.0)
+        TDLaunchGuestRestart()
     }
 
     /// 进入已锁定应用的详情页先过本机认证（LC 同位：LCAppListView.swift:540 在启动锁定应用前

@@ -27,8 +27,8 @@ settings:
   base:
     PRODUCT_BUNDLE_IDENTIFIER: com.tequila.dash
     PRODUCT_NAME: TequilaDash
-    MARKETING_VERSION: "0.3.790"
-    CURRENT_PROJECT_VERSION: "1079"
+    MARKETING_VERSION: "0.3.791"
+    CURRENT_PROJECT_VERSION: "1080"
     # 注：这里**刻意不写** `SWIFT_VERSION` —— 实测顶层 `settings.base` 的它**不被 xcodegen 采纳**，
     # 真正生效的是下面 target 层那一份（当前 `"6.0"` = Swift 6 语言模式）。
     # 另注：**编译器版本 ≠ 语言模式** —— CI 用 Xcode 27 自带的 Swift 6.4 编译器，
@@ -187,6 +187,12 @@ targets:
         # 注：IPA 本体被 .gitignore 的 `*.ipa` 忽略，需在打包前物理放入该目录（见其 README.md）。
         type: folder
         buildPhase: resources
+      # LiveContainer 核心栈 (v0.3.790 起与扩展共享): 主 App 的双模入口需要在
+      # 进程内调用 LiveContainerMain 跳访客 (HostGuestEntry.m), 故同一份源码编进两个 target.
+      # 排除 LC/main.c: 那是 LC 主 App 的 -e 入口 (定义 main()), 与本 target 的 HostGuestEntry.m 撞.
+      - path: TequilaDashLiveProcess/LC
+        excludes:
+          - "main.c"
       # litehook / fishhook（v0.3.783）：与 LiveContainer 同源同版本，
       # 只做 dyld_shared_cache 符号解析 / GOT 重绑 / 函数分支改写，无其它依赖。
       # 注意 litehook.c 会 #include "dyld_cache_format.h"，靠上面的 HEADER_SEARCH_PATHS 找到。
@@ -237,6 +243,10 @@ targets:
         # 这里改为用 build setting 直接引用现有文件，绕过该限制。
         INFOPLIST_FILE: Resources/Info.plist
         CODE_SIGN_ENTITLEMENTS: TequilaDash.entitlements
+        # LC 同款 (LiveContainer.xcodeproj:1910/1952): LC/ 源码编进主 target 后,
+        # dyld_bypass_validation.h 的暂定定义同样需要 -fcommon 跨 TU 合并 (run 42478527343 同因).
+        OTHER_CFLAGS:
+          - "-fcommon"
     preBuildScripts:
       # Asspp 本地 SAP 登录（v0.3.323）：拉 Unicorn 源码 + 4 个 Apple SAP 资产，
       # 编出 libunicorn.a 并把 SAPAssets 拷进 bundle。必须在 Link 之前完成。
@@ -271,8 +281,8 @@ targets:
         # 版本号三处同步（HARD-RULES 22）：主 App 的 settings.base 与 Resources/Info.plist 之外，
         # 扩展 target 是第三处 —— 原先这里停在 0.3.587/881（落后主 App 33 个版本），
         # 会让 .appex 的 CFBundleVersion 与主 App 不一致，iOS 安装/升级可拒或把扩展判过期。
-        MARKETING_VERSION: "0.3.790"
-        CURRENT_PROJECT_VERSION: "1079"
+        MARKETING_VERSION: "0.3.791"
+        CURRENT_PROJECT_VERSION: "1080"
         IPHONEOS_DEPLOYMENT_TARGET: "18.0"
         # 与主 target 同口径的 Swift 6 严格并发（详见主 target 的说明）.
         SWIFT_VERSION: "6.0"
@@ -311,8 +321,8 @@ targets:
         PRODUCT_NAME: TequilaDashLiveProcess
         # 版本号三处同步 (HARD-RULES 22): 与 Tunnel 同款纪律, 缺写则 .appex 的 CFBundleVersion 为空,
         # iOS 会因主 App 与扩展版本不一致拒装/判过期.
-        MARKETING_VERSION: "0.3.790"
-        CURRENT_PROJECT_VERSION: "1079"
+        MARKETING_VERSION: "0.3.791"
+        CURRENT_PROJECT_VERSION: "1080"
         IPHONEOS_DEPLOYMENT_TARGET: "18.0"
         SWIFT_VERSION: "6.0"
         SWIFT_STRICT_CONCURRENCY: complete

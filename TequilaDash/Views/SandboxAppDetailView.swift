@@ -1,13 +1,6 @@
 import SwiftUI
 import UIKit
 
-#if DEBUG
-/// S6 调试: 绑定 LiveProcessDebugLauncher.m 的 C 符号（本仓 @_silgen_name 手法, GestaltEngine.swift:20 同款）.
-/// 返回 @"pid=<n>" 或错误描述; 内部同步阻塞最长 10s（信号量等 beginExtensionRequest 回执）.
-@_silgen_name("TequilaDashLiveProcessDebugLaunch")
-private func _tdlpDebugLaunch(_ userInfo: NSDictionary) -> NSString?
-#endif
-
 // 沙盒容器 · 应用详情页（v0.3.784 重做）
 //
 // 用户 2026-11-08 指定参考「应用管理 / 应用信息」那套布局（PiliPlus 截图），并点名
@@ -50,6 +43,9 @@ struct SandboxAppDetailView: View {
             content
         }
         .listStyle(.plain)
+        // 真间距 (owner 2026-11-08 截图病点: 卡片互相贴死): plain List 的 section 间
+        // 默认 0 距, 必须显式给 (iOS 17+ API, 部署目标 18.0).
+        .listSectionSpacing(12)
         .scrollContentBackground(.hidden)
         .background(AppTheme.surfaceBase)
         .navigationTitle(app.displayName)
@@ -121,74 +117,9 @@ struct SandboxAppDetailView: View {
         identitySection
         statusSection
         storageSection
-        #if DEBUG
-        liveProcessDebugSection
-        #endif
         notesSection
     }
 
-#if DEBUG
-    /// S6 调试拉起 LiveProcess 扩展（m5 方案 6.1-S6; 链路实现在 Engine/LiveProcessDebugLauncher.m）.
-    /// 仅 DEBUG 构建可见 —— 验证「扩展进程能起 / 能回 pid / userInfo 能往返」, 不是用户功能.
-    private var liveProcessDebugSection: some View {
-        Section {
-            liveProcessDebugRow
-        }
-    }
-
-    private var liveProcessDebugRow: some View {
-        Button {
-            AppHaptics.tap()
-            launchLiveProcessDebug()
-        } label: {
-            Label("调试: 拉起 LiveProcess 扩展", systemImage: "bolt")
-                .font(AppFont.caption)
-                .foregroundStyle(.primary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.vertical, 7)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-    }
-
-    /// 键名与 TequilaDashLiveProcess/main.m 逐字对齐（六个键, 刻意不用 LC 的命名防串味）.
-    private enum TDLPUserInfoKey {
-        static let hostScheme = "TequilaDashHostScheme"
-        static let guestFolderName = "TequilaDashGuestFolderName"
-        static let guestBundleID = "TequilaDashGuestBundleID"
-        static let containerUUID = "TequilaDashContainerUUID"
-        static let homePath = "TequilaDashHomePath"
-        static let bookmarks = "TequilaDashBookmarks"
-    }
-
-    /// 拉起本身是同步阻塞 ObjC 调用（≤10s）—— 放后台线程, 值都是 Sendable 标量, 不搬 NSDictionary 过界.
-    private func launchLiveProcessDebug() {
-        guard !busy else { return }
-        busy = true
-        let guestFolderName = (app.appPath as NSString).lastPathComponent
-        let guestBundleID = app.id
-        let containerUUID = activeContainer ?? ""
-        // LC_HOME_PATH 基准 = SandboxApps 根 (LCBootstrap docPath 直取),
-        // 其下 Applications/ + Data/Application/ 与 LC 惯例一致.
-        let sandboxRoot = (app.appPath as NSString).deletingLastPathComponent
-        let homePath = containers.first.map { _ in sandboxRoot } ?? sandboxRoot
-        Task {
-            let outcome = await Task.detached(priority: .userInitiated) { () -> String in
-                let userInfo: NSDictionary = [
-                    TDLPUserInfoKey.hostScheme: "TequilaDash",
-                    TDLPUserInfoKey.guestFolderName: guestFolderName,
-                    TDLPUserInfoKey.guestBundleID: guestBundleID,
-                    TDLPUserInfoKey.containerUUID: containerUUID,
-                    TDLPUserInfoKey.homePath: homePath,
-                    TDLPUserInfoKey.bookmarks: NSArray(),
-                ]
-                return (_tdlpDebugLaunch(userInfo) as String?) ?? "无返回"
-            }.value
-            busy = false
-            ToastCenter.shared.show("调试拉起: \(outcome)", seconds: 4.0)
-        }
-    }
-#endif
 
     /// 首卡：大图标 + 名称 + Bundle ID，随后「左标题 / 右灰色值」三行（参考图范式）.
     private var identitySection: some View {
