@@ -844,17 +844,21 @@ jobs:
           fi
           # LiveProcess 扩展（m5 方案 S3）：两个 IPA 都必须带 .appex，且 CFBundleVersion 与主 App 一致，
           # entitlements 文件随包携带 —— 缺一样侧载后扩展就起不来.
+          # 注意比对基准是**构建号**（CFBundleVersion=1077 这类），不是营销号 $VERSION
+          # （run 42474713784 实锤：拿 1077 比 0.3.788 永远不等，BUILD SUCCEEDED 也被校验步拦死）.
+          APP="$(find build -name 'TequilaDash.app' -type d | head -n1)"
+          APPCV="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP/Info.plist" 2>/dev/null || echo '')"
           for IPA in TequilaDash-*.ipa; do
             unzip -p "$IPA" 'Payload/TequilaDash.app/PlugIns/TequilaDashLiveProcess.appex/Info.plist' > /tmp/lp_info.plist 2>/dev/null \
               || { echo "::error::$IPA 缺 PlugIns/TequilaDashLiveProcess.appex"; exit 1; }
             LPV="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' /tmp/lp_info.plist 2>/dev/null || echo '')"
-            if [ "$LPV" != "$VERSION" ]; then
-              echo "::error::$IPA LiveProcess CFBundleVersion=$LPV != $VERSION（扩展与主 App 版本必须一致）"; exit 1
+            if [ "$LPV" != "$APPCV" ]; then
+              echo "::error::$IPA LiveProcess CFBundleVersion=$LPV != 主 App CFBundleVersion=$APPCV（扩展与主 App 版本必须一致）"; exit 1
             fi
             unzip -l "$IPA" | grep -q 'PlugIns/TequilaDashLiveProcess.appex/TequilaDashLiveProcess.entitlements' \
               || { echo "::error::$IPA LiveProcess entitlements 未随包携带"; exit 1; }
           done
-          echo "liveprocess appex OK (both ipas: present + version + entitlements)"
+          echo "liveprocess appex OK (both ipas: present + build-version + entitlements)"
 
       - name: Write promote hash marker
         # 把「本次产物对应的源码 hash」随 IPA artifact 一起上传：tag 触发的 promote job
