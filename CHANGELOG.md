@@ -1,3 +1,11 @@
+## [0.3.795] - 2026-11-08
+
+- 设置页重写为 LCSettingsView 同构：证书节（导入/移除证书 → 证书管理, JITLess 前置）→ 界面节（动态配色, 真连线横幅染色）→ 通知节（清除通知）→ 关于节（LiveContainer 项目链接 + 版本五击进开发者）→ 开发者节（启动忽略 JIT — LCBootstrap checkJITEnabled 真读的键）; 蜂窝区保留（本仓等效 LC 的 JIT 启用器配置）
+
+- 模块页落地：Tweaks 目录（SandboxApps/Tweaks, LC_GLOBAL_TWEAKS_FOLDER 同款）真实 .dylib 清单 + 右上角导入（documentPicker 复制进目录）; 注入装载器（TweakLoader）下一版接入
+
+- 源页诚实化：LC 的源 = AltStore source JSON 管线（浏览+装包），未接入前显示真实说明，不放假列表
+
 ## [0.3.794] - 2026-11-08
 
 - 沙盒容器.启动真启动：无容器时**自动建容器**再启动（LC 首启同款，不再把用户甩到管理页）——修 owner 实测「点启动跳应用管理」

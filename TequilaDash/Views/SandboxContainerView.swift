@@ -63,6 +63,8 @@ struct SandboxAppIconView: View {
     var size: CGFloat = 60
 
     @State private var icon: UIImage?
+    /// LC dynamicColors 键: 关掉时横幅回落卡片底色 (设置页「界面」节真连线).
+    @AppStorage("dynamicColors") var bannerDynamicColors = true
 
     var body: some View {
         Group {
@@ -129,6 +131,13 @@ struct SandboxContainerView: View {
     @State private var showSettings = false
     /// 底栏「源 / 模块」预留页的承载（nil = 不弹）.
     @State private var placeholderSlot: SandboxSlot?
+    /// LC 设置同款键: 动态配色 (横幅染色跟随) / 启动忽略 JIT (LCBootstrap checkJITEnabled 真读)
+    @AppStorage("dynamicColors") var dynamicColors = true
+    @AppStorage("LCIgnoreJITOnLaunch") var ignoreJITOnLaunch = false
+    @State private var developerMode = false
+    /// 模块页: Tweaks 目录真实清单 + 导入
+    @State private var tweakFiles: [String] = []
+    @State private var showTweakImporter = false
     @State private var deleteTarget: SandboxApp?
     /// 已锁定应用的二次确认目标：第一道确认走 `deleteTarget`，锁定项再走这一道.
     @State private var lockedDeleteTarget: SandboxApp?
@@ -172,6 +181,12 @@ struct SandboxContainerView: View {
             .sheet(item: $shareTarget) { app in shareSheet(app) }
             .sheet(isPresented: $showSettings) { settingsSheet }
             .sheet(item: $placeholderSlot) { slot in slotSheet(slot) }
+            .sheet(isPresented: $showTweakImporter) {
+                documentPicker(isPresented: $showTweakImporter,
+                               allowedTypes: [UTType(filenameExtension: "dylib") ?? .data]) { urls in
+                    importTweaks(urls)
+                }
+            }
             .confirmationDialog(lockedDeletePromptText, isPresented: lockedDeleteBinding,
                                 titleVisibility: .visible) {
                 Button("仍然删除", role: .destructive) {
@@ -412,27 +427,191 @@ struct SandboxContainerView: View {
 
     /// 设置页：只放**真能生效**的一项 —— 列表排序. 改前这里是「设置待接入」空态，
     /// 换成排序选择器，不放假开关.
+    /// 设置页: LCSettingsView 同构 (证书 → 界面 → 通知 → 关于 → 开发者),
+    /// 蜂窝区 = 本仓等效 LC 的 JIT 启用器配置; 排序留底部 (列表页设置).
     private var settingsSheet: some View {
         NavigationStack {
             List {
+                Section {
+                    NavigationLink {
+                        CertificateView()
+                    } label: {
+                        Text(UserDefaults.standard.string(forKey: "LCCertificatePassword") != nil
+                             ? "查看 / 移除证书" : "导入证书 (JITLess 需要)")
+                    }
+                } header: {
+                    Text("证书 (JITLess)")
+                } footer: {
+                    Text("iOS 26 起无 JIT 必须走 JITLess: 导入 p12 开发证书后, 访客以重签+钩子方式运行.")
+                }
+                Section {
+                    Toggle("蜂窝隧道支持", isOn: $cellularEnabled)
+                        .onChange(of: cellularEnabled) { newValue in
+                            UserDefaults.standard.set(newValue, forKey: CellularTunnelManager.enabledKey)
+                        }
+                    if cellularEnabled {
+                        Picker("关蜂窝方式", selection: $cellularMode) {
+                            ForEach(CellularTunnelManager.ToggleMode.allCases, id: \.self) { mode in
+                                Text(mode.label).tag(mode)
+                            }
+                        }
+                        .onChange(of: cellularMode) { newValue in
+                            CellularTunnelManager.shared.toggleMode = newValue
+                        }
+                    }
+                } header: {
+                    Text("蜂窝网络")
+                } footer: {
+                    Text("蜂窝下使用本地隧道需开此开关 (本仓等效 LC 的 JIT 启用器配置).")
+                }
+                Section {
+                    Toggle("动态配色", isOn: $dynamicColors)
+                } header: {
+                    Text("界面")
+                } footer: {
+                    Text("横幅背景与应用图标主色联动 (LCAppBannerView 的 dynamicColors 同款).")
+                }
+                Section {
+                    Button {
+                        AppHaptics.tap()
+                        UNUserNotificationCenter.current().removeAllDeliveredNotifications()
+                        ToastCenter.shared.show("已清除通知", seconds: 2.0)
+                    } label: {
+                        Text("清除通知")
+                    }
+                }
+                Section {
+                    HStack {
+                        Image(systemName: "link")
+                        Button("LiveContainer/LiveContainer") {
+                            if let url = URL(string: "https://github.com/LiveContainer/LiveContainer") {
+                                UIApplication.shared.open(url)
+                            }
+                        }
+                    }
+                    infoRow("版本", Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?")
+                        .onTapGesture { count in
+                            if count >= 5 { developerMode = true }
+                        }
+                } header: {
+                    Text("关于")
+                } footer: {
+                    Text("沙盒容器基于 LiveContainer (GPL) 移植.")
+                }
+                if developerMode {
+                    Section {
+                        Toggle("启动 App 时忽略 JIT 检查", isOn: $ignoreJITOnLaunch)
+                    } header: {
+                        Text("开发者")
+                    } footer: {
+                        Text("LCBootstrap 的 checkJITEnabled 读取本键; 供 JITLess 调试.")
+                    }
+                }
                 sortSection
             }
             .listStyle(.plain)
+            .listSectionSpacing(12)
             .scrollContentBackground(.hidden)
             .background(AppTheme.surfaceBase)
             .navigationTitle("设置")
             .navigationBarTitleDisplayMode(.inline)
+            .onAppear {
+                cellularEnabled = UserDefaults.standard.bool(forKey: CellularTunnelManager.enabledKey)
+                cellularMode = CellularTunnelManager.shared.toggleMode
+            }
         }
     }
 
-    /// 源 / 模块的预留页：只写「预留中」一件事，不放假开关（与设置页同一空态范式）.
+    private func infoRow(_ label: String, _ value: String) -> some View {
+        HStack {
+            Text(label).font(AppFont.caption).foregroundStyle(.secondary)
+            Spacer(minLength: 4)
+            Text(value).font(AppFont.caption).foregroundStyle(.primary)
+        }
+    }
+
+    /// Tweaks 目录 = SandboxApps/Tweaks (LCBootstrap docPath/Tweaks 同款, 已 setenv 挂给访客).
+    private var tweaksDirectory: URL {
+        URL(fileURLWithPath: NSHomeDirectory())
+            .appendingPathComponent("Documents/SandboxApps/Tweaks", isDirectory: true)
+    }
+
+    private func reloadTweaks() {
+        let dir = tweaksDirectory
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
+        tweakFiles = names.filter { $0.hasSuffix(".dylib") }.sorted()
+    }
+
+    private func importTweaks(_ urls: [URL]) {
+        let fm = FileManager.default
+        try? fm.createDirectory(at: tweaksDirectory, withIntermediateDirectories: true)
+        for url in urls {
+            let dest = tweaksDirectory.appendingPathComponent(url.lastPathComponent)
+            try? fm.removeItem(at: dest)
+            try? fm.copyItem(at: url, to: dest)
+        }
+        reloadTweaks()
+        ToastCenter.shared.show("已导入 \(urls.count) 个模块", seconds: 2.6)
+    }
+
+    /// 源 / 模块页: 模块 = Tweaks 目录真实清单 (LC_GLOBAL_TWEAKS_FOLDER 同款路径);
+    /// 源 = LC 的 AltStore 源机制, 需下载管线, 诚实说明不放假列表.
+    @ViewBuilder
     private func slotSheet(_ slot: SandboxSlot) -> some View {
+        if slot == .modules {
+            modulesSheet
+        } else {
+            sourcesSheet
+        }
+    }
+
+    /// 模块页: SandboxApps/Tweaks/*.dylib 真实目录清单 + 导入.
+    private var modulesSheet: some View {
         NavigationStack {
             List {
                 Section {
-                    AppStateSection(state: .empty(slot.emptyTitle,
-                                                  message: slot.message,
-                                                  icon: slot.symbol),
+                    if tweakFiles.isEmpty {
+                        Text("暂无模块. 点右上角导入 .dylib, 文件按 LC 约定落入全局 Tweaks 目录.")
+                            .font(AppFont.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    ForEach(tweakFiles, id: \.self) { name in
+                        Label(name, systemImage: "puzzlepiece.extension")
+                    }
+                } header: {
+                    Text("全局模块 (Tweaks)")
+                } footer: {
+                    Text("目录: Documents/SandboxApps/Tweaks (LC_GLOBAL_TWEAKS_FOLDER 同款, 已挂给访客). dylib 注入装载器 (TweakLoader) 下一版接入.")
+                }
+            }
+            .listStyle(.plain)
+            .listSectionSpacing(12)
+            .scrollContentBackground(.hidden)
+            .background(AppTheme.surfaceBase)
+            .navigationTitle("模块")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button {
+                        AppHaptics.tap()
+                        showTweakImporter = true
+                    } label: {
+                        Image(systemName: "square.and.arrow.down")
+                    }
+                }
+            }
+        }
+        .onAppear { reloadTweaks() }
+    }
+
+    /// 源页: LC 的源 = AltStore source JSON (浏览+装包管线), 本仓还没有该管线 —— 诚实说明.
+    private var sourcesSheet: some View {
+        NavigationStack {
+            List {
+                Section {
+                    AppStateSection(state: .empty("源功能管线接入中",
+                                                  message: "LC 的「源」= AltStore source JSON (远程应用清单 + 下载安装). 该管线依赖下载与装包链路, 接入后此处列出源并可直接装包到容器.",
+                                                  icon: "shippingbox"),
                                     wrapsSection: false)
                         .padding(.vertical, 12)
                         .rowInList
@@ -441,7 +620,7 @@ struct SandboxContainerView: View {
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
             .background(AppTheme.surfaceBase)
-            .navigationTitle(slot.title)
+            .navigationTitle("源")
             .navigationBarTitleDisplayMode(.inline)
         }
     }
@@ -857,14 +1036,14 @@ struct SandboxAppBanner: View {
         return Color(hue: hue, saturation: saturation, brightness: max(brightness, 0.3), opacity: 1)
     }
 
-    /// 背景 = 主色 50% (LC:159-161); 无图标回落卡片底色.
+    /// 背景 = 主色 50% (LC:159-161); 无图标或关掉动态配色回落卡片底色.
     private var bannerBackground: Color {
-        icon == nil ? AppSurface.card : bannerHue.opacity(0.5)
+        (icon == nil || !bannerDynamicColors) ? AppSurface.card : bannerHue.opacity(0.5)
     }
 
     /// 启动钮 = 主色满色 (LC:162-167 的 accentColor 满色底).
     private var runColor: Color {
-        icon == nil ? AppTheme.accent : bannerHue
+        (icon == nil || !bannerDynamicColors) ? AppTheme.accent : bannerHue
     }
 
     /// 可读文字色 (LC readableTextColor.swift:230-260 同算法: 主色与系统底色对半混, 按亮度 ±0.4).
