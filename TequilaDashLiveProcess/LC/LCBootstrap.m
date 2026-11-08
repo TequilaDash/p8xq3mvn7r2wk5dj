@@ -524,7 +524,8 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
         NSURLSCGuestHooksInit();
     }
     // 联网管理 (本仓功能, LC 没有): 宿主按容器落 TD_NET_BLOCK, 命中即拦访客对外 connect
-    if(getenv("TD_NET_BLOCK") && [getenv("TD_NET_BLOCK") boolValue]) {
+    const char *netBlockEnv = getenv("TD_NET_BLOCK");
+    if(netBlockEnv && netBlockEnv[0] == '1') {
         NetBlockGuestHooksInit();
     }
     // ignore setting handler from guest app
