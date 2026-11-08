@@ -27,8 +27,8 @@ settings:
   base:
     PRODUCT_BUNDLE_IDENTIFIER: com.tequila.dash
     PRODUCT_NAME: TequilaDash
-    MARKETING_VERSION: "0.3.787"
-    CURRENT_PROJECT_VERSION: "1076"
+    MARKETING_VERSION: "0.3.788"
+    CURRENT_PROJECT_VERSION: "1077"
     # 注：这里**刻意不写** `SWIFT_VERSION` —— 实测顶层 `settings.base` 的它**不被 xcodegen 采纳**，
     # 真正生效的是下面 target 层那一份（当前 `"6.0"` = Swift 6 语言模式）。
     # 另注：**编译器版本 ≠ 语言模式** —— CI 用 Xcode 27 自带的 Swift 6.4 编译器，
@@ -132,6 +132,10 @@ targets:
       # embed 默认为 true（依赖方是 application），显式写出以自证意图；XcodeGen 会据此
       # 生成 "Embed App Extensions" 阶段，把 TequilaDashTunnel.appex 拷进 TequilaDash.app/PlugIns/.
       - target: TequilaDashTunnel
+        embed: true
+      # 访客进程宿主扩展（m5 方案 S2）：与 Tunnel 同款嵌入 PlugIns/；本阶段产物不被调用，
+      # 由调试入口（LiveProcessDebugLauncher）按需拉起验证链路.
+      - target: TequilaDashLiveProcess
         embed: true
     sources:
       # 模块原生 UI 源码（生成目录，见 TequilaDash/Modules/README.md）——
@@ -267,8 +271,8 @@ targets:
         # 版本号三处同步（HARD-RULES 22）：主 App 的 settings.base 与 Resources/Info.plist 之外，
         # 扩展 target 是第三处 —— 原先这里停在 0.3.587/881（落后主 App 33 个版本），
         # 会让 .appex 的 CFBundleVersion 与主 App 不一致，iOS 安装/升级可拒或把扩展判过期。
-        MARKETING_VERSION: "0.3.787"
-        CURRENT_PROJECT_VERSION: "1076"
+        MARKETING_VERSION: "0.3.788"
+        CURRENT_PROJECT_VERSION: "1077"
         IPHONEOS_DEPLOYMENT_TARGET: "18.0"
         # 与主 target 同口径的 Swift 6 严格并发（详见主 target 的说明）.
         SWIFT_VERSION: "6.0"
@@ -279,3 +283,49 @@ targets:
         # 扩展只用到 NetworkExtension，显式链接（对齐主 target 的写法）.
         OTHER_LDFLAGS:
           - "-framework NetworkExtension"
+
+  # 访客进程宿主扩展: LiveContainer 的 LiveProcess 等价物 (方案 C:/Users/xcrad/.omp/work/reports/m5-extension-target-plan.md).
+  # 职责: 提供一个入口早于 UIKit 的独立进程, 在其中装 hook 并跳进访客 main (S8).
+  # 边界: 不承载 UI, 不承载容器目录管理 (那是 Engine/SandboxContainerStore.swift 的事).
+  # 源码必须在 TequilaDash/ 之外 (方案 2.3b): 主 target 的 sources 是递归 path: TequilaDash,
+  # main.m 放进去会被主 App 也编一遍, 主二进制多出 UIApplicationMain/NSExtensionMain 重定义 = 链接炸.
+  TequilaDashLiveProcess:
+    type: app-extension
+    platform: iOS
+    sources:
+      # 本目录只有 main.m (Info.plist / entitlements 由下方键直取, 不当资源).
+      - path: TequilaDashLiveProcess
+      # 复用主 App 已有的 C 底座, 逐个文件列, 不列目录 (方案 2.2: 列 Engine/ 会把整棵 Swift 树编进扩展).
+      - path: TequilaDash/Engine/EscHookBridge.c
+      - path: TequilaDash/Services/MachOLoader/uloader.c
+      - path: vendor/litehook/src
+      - path: vendor/fishhook
+        excludes:
+          - "LICENSE"
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.tequila.dash.liveprocess
+        PRODUCT_NAME: TequilaDashLiveProcess
+        # 版本号三处同步 (HARD-RULES 22): 与 Tunnel 同款纪律, 缺写则 .appex 的 CFBundleVersion 为空,
+        # iOS 会因主 App 与扩展版本不一致拒装/判过期.
+        MARKETING_VERSION: "0.3.788"
+        CURRENT_PROJECT_VERSION: "1077"
+        IPHONEOS_DEPLOYMENT_TARGET: "18.0"
+        SWIFT_VERSION: "6.0"
+        SWIFT_STRICT_CONCURRENCY: complete
+        SWIFT_APPROACHABLE_CONCURRENCY: "YES"
+        CLANG_ENABLE_OBJC_ARC: "YES"
+        INFOPLIST_FILE: TequilaDashLiveProcess/Info.plist
+        CODE_SIGN_ENTITLEMENTS: TequilaDashLiveProcess/TequilaDashLiveProcess.entitlements
+        # 扩展要够到宿主 App 的 Frameworks/: 第二项是 LC 同款 (LiveProcess 的 LD_RUNPATH_SEARCH_PATHS).
+        # 缺它则后续 dlopen 宿主 framework 失败.
+        LD_RUNPATH_SEARCH_PATHS:
+          - "$(inherited)"
+          - "@executable_path/Frameworks"
+          - "@executable_path/../../Frameworks"
+        # 必须整段覆盖且**不带** $(inherited) (方案 2.3a): 顶层的 libunicorn.a 由主 target 的
+        # preBuildScript 产出到主 target 自己的 DERIVED_FILE_DIR, 扩展没这个脚本, 继承 = 链接失败.
+        # Tunnel 就是这样活下来的, 照抄.
+        OTHER_LDFLAGS:
+          - "-framework Foundation"
+          - "-framework UIKit"

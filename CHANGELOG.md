@@ -1,3 +1,13 @@
+## [0.3.788] - 2026-11-08
+
+- 沙盒容器.新增访客进程宿主扩展 TequilaDashLiveProcess（LiveContainer LiveProcess 等价物，m5 方案 S1-S6）：app-extension target + 完整手写 Info.plist（com.apple.ar.viewer 扩展点 / 应用型 XPC 多实例 / 宿主级后台模式与权限文案）+ entitlements 随包携带
+
+- 沙盒容器.扩展入口骨架就位：NSExtensionMain / UIApplicationMain 替身（照 LC main.m 同形）、NSXPCDecoder 校验旁路、extension request 处理类；本阶段不跳访客（dyld 内部 dlopen hook 为 S8 前置缺口，已在方案登记）
+
+- 沙盒容器.主 App 新增 URL scheme（CFBundleURLTypes[0] = TequilaDash，宿主身份判定铺路）；CI 打包校验 .appex 存在且 CFBundleVersion 与主 App 一致
+
+- 沙盒容器.调试入口（仅 DEBUG 构建）：沙盒容器详情页一键拉起 LiveProcess 扩展并取回 pid，验证宿主↔扩展链路
+
 ## [0.3.787] - 2026-11-08
 
 - 沙盒容器.底栏三槽定为「设置 / 源 / 模块」：刷新挪到右上角与导入并列，回主页改为左上返回键；源与模块先给预留入口（诚实空态，不放假开关）

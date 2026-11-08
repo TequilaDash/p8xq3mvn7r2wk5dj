@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	  TequilaDash 访客进程宿主扩展 (.appex) 的签名配置.
+
+	  本阶段 (m5 方案 S1-S6) 只带 get-task-allow, 与主 App 的 TequilaDash.entitlements 同最小口径.
+	  app-groups / keychain-access-groups 按方案第 4 节是「阶段 2 起」的必选项 —— 依赖用户 profile
+	  里注册的 App Group (免费账号做不到 128 组, 降级方案 = 只注册 1 组, 届时在这里追加,
+	  并与主 App 的 entitlements 成对维护, 否则扩展读不到宿主写下的启动参数).
+
+	  本文件随 .appex 携带进两个 IPA (build-xcode.yml 打包步), 供侧载工具施加.
+	-->
+	<key>get-task-allow</key>
+	<true/>
+</dict>
+</plist>

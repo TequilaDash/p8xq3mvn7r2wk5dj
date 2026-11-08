@@ -111,6 +111,19 @@
 		     scheme 返回 false，故必须在此登记，否则关/开蜂窝那步静默失败. -->
 		<string>shortcuts</string>
 	</array>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.tequila.dash.urlscheme</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<!-- 主 App 的 [0][0] = 宿主身份 scheme (m5 方案 5.1): LiveProcessDebugLauncher 与
+				     将来的 LCBootstrap 等价代码都读 [0][0]; 不能是 liveprocess 系, 否则判定翻转. -->
+				<string>TequilaDash</string>
+			</array>
+		</dict>
+	</array>
 	<key>CFBundleIdentifier</key>
 	<string>com.tequila.dash</string>
 	<key>CFBundleInfoDictionaryVersion</key>
@@ -124,9 +137,9 @@
 		<string>iPhoneOS</string>
 	</array>
 	<key>CFBundleShortVersionString</key>
-	<string>0.3.787</string>
+	<string>0.3.788</string>
 	<key>CFBundleVersion</key>
-	<string>1076</string>
+	<string>1077</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>ITSAppUsesNonExemptEncryption</key>
