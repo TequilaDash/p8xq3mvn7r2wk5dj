@@ -2,10 +2,7 @@ import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
 
-// LC 主路启动的最后一跳 (Engine/LaunchGuest.m): 重启自身, 重启后的进程在
-// HostGuestEntry.m 的 main() 里看到 "selected" 键即进访客.
-@_silgen_name("TDLaunchGuestRestart")
-private func TDLaunchGuestRestart()
+// TDLaunchGuestRestart 的全仓唯一 @_silgen_name 声明在 SandboxAppSettingsView.swift (防重复符号).
 
 // 沙盒容器 · 列表页（v0.3.785 改版）
 //
@@ -204,7 +201,9 @@ struct SandboxContainerView: View {
         .safeAreaInset(edge: .bottom, spacing: 0) { listBar }
         .toolbar { listToolbar }
         .navigationDestination(item: $selectedApp) { app in
-            SandboxAppDetailView(app: app, onChange: { Task { await reload() } })
+            // 应用管理 (LCAppSettingsView 同构): 横幅/图标点击的落点,
+            // 旧 SandboxAppDetailView 从导航退役 (独有动作已收进新页的操作节).
+            SandboxAppSettingsView(app: app, onChange: { Task { await reload() } })
         }
         .documentPicker(isPresented: $showImporter, allowedTypes: [UTType(filenameExtension: "ipa") ?? .data]) { urls in
             for url in urls { importOne(url) }
