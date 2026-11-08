@@ -1,3 +1,13 @@
+## [0.3.789] - 2026-11-08
+
+- 蜂窝.修「蜂窝下启用 JIT 报 Connection refused 且卡点弹窗不出来」（用户已报两次的 P0 欠账）：隧道就绪凭证带 systemUptime 年龄戳，三个卡点门（beginLoopbackGate / awaitLoopbackGate / glitchFlow）对超龄凭证就地重验 —— 隧道死于无路径事件的场景下缓存不再永久假阳性（task-29-①；重验失败即清凭证转卡点流程，task-29-②）
+
+- 蜂窝.就绪凭证时间戳与判龄一律走 ProcessInfo.systemUptime，零 Date 比较（task-29-③；Date 比较符属 v0.3.746 弱导入崩溃类，check_weak_imports 硬禁）
+
+- 蜂窝.同步门的超龄重验与 guardReady 同口径：主线程只记诊断日志 + ≤0.25s 封顶短探测，不引入长阻塞（task-29-④ / HARD-RULES 29）
+
+- 蜂窝.JIT 建隧道三次重试仍失败时清就绪凭证，蜂窝单网下顺手踢起卡点流程 —— 用户拿到「关蜂窝」引导而不是裸报错；断网窗口内建好的通路在蜂窝恢复后仍可用（真机实测），按引导走完再点一次启用 JIT 即成功（Gnoix 同款目标行为）
+
 ## [0.3.788] - 2026-11-08
 
 - 沙盒容器.新增访客进程宿主扩展 TequilaDashLiveProcess（LiveContainer LiveProcess 等价物，m5 方案 S1-S6）：app-extension target + 完整手写 Info.plist（com.apple.ar.viewer 扩展点 / 应用型 XPC 多实例 / 宿主级后台模式与权限文案）+ entitlements 随包携带

@@ -56,6 +56,13 @@ final class CellularTunnelManager: @unchecked Sendable {
     /// 对外暴露的同一条探测预算（秒）：门出口补发凭证时用，保证判据与 probeOnce 一致.
     static var probeIntervalSeconds: TimeInterval { Double(probeTimeoutMs) / 1000.0 }
 
+    /// 就绪凭证的最大可信年龄（秒）：门在凭证超龄时必须就地重验（task-29-①），
+    /// 不再盲信缓存 —— 隧道死于无路径事件的场景下（对端重置、NE 静默拆链），
+    /// probeOnce 不会被触发，缓存会永久假阳性.
+    /// 取值考量：重验就是一次 0.25s 探测，对用户可感成本可忽略；年龄放得太长
+    /// 等于把假阳性窗口从 3 秒保持窗放大回「无限」.
+    static let credentialMaxAgeSeconds: TimeInterval = 10
+
     // MARK: - 开关与判据
 
     /// 用户是否开启「Cellular隧道支持」（默认关）.

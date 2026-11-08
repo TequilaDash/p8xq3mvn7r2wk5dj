@@ -157,7 +157,38 @@ final class CellularGlitchCoordinator: ObservableObject, @unchecked Sendable {
         if CellularNetworkChecker.captureInterfaceSnapshot().wifi { return false }
         // （断网窗口内操作真实成功 / utun 对端可达）；直连端口探测不再参与判定：探测连得上
         // RSD 端口 ≠ 隧道能用（LC 实测假阳性，门放行后建隧道失败，卡点兜底被跳过）.
-        if TunnelGate.isReady { return false }
+        // task-29-①：isReady 为真**不许无条件早退** —— 凭证超龄时先就地重验
+        // （隧道死于无路径事件时缓存会永久假阳性，盲放行 = 直连被拒 + 卡点弹窗永不出现）.
+        if TunnelGate.isReady {
+            if TunnelGate.isReadyWithin(maxAge: CellularTunnelManager.credentialMaxAgeSeconds) {
+                return false
+            }
+            if Thread.isMainThread {
+                TunnelDiagnostics.note("主线程隧道调用", "beginLoopbackGate 凭证超龄重验（≤0.25s 封顶，同 guardReady 口径）")
+            }
+            final class ProbeBox: @unchecked Sendable {
+                private let lock = NSLock()
+                private var value = false
+                func set(_ v: Bool) { lock.lock(); value = v; lock.unlock() }
+                func get() -> Bool { lock.lock(); defer { lock.unlock() }; return value }
+            }
+            let box = ProbeBox()
+            let sem = DispatchSemaphore(value: 0)
+            let budget = CellularTunnelManager.probeIntervalSeconds
+            Task.detached(priority: .userInitiated) {
+                box.set(LocalDevVPN.isAnyCandidateReachable(timeout: budget))
+                sem.signal()
+            }
+            sem.wait()
+            if box.get() {
+                // 通路真活着：刷新凭证时间戳后照旧放行.
+                TunnelGate.setReady(true)
+                return false
+            }
+            // task-29-②：验证失败必须清凭证并继续走门（弹卡），绝不放行去撞 refused.
+            TunnelGate.setReady(false)
+            TunnelDiagnostics.note("蜂窝通路", "就绪凭证超龄重验失败，已清凭证并转入卡点流程（" + label + "）")
+        }
         if !checker.isNetworkConnectedNow { return false }
         gateLock.lock()
         if gateBusy || runTask != nil { gateLock.unlock(); return false }
@@ -221,7 +252,22 @@ final class CellularGlitchCoordinator: ObservableObject, @unchecked Sendable {
         // ① 门内/窗内真实建链成功、② probeOnce 探到 utun 对端可达 两种硬证据置真，
         // 蜂窝切换时 probeOnce 立即清假.凭证在 → 放行；凭证不在 → 卡点弹窗（关蜂窝
         // 让 NE 在断网窗口重建 utun，主地址 10.7.0.1 兜底建链）.
-        if TunnelGate.isReady { return .notNeeded }
+        // task-29-①：凭证在**且未超龄**才放行；超龄就地重验（后台线程，0.25s 预算），
+        // 失败清凭证转卡点 —— 与同步门同一条假阳性治理.
+        if TunnelGate.isReady {
+            if TunnelGate.isReadyWithin(maxAge: CellularTunnelManager.credentialMaxAgeSeconds) {
+                return .notNeeded
+            }
+            let alive = await Task.detached(priority: .userInitiated) {
+                LocalDevVPN.isAnyCandidateReachable(timeout: CellularTunnelManager.probeIntervalSeconds)
+            }.value
+            if alive {
+                TunnelGate.setReady(true)
+                return .notNeeded
+            }
+            TunnelGate.setReady(false)
+            TunnelDiagnostics.note("蜂窝通路", "就绪凭证超龄重验失败，已清凭证并转入卡点流程（" + label + "）")
+        }
         if !checker.isNetworkConnectedNow { return .notNeeded }
         let acquired: Bool = gateLock.withLock {
             if gateBusy || runTask != nil { return false }
@@ -404,8 +450,21 @@ final class CellularGlitchCoordinator: ObservableObject, @unchecked Sendable {
         if CellularNetworkChecker.captureInterfaceSnapshot().wifi {
             return try await action()
         }
+        // task-29-①：与两个门同一条假阳性治理 —— 凭证超龄先重验，失败清凭证走卡点，
+        // 不再拿旧凭证直接放行去撞 Connection refused.
         if TunnelGate.isReady {
-            return try await action()
+            if TunnelGate.isReadyWithin(maxAge: CellularTunnelManager.credentialMaxAgeSeconds) {
+                return try await action()
+            }
+            let alive = await Task.detached(priority: .userInitiated) {
+                LocalDevVPN.isAnyCandidateReachable(timeout: CellularTunnelManager.probeIntervalSeconds)
+            }.value
+            if alive {
+                TunnelGate.setReady(true)
+                return try await action()
+            }
+            TunnelGate.setReady(false)
+            TunnelDiagnostics.note("蜂窝通路", "就绪凭证超龄重验失败，已清凭证并转入卡点流程（" + label + "）")
         }
         // ② 已经离线：路由重置窗口已开，直接进窗口.
         if !checker.isNetworkConnectedNow {

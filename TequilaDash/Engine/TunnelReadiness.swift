@@ -40,6 +40,11 @@ enum TunnelGate {
 
     private static let lock = NSLock()
     private nonisolated(unsafe) static var ready = false
+    /// 凭证落真时刻（systemUptime 秒；0 = 未持凭证）. 假阳性治理（task-29）：
+    /// 隧道死掉若没伴随路径事件，probeOnce 不会被触发，`ready` 会永久停在真值 ——
+    /// 门据此盲放行，消费端直连被拒（os error 61）而卡点弹窗永远不出现.
+    /// 所以凭证必须带年龄，门在超龄时就地重验.
+    private nonisolated(unsafe) static var readyAtUptime: TimeInterval = 0
 
     /// 最近一次后台探测的结论（任意线程同步读，零等待）.
     static var isReady: Bool {
@@ -51,7 +56,19 @@ enum TunnelGate {
     static func setReady(_ value: Bool) {
         lock.lock()
         ready = value
+        // 时间戳用 systemUptime（task-29-③：禁用 Date 比较 —— Date 比较符是
+        // v0.3.746 弱导入崩溃类，check_weak_imports 硬禁清单）
+        readyAtUptime = value ? ProcessInfo.processInfo.systemUptime : 0
         lock.unlock()
+    }
+
+    /// 凭证是否仍在 `maxAge` 秒内（systemUptime 计龄，零 Date 参与）.
+    /// `isReady` 为真但超龄 = 可能假阳性，调用方（门）应就地重验而不是盲放行.
+    static func isReadyWithin(maxAge: TimeInterval) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard ready else { return false }
+        return ProcessInfo.processInfo.systemUptime - readyAtUptime <= maxAge
     }
 
     /// 建隧道前现场补探测的超时（失败路径 0.5 秒封顶，硬规则 29）.

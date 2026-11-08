@@ -142,6 +142,15 @@ final class JITEnableService: Sendable {
         }
         let finalError = lastError ?? makeError("创建开发者隧道失败（请确认 LocalDevVPN 已连接）")
         TunnelDiagnostics.fail("JIT 建隧道", error: finalError)
+        // task-29-②：失败必须清凭证 —— 否则假阳性凭证活到下一次，门继续盲放行，
+        // 用户永远只看到裸的 Connection refused 而拿不到「关蜂窝」引导
+        // （用户 2026-11-07 报的正是这条链：4G 下启用 JIT refused 且卡点弹窗不出来）.
+        // 蜂窝单网时顺手把卡点流程踢起来：门内建好通路后，用户再点一次启用 JIT 即成功
+        // （断网窗口建立的通路在蜂窝恢复后仍可用 —— Gnoix 同款目标行为）.
+        TunnelGate.setReady(false)
+        if !CellularNetworkChecker.captureInterfaceSnapshot().wifi {
+            CellularGlitchCoordinator.shared.kickPassiveGate(label: "启用 JIT")
+        }
         throw finalError
     }
 
