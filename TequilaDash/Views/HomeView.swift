@@ -67,6 +67,8 @@ struct HomeView: View {
     /// 开启高级功能页（同一套「sheet 关闭后再 push」的中转）
     @State private var showI4Advanced = false
     @State private var pendingI4Advanced = false
+    /// 沙盒容器：整屏宿主（自带独立底栏），不走 push —— push 进本栈底部仍是主 App 的 TabBar.
+    @State private var showSandbox = false
 
     var body: some View {
         ScrollView {
@@ -184,6 +186,12 @@ struct HomeView: View {
         // 开启高级功能（写设备端爱思移动端沙盒的配对 / 授权文件；独立入口，不再藏在安装流程里）
         .navigationDestination(isPresented: $showI4Advanced) {
             I4AdvancedView()
+        }
+        // 沙盒容器用整屏宿主：用户 2026-11-08 要求「这个界面底栏自己独立一个，
+        // 不要用默认界面的底栏」—— 只有 fullScreenCover 能盖掉 RootView 的 TabView 底栏
+        // （与 RootView.swift:75-80 模块宿主同一手段）.
+        .fullScreenCover(isPresented: $showSandbox) {
+            SandboxHostView()
         }
         // 进入主页自动静默体检（灵动球分数即时显示）
         // task id 直接绑隧道就绪状态 —— VPN 一开，分数扫描立刻自动重跑
@@ -311,10 +319,7 @@ struct HomeView: View {
                     AppStoreView()
                 }
                 rowDivider
-                navRow(title: "沙盒容器", subtitle: "容器内安装 / 元数据隔离",
-                       icon: "square.stack.3d.up.fill", tint: AppModule.store.tint) {
-                    SandboxContainerView()
-                }
+                sandboxRow
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             // 硬规则 5：全宽行不套 16 圆角卡片（与 TreasureBoxView.swift:252-259 同款）.
@@ -440,6 +445,20 @@ struct HomeView: View {
     /// 同款全宽发丝线对齐，见 `TreasureBoxView.swift:273-274`.
     private var rowDivider: some View {
         AppHairline()
+    }
+
+    /// 沙盒容器入口行：外观与 `navRow` 一致，但点击走整屏宿主而不是 push.
+    private var sandboxRow: some View {
+        Button {
+            AppHaptics.tap()
+            showSandbox = true
+        } label: {
+            AppNavRow(icon: "square.stack.3d.up.fill",
+                      title: "沙盒容器",
+                      subtitle: "容器内安装 / 元数据隔离",
+                      tint: AppModule.store.tint)
+        }
+        .buttonStyle(.plain)
     }
 
     /// 功能行：`AppNavRow` 作 label 的 `NavigationLink`（`.plain` 样式，保留整行点击）.

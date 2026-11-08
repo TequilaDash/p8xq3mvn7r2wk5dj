@@ -1,3 +1,13 @@
+## [0.3.784] - 2026-11-08
+
+- 沙盒容器.列表页与详情页整体重做（用户 2026-11-08：「UI 界面很诡异和别扭，界面也很丑」）：删掉 hero 三胶囊与页底长说明，标题交给导航栏左对齐大标题，页内只剩纯图标网格；格子去掉卡片底，孤零的 chevron.right 根因（行内 NavigationLink 被系统注入 disclosure）改 Button + navigationDestination(item:) 消掉
+
+- 沙盒容器.底栏改成本页自己的悬浮玻璃丸（列表：导入 / 刷新 / 回主页；详情：目录 / 重签 / 重建数据），走 safeAreaInset 让内容自动避让；入口从 push 改成 fullScreenCover + SandboxHostView 自带导航栈，只有这一手段能盖掉 RootView 的 TabView 默认底栏（与模块宿主 RootView:75-80 同款）
+
+- 沙盒容器.详情页改「应用信息」范式（用户指定参考图二）：首卡大图标 + 名称 + Bundle ID / 版本 / 包体大小 / 安装时间四行「左标题右灰值」，路径与可写目录状态另卡，说明压成一行；原先三颗 TintedButtonStyle 大色块按钮（蓝底蓝字 / 绿底绿字 / 灰底蓝字）全删 —— 违反 m32253 硬规则「功能行文字不得擅自加颜色」，现在着色只给图标、文字一律主色
+
+- 沙盒容器.补回重写时漏掉的 importOne(_:)（导入 IPA 的遮罩、结果播报与 reload），并修掉 SandboxContainerView 结构体提前闭合导致 extension View 落到嵌套作用域的语法错
+
 ## [0.3.783] - 2026-11-08
 
 - 依赖.照 LiveContainer 引入 hook 底座 litehook 与 fishhook（vendor 落库 + project.yml 接线 + NOTICE 第 7/8 节 + 许可文本随包）.上游零包管理器依赖（无 SPM / CocoaPods），三个 submodule 里我们只需要这两个；OpenSSL 继续用现有 openssl-build 静态库，不跟它换 xcframework
