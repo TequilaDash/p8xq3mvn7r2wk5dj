@@ -106,6 +106,9 @@ struct SandboxAppDetailView: View {
 
     /// 各段独立成属性：本仓 CI 已四次实证「视图构造 + 多层修饰」堆在同一条 body 里
     /// 会 `unable to type-check this expression in reasonable time`.
+    ///
+    /// 竖向间距一套数值（owner 2026-11-08 要求全页统一；横向上一轮已修好）：
+    /// 卡片头行下 8 / 卡内行竖向 7 / 组小标题上 8 下 4 —— 不再混用 2/4/5/12.
     @ViewBuilder
     private var content: some View {
         identitySection
@@ -172,7 +175,7 @@ struct SandboxAppDetailView: View {
         Label("运行环境", systemImage: "bolt")
             .font(AppFont.footnote)
             .foregroundStyle(.primary)
-            .padding(.bottom, 4)
+            .padding(.bottom, 8)
     }
 
     private func statusDetail(_ text: String) -> some View {
@@ -202,7 +205,7 @@ struct SandboxAppDetailView: View {
             }
             Spacer(minLength: 8)
         }
-        .padding(.bottom, 12)
+        .padding(.bottom, 8)
     }
 
     /// 主二进制名只在**与显示名不同**时才出现：同名再写一行就是同一行字重复（真机截图病点）.
@@ -285,7 +288,7 @@ struct SandboxAppDetailView: View {
                 .foregroundStyle(.secondary)
         }
         .padding(.top, 8)
-        .padding(.bottom, 2)
+        .padding(.bottom, 4)
     }
 
     /// 一行一个容器：名字 + 目录名 + 激活徽章，右侧菜单给切换 / 重命名 / 删除.
@@ -295,7 +298,6 @@ struct SandboxAppDetailView: View {
                             onSwitch: { switchContainer(container) },
                             onRename: { beginRename(container) },
                             onDelete: { deleteContainerTarget = container })
-            .padding(.vertical, 2)
     }
 
     private var emptyContainerRow: some View {
@@ -306,7 +308,7 @@ struct SandboxAppDetailView: View {
             Spacer(minLength: 4)
             SizePill(text: "未创建", tint: AppTheme.pending, level: .compact)
         }
-        .padding(.vertical, 8)
+        .padding(.vertical, 7)
     }
 
     /// 新建容器：真入口（引擎侧真建目录），不是占位.
@@ -319,7 +321,7 @@ struct SandboxAppDetailView: View {
                 .font(AppFont.caption)
                 .foregroundStyle(.primary)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.vertical, 8)
+                .padding(.vertical, 7)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -337,7 +339,7 @@ struct SandboxAppDetailView: View {
                      tint: dataExists ? AppTheme.success : AppTheme.pending,
                      level: .compact)
         }
-        .padding(.vertical, 8)
+        .padding(.vertical, 7)
     }
 
     private func containerPath(_ container: SandboxContainerRef) -> String {
@@ -713,7 +715,7 @@ struct SandboxPathRow: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.vertical, 5)
+        .padding(.vertical, 7)
     }
 
     private var pathText: some View {

@@ -208,6 +208,7 @@ power
 power.circle.fill
 powerplug.fill
 puzzlepiece.fill
+puzzlepiece.extension
 questionmark.app.dashed
 questionmark.circle
 questionmark.circle.fill

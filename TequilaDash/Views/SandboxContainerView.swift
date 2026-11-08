@@ -125,6 +125,8 @@ struct SandboxContainerView: View {
     @State private var searchText = ""
     @State private var showImporter = false
     @State private var showSettings = false
+    /// 底栏「源 / 模块」预留页的承载（nil = 不弹）.
+    @State private var placeholderSlot: SandboxSlot?
     @State private var deleteTarget: SandboxApp?
     /// 已锁定应用的二次确认目标：第一道确认走 `deleteTarget`，锁定项再走这一道.
     @State private var lockedDeleteTarget: SandboxApp?
@@ -167,6 +169,7 @@ struct SandboxContainerView: View {
             .sheet(item: $dataTarget) { app in dataBrowserSheet(app) }
             .sheet(item: $shareTarget) { app in shareSheet(app) }
             .sheet(isPresented: $showSettings) { settingsSheet }
+            .sheet(item: $placeholderSlot) { slot in slotSheet(slot) }
             .confirmationDialog(lockedDeletePromptText, isPresented: lockedDeleteBinding,
                                 titleVisibility: .visible) {
                 Button("仍然删除", role: .destructive) {
@@ -324,13 +327,13 @@ struct SandboxContainerView: View {
 
     private func banner(_ app: SandboxApp) -> some View {
         SandboxAppBanner(app: app,
-                         onSelect: { selectedApp = app },
+                         onSelect: { openDetail(app) },
                          onOpenData: { dataTarget = app },
                          onShare: { shareTarget = app },
                          onResign: { resign(app) },
                          onDelete: { deleteTarget = app },
-                         onToggleLock: { setAccess(app, locked: !app.isLocked) },
-                         onToggleHide: { setAccess(app, locked: true, hidden: !app.isHidden) },
+                         onToggleLock: { toggleLock(app) },
+                         onToggleHide: { toggleHide(app) },
                          onSelectContainer: { container in switchContainer(app, to: container) })
             .padding(.bottom, 10)
             .rowInList
@@ -338,9 +341,23 @@ struct SandboxContainerView: View {
 
     // MARK: - 导航栏与底栏
 
-    /// 导入入口留在导航栏（底栏的「导入」已让位给「设置」）.
+    /// 左上 = 返回主页（owner 2026-11-08: 底栏「回主页」让位给「模块」，返回动作挪到左上）；
+    /// 右上 = 导入 + 刷新两个平级 item（AppListView.swift:535,543 同形，不用玻璃胶囊组）.
+    ///
+    /// 本页是 SandboxHostView 的栈根（SandboxHostView.swift:14-20，整页由 HomeView 的
+    /// fullScreenCover 盖出），没有系统返回键可隐 —— leading 放返回键不触碰 HARD-RULES 24
+    /// （那条禁的是「隐藏系统返回键 + 自定义返回」）.
     @ToolbarContentBuilder
     private var listToolbar: some ToolbarContent {
+        ToolbarItem(placement: .navigationBarLeading) {
+            Button {
+                AppHaptics.tap()
+                dismiss()
+            } label: {
+                Image(systemName: "chevron.left")
+            }
+            .accessibilityLabel("返回主页")
+        }
         ToolbarItem(placement: .navigationBarTrailing) {
             Button {
                 AppHaptics.tap()
@@ -350,9 +367,21 @@ struct SandboxContainerView: View {
             }
             .disabled(isImporting)
         }
+        ToolbarItem(placement: .navigationBarTrailing) {
+            Button {
+                AppHaptics.tap()
+                Task { await reload() }
+            } label: {
+                Image(systemName: "arrow.clockwise")
+            }
+            .accessibilityLabel("刷新")
+        }
     }
 
     /// 本页独立的悬浮玻璃丸底栏（用户点名不要主 App 的 TabBar）.
+    ///
+    /// 三槽顺序 owner 拍板固定：设置 / 源 / 模块（2026-11-08 原话：回主页挪左上、刷新挪右上，
+    /// 腾出的两格给「源」「模块」）。源 / 模块先给预留页（诚实空态，不放假开关）.
     private var listBar: some View {
         SandboxFloatingBar {
             SandboxBarCell(title: "设置", symbol: "gearshape", tint: AppModule.settings.tint) {
@@ -360,14 +389,14 @@ struct SandboxContainerView: View {
                 showSettings = true
             }
             SandboxBarDivider()
-            SandboxBarCell(title: "刷新", symbol: "arrow.clockwise", tint: AppTheme.accent) {
+            SandboxBarCell(title: "源", symbol: "shippingbox", tint: AppModule.store.tint) {
                 AppHaptics.tap()
-                Task { await reload() }
+                placeholderSlot = .sources
             }
             SandboxBarDivider()
-            SandboxBarCell(title: "回主页", symbol: "house", tint: AppTheme.accent) {
+            SandboxBarCell(title: "模块", symbol: "puzzlepiece.extension", tint: AppTheme.accent) {
                 AppHaptics.tap()
-                dismiss()
+                placeholderSlot = .modules
             }
         }
     }
@@ -385,6 +414,27 @@ struct SandboxContainerView: View {
             .scrollContentBackground(.hidden)
             .background(AppTheme.surfaceBase)
             .navigationTitle("设置")
+            .navigationBarTitleDisplayMode(.inline)
+        }
+    }
+
+    /// 源 / 模块的预留页：只写「预留中」一件事，不放假开关（与设置页同一空态范式）.
+    private func slotSheet(_ slot: SandboxSlot) -> some View {
+        NavigationStack {
+            List {
+                Section {
+                    AppStateSection(state: .empty(slot.emptyTitle,
+                                                  message: slot.message,
+                                                  icon: slot.symbol),
+                                    wrapsSection: false)
+                        .padding(.vertical, 12)
+                        .rowInList
+                }
+            }
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
+            .background(AppTheme.surfaceBase)
+            .navigationTitle(slot.title)
             .navigationBarTitleDisplayMode(.inline)
         }
     }
@@ -408,12 +458,18 @@ struct SandboxContainerView: View {
     }
 
     private var sortPicker: some View {
-        Picker("排序方式", selection: $sortRaw) {
-            ForEach(SandboxAppSort.allCases) { option in
-                Label(option.title, systemImage: option.symbol).tag(option.rawValue)
+        LabeledContent {
+            Picker("排序方式", selection: $sortRaw) {
+                ForEach(SandboxAppSort.allCases) { option in
+                    Label(option.title, systemImage: option.symbol).tag(option.rawValue)
+                }
             }
+            .pickerStyle(.menu)
+            .labelsHidden()
+            .fixedSize()
+        } label: {
+            Text("排序方式")
         }
-        .pickerStyle(.menu)
         .rowInList
     }
 
@@ -511,6 +567,54 @@ struct SandboxContainerView: View {
         }
     }
 
+    /// 进入已锁定应用的详情页先过本机认证（LC 同位：LCAppListView.swift:540 在启动锁定应用前
+    /// 验证；本仓容器内启动未接线，对应入口 = 详情页）. 认证不过不进页，不做本地放行.
+    private func openDetail(_ app: SandboxApp) {
+        guard app.isLocked else {
+            selectedApp = app
+            return
+        }
+        Task {
+            let outcome = await SandboxAccessAuth.authenticate(
+                reason: "验证以打开已锁定的「\(app.displayName)」")
+            if handleAuth(outcome) { selectedApp = app }
+        }
+    }
+
+    /// 锁定切换（上锁 / 解锁都验一次，owner 2026-11-08: 锁定不能是摆设）.
+    private func toggleLock(_ app: SandboxApp) {
+        Task {
+            let verb = app.isLocked ? "解除锁定" : "锁定"
+            let outcome = await SandboxAccessAuth.authenticate(
+                reason: "验证以\(verb)「\(app.displayName)」")
+            if handleAuth(outcome) { setAccess(app, locked: !app.isLocked) }
+        }
+    }
+
+    /// 隐藏是锁定的子选项 —— 同一道认证闸门.
+    private func toggleHide(_ app: SandboxApp) {
+        Task {
+            let outcome = await SandboxAccessAuth.authenticate(
+                reason: "验证以更改「\(app.displayName)」的隐藏状态")
+            if handleAuth(outcome) { setAccess(app, locked: true, hidden: !app.isHidden) }
+        }
+    }
+
+    /// 认证结果统一落地：不可用（未设锁屏密码）与拒绝都如实播报，只有成功才放行动作.
+    @discardableResult
+    private func handleAuth(_ outcome: SandboxAccessAuth.Outcome) -> Bool {
+        switch outcome {
+        case .success:
+            return true
+        case .failed:
+            ToastCenter.shared.show("验证未通过", seconds: 2.6)
+            return false
+        case .unavailable:
+            ToastCenter.shared.show("此设备未设置锁屏密码，无法验证", seconds: 3.0)
+            return false
+        }
+    }
+
     /// 从横幅菜单切换激活容器：只改登记指针，写完重扫让横幅的「容器」一行跟着变.
     private func switchContainer(_ app: SandboxApp, to container: SandboxContainerRef) {
         guard container.folderName != app.activeContainer else { return }
@@ -584,6 +688,9 @@ struct SandboxAppBanner: View {
         }
         .buttonStyle(.plain)
         .appPressable(scale: 0.98)
+        // 长按预览钉在卡片圆角上：不钉的话 List 行的预览带整行底板，卡片像从行里
+        // 浮出来（owner 2026-11-08 截图点的「脱离卡片」）.
+        .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: AppRadius.card, style: .continuous))
         .contextMenu { menu }
     }
 
@@ -680,6 +787,12 @@ struct SandboxAppBanner: View {
         } label: {
             Label("分享包体", systemImage: "square.and.arrow.up")
         }
+        // 详情 = LC 菜单的 per-app Settings 项（LCAppBannerViewController.swift:198-203）.
+        Button {
+            onSelect()
+        } label: {
+            Label("详情", systemImage: "info.circle")
+        }
         lockMenuButton
         if app.isLocked {
             hideMenuButton
@@ -741,6 +854,44 @@ extension View {
                                       bottom: 0, trailing: AppTheme.pageInset))
             .listRowBackground(Color.clear)
             .listRowSeparator(.hidden)
+    }
+}
+
+// MARK: - 底栏预留槽
+
+/// 底栏「源 / 模块」的预留页参数. 两页都还没有引擎支撑 —— 只立入口，不放假内容.
+enum SandboxSlot: String, Identifiable {
+    case sources
+    case modules
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .sources: return "源"
+        case .modules: return "模块"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .sources: return "shippingbox"
+        case .modules: return "puzzlepiece.extension"
+        }
+    }
+
+    var emptyTitle: String {
+        switch self {
+        case .sources: return "源功能预留中"
+        case .modules: return "模块功能预留中"
+        }
+    }
+
+    var message: String {
+        switch self {
+        case .sources: return "安装源（仓库）管理页在此预留，后续版本接入."
+        case .modules: return "Tweak 模块管理页在此预留，后续版本接入."
+        }
     }
 }
 
