@@ -48,7 +48,7 @@ struct SandboxAppSettingsView: View {
         .scrollContentBackground(.hidden)
         .background(AppTheme.surfaceBase)
         .navigationTitle(app.displayName)
-        .navigationBarTitleDisplayMode(.inline)
+        .navigationBarTitleDisplayMode(.large)
         .sheet(isPresented: $showBrowser) { browserSheet }
         .sheet(isPresented: $showShare) { ShareSheet(items: [URL(fileURLWithPath: app.appPath)]) }
         .confirmationDialog(deleteContainerTitle, isPresented: deleteContainerBinding, titleVisibility: .visible) {
@@ -83,11 +83,23 @@ struct SandboxAppSettingsView: View {
 
     private var identitySection: some View {
         Section {
+            HStack(spacing: 12) {
+                SandboxAppIconView(bundleID: app.id, size: 64)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(app.displayName)
+                        .font(.system(size: 20, weight: .bold))
+                        .foregroundStyle(.primary)
+                        .lineLimit(2)
+                    if let version = app.bundleVersion {
+                        Text("版本：\(version)")
+                            .font(AppFont.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .padding(.vertical, 4)
             infoRow("Bundle ID", app.id)
-            infoRow("版本", app.bundleVersion ?? "未登记")
             infoRow("安装时间", installedText)
-        } header: {
-            Text("身份")
         }
     }
 
@@ -97,7 +109,7 @@ struct SandboxAppSettingsView: View {
         Section {
             containerRows
         } header: {
-            Text("数据与容器")
+            Text("数据与容器").font(.system(size: 13, weight: .regular)).foregroundStyle(.secondary)
         } footer: {
             Text("访客的家目录按激活容器隔离; 切换后 Launch 即用新容器.")
         }
@@ -196,7 +208,7 @@ struct SandboxAppSettingsView: View {
                 }
             }
         } header: {
-            Text("锁定")
+            Text("锁定").font(.system(size: 13, weight: .regular)).foregroundStyle(.secondary)
         } footer: {
             Text("锁定/解锁与进入都要 Face ID 或密码; 隐藏是锁定的子选项, 隐藏后搜索可找回.")
         }
@@ -232,7 +244,7 @@ struct SandboxAppSettingsView: View {
                 Text("禁止联网")
             }
         } header: {
-            Text("联网管理")
+            Text("联网管理").font(.system(size: 13, weight: .regular)).foregroundStyle(.secondary)
         } footer: {
             Text("开启后该容器应用的对外 TCP 连接在启动时被拦截 (connect 返回 EPERM). 重新启动应用后生效.")
         }
@@ -249,7 +261,7 @@ struct SandboxAppSettingsView: View {
             rebuildRow
             deleteRow
         } header: {
-            Text("操作")
+            Text("操作").font(.system(size: 13, weight: .regular)).foregroundStyle(.secondary)
         }
     }
 

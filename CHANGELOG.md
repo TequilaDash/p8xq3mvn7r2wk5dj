@@ -1,3 +1,7 @@
+## [0.3.797] - 2026-11-08
+
+- 应用管理页 UI 对齐参考图：大标题 + 首卡图标/名称/版本 + 分组头外置灰字 13pt
+
 ## [0.3.796] - 2026-11-08
 
 - 沙盒容器.**启动前重签访客** (真根因修复): 点启动先走 SandboxResigner 用 DeveloperCertStore 证书 (本机创建或 p12 导入均可) + useMainIdentifier=true (iOS 27 实锤 dlopen identifier 与主程序一致) 重签访客全部 Mach-O, 签完才重启进访客 —— 修「导入证书后点启动仍闪退」(访客 adhoc 签名被 dlopen 校验杀)
