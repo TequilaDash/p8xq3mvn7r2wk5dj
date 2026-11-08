@@ -134,6 +134,12 @@ final class CellularGlitchCoordinator: ObservableObject, @unchecked Sendable {
                 CellularTunnelManager.shared.prepareForTunnel()
             }.value
             guard ready else {
+                // 失败要区分「开关没开」和「开了但没建起来」—— 总开关默认关时
+                // prepareForTunnel 第一道闸就返回，用户跟着卡点关了蜂窝也白关，
+                // 必须告诉他去开开关，而不是让他再关一次蜂窝（真机死胡同）.
+                if !CellularTunnelManager.shared.isEnabled {
+                    throw CellularGlitchError(message: "「蜂窝隧道支持」开关未开. 请到 设置 → 蜂窝隧道 打开后再试.")
+                }
                 throw CellularGlitchError(message: "蜂窝通路仍未建立，请在控制中心关闭蜂窝网络后重试.")
             }
         }
