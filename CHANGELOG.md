@@ -1,3 +1,11 @@
+## [0.3.792] - 2026-11-08
+
+- 沙盒容器.横幅卡逐项对齐 LCAppBannerView.swift：高 88 / 圆角 22 连续 / 背景染图标主色 50%（1×1 采样取平均色，LC 同算法）/ 图标 60 r16 / 详情栈（名称 16 bold → 版本·BundleID 12 → 容器 11，行距 1）/ 锁定徽章 16×16（锁定且未隐藏才挂，LC :150-157 同口径）
+
+- 沙盒容器.横幅右侧「启动」胶囊钮（LCAppBannerRunControl 同形：70×32 主色满底白 16 bold）——点「启动」才启动访客；点横幅/图标进应用管理（详情页），不再混在一个点击区里
+
+- 沙盒容器.可读文字色按 LC readableTextColor 算法（主色与系统底色对半混、按亮度 ±0.4），染色底上的版本/容器行清晰可读
+
 ## [0.3.791] - 2026-11-08
 
 - 沙盒容器.LC 主路启动完整落地：点横幅即启动访客（LC「点 App 即启动」，非多任务路）—— 写 LC 键 → LSApplicationWorkspace 重启自身 → 新进程 main() 分岔进 LiveContainerMain，访客在 TequilaDash 自己的进程里起来（HostGuestEntry.m 双模入口，TequilaDashApp 去 @main、TDHostBoot 拉宿主 UI；访客失败清键回壳不变砖并播报错误）

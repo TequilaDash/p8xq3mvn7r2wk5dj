@@ -334,7 +334,8 @@ struct SandboxContainerView: View {
 
     private func banner(_ app: SandboxApp) -> some View {
         SandboxAppBanner(app: app,
-                         onSelect: { launchGuestOrOpenDetail(app) },
+                         onSelect: { openDetail(app) },
+                         onLaunch: { launchGuestOrOpenDetail(app) },
                          onOpenData: { dataTarget = app },
                          onShare: { shareTarget = app },
                          onResign: { resign(app) },
@@ -688,13 +689,16 @@ struct SandboxContainerView: View {
 ///
 /// 形态照 LCAppListView 的 `LCAppBanner`（它自己就是整宽横幅，不是图标网格）：
 /// 图标在左、文字栈紧随其后、右侧留白. 本仓不摆「运行」按钮 —— 容器内启动还没接，
-/// 放假按钮等于假入口；详情页已写明启动待接入.
-///
-/// 用 `Button` + 容器级 `navigationDestination(item:)` 而不是行内 `NavigationLink`：
-/// 后者会让系统在行右侧再注入一个 disclosure 箭头.
+/// LC 横幅逐项对齐 (LCAppBannerView.swift): 高 88 / 圆角 22 连续 / 背景染图标主色 50% /
+/// 图标 60(r16, 点击=应用管理) / 详情栈(名称16 bold + 锁徽章 → 版本·BundleID 12 → 容器 11) /
+/// 右侧「启动」胶囊 70×32(主色满底白 16 bold, 点击=启动访客) / 可读文字色按底色自动算.
+/// 徽章口径同 LC (:150-157): 锁定且未隐藏才挂锁徽; JIT 徽章无数据源, 不放假徽章.
 struct SandboxAppBanner: View {
     let app: SandboxApp
+    /// 应用管理 (整卡 / 图标点击; LC: 横幅点击开 LCAppSettingsView).
     var onSelect: () -> Void
+    /// 启动 (右侧胶囊钮; LCAppBannerView 的 runControl).
+    var onLaunch: () -> Void
     var onOpenData: () -> Void
     var onShare: () -> Void
     var onResign: () -> Void
@@ -706,77 +710,171 @@ struct SandboxAppBanner: View {
     /// 从横幅菜单切换激活容器（LCAppBannerViewController.swift:140-151 同位置）.
     var onSelectContainer: (SandboxContainerRef) -> Void
 
+    /// LC 横幅常量 (LCAppBannerView.swift:10/45/104-107/113-116).
+    private static let bannerHeight: CGFloat = 88
+    private static let bannerRadius: CGFloat = 22
+
+    @State private var icon: UIImage?
+
     var body: some View {
-        Button(action: onSelect) {
-            bannerLabel
+        bannerBody
+            .contextMenu { menu }
+            .task(id: app.id) {
+                guard icon == nil else { return }
+                let loaded = await Task.detached(priority: .userInitiated) {
+                    SandboxIconLoader.shared.load(for: app.id)
+                }.value
+                if let loaded { icon = loaded }
+            }
+    }
+
+    /// 横幅本体: 图标(点击=应用管理) + 详情栈 + 「启动」胶囊(点击=启动).
+    /// 内层 onTapGesture 优先于外层 —— 图标与胶囊各自成靶, 其余区域整卡进应用管理.
+    private var bannerBody: some View {
+        HStack(spacing: 10) {
+            iconView
+                .onTapGesture { onSelect() }
+            detailStack
+            Spacer(minLength: 8)
+            runControl
         }
-        .buttonStyle(.plain)
-        .appPressable(scale: 0.98)
+        .padding(.horizontal, 14)
+        .frame(maxWidth: .infinity, minHeight: Self.bannerHeight, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: Self.bannerRadius, style: .continuous)
+                .fill(bannerBackground)
+        )
+        .contentShape(RoundedRectangle(cornerRadius: Self.bannerRadius, style: .continuous))
+        .onTapGesture { onSelect() }
         // 长按预览钉在卡片圆角上：不钉的话 List 行的预览带整行底板，卡片像从行里
         // 浮出来（owner 2026-11-08 截图点的「脱离卡片」）.
-        .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: AppRadius.card, style: .continuous))
-        .contextMenu { menu }
+        .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: Self.bannerRadius, style: .continuous))
     }
 
-    /// 卡片本体. 单独抽出来，`label:` 闭包就只是一次属性引用.
-    private var bannerLabel: some View {
-        HStack(spacing: 12) {
-            SandboxAppIconView(bundleID: app.id, size: 60)
-            titleStack
-            Spacer(minLength: 8)
+    /// 图标 (60×60, r16 连续; 无图标回落虚线方块, 与 SandboxAppIconView 同形).
+    private var iconView: some View {
+        Group {
+            if let icon {
+                Image(uiImage: icon)
+                    .resizable()
+            } else {
+                Image(systemName: "app.dashed")
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .foregroundStyle(.tertiary)
+                    .padding(11)
+            }
         }
-        .padding(AppMetrics.cardPadding)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: AppRadius.card, style: .continuous)
-                .fill(AppSurface.card)
-        )
-        .contentShape(RoundedRectangle(cornerRadius: AppRadius.card, style: .continuous))
+        .frame(width: 60, height: 60)
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 
-    /// 名称 / 版本与 Bundle ID / 激活容器 / 包体大小. 文字一律主色与次色，不做彩色.
-    ///
-    /// 激活容器一行照 LCAppBannerView.swift:147（`containerLabel`）：没有容器时写「未创建」，
-    /// 不隐藏这一行 —— 藏起来会让「有容器 / 没容器」的横幅长得不一样，列表看着忽高忽低.
-    private var titleStack: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            nameRow
+    /// 详情栈: 名称(16 bold) + 徽章 → 版本·BundleID(12) → 容器(11).
+    /// 行距 1 (LCAppBannerView.swift:84).
+    private var detailStack: some View {
+        VStack(alignment: .leading, spacing: 1) {
+            HStack(spacing: 8) {
+                Text(app.displayName)
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                if app.isLocked && !app.isHidden {
+                    lockBadge
+                }
+                Spacer(minLength: 0)
+            }
             Text(versionLine)
-                .font(AppFont.caption)
-                .foregroundStyle(.secondary)
+                .font(.system(size: 12))
+                .foregroundStyle(readableText)
                 .lineLimit(1)
             Text(containerLine)
-                .font(AppFont.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-            Text(app.sizeText)
-                .font(AppFont.footnote)
-                .foregroundStyle(.secondary)
+                .font(.system(size: 11))
+                .foregroundStyle(readableText)
                 .lineLimit(1)
         }
     }
 
-    /// 「容器：<名字>」或「容器：未创建」；多份时带份数.
+    /// 锁徽章 (LCAppBannerBadgeView 同形: 16×16 圆角 8, 白 8pt 图标).
+    private var lockBadge: some View {
+        Image(systemName: "lock.fill")
+            .font(.system(size: 8))
+            .foregroundStyle(.white)
+            .frame(width: 16, height: 16)
+            .background(RoundedRectangle(cornerRadius: 8).fill(Color.orange))
+            .accessibilityLabel("已锁定")
+    }
+
+    /// 「启动」胶囊 (LCAppBannerRunControl 同形: 70×32, 满色底, 白 16 bold, 长字缩放).
+    private var runControl: some View {
+        Button(action: onLaunch) {
+            Text("启动")
+                .font(.system(size: 16, weight: .bold))
+                .foregroundStyle(.white)
+                .lineLimit(1)
+                .minimumScaleFactor(0.1)
+                .frame(width: 70, height: 32)
+        }
+        .background(Capsule().fill(runColor))
+        .contentShape(Capsule())
+        .accessibilityLabel("启动 \(app.displayName)")
+    }
+
+    /// 图标主色 (LCAppBannerView.swift:177-228 同算法: 1×1 采样平均色, 暗+不饱和回落 systemRed,
+    /// 亮度抬到 ≥0.3).
+    private var bannerHue: Color {
+        guard let cgImage = icon?.cgImage else { return AppTheme.accent }
+        var pixel = [UInt8](repeating: 0, count: 4)
+        let context = CGContext(
+            data: &pixel, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        )
+        context?.draw(cgImage, in: CGRect(x: 0, y: 0, width: 1, height: 1))
+        let average = UIColor(
+            red: CGFloat(pixel[0]) / 255, green: CGFloat(pixel[1]) / 255,
+            blue: CGFloat(pixel[2]) / 255, alpha: 1
+        )
+        var hue: CGFloat = 0, saturation: CGFloat = 0, brightness: CGFloat = 0, alpha: CGFloat = 0
+        average.getHue(&hue, saturation: &saturation, brightness: &brightness, alpha: &alpha)
+        if brightness < 0.1 && saturation < 0.1 { return Color(.systemRed) }
+        return Color(hue: hue, saturation: saturation, brightness: max(brightness, 0.3), alpha: 1)
+    }
+
+    /// 背景 = 主色 50% (LC:159-161); 无图标回落卡片底色.
+    private var bannerBackground: Color {
+        icon == nil ? AppSurface.card : bannerHue.opacity(0.5)
+    }
+
+    /// 启动钮 = 主色满色 (LC:162-167 的 accentColor 满色底).
+    private var runColor: Color {
+        icon == nil ? AppTheme.accent : bannerHue
+    }
+
+    /// 可读文字色 (LC readableTextColor.swift:230-260 同算法: 主色与系统底色对半混, 按亮度 ±0.4).
+    private var readableText: Color {
+        var red: CGFloat = 0, green: CGFloat = 0, blue: CGFloat = 0, alpha: CGFloat = 0
+        UIColor(bannerHue).getRed(&red, green: &green, blue: &blue, alpha: &alpha)
+        var bgRed: CGFloat = 0, bgGreen: CGFloat = 0, bgBlue: CGFloat = 0, bgAlpha: CGFloat = 0
+        UIColor.systemBackground.getRed(&bgRed, green: &bgGreen, blue: &bgBlue, alpha: &bgAlpha)
+        let mixedRed = 0.5 * red + 0.5 * bgRed
+        let mixedGreen = 0.5 * green + 0.5 * bgGreen
+        let mixedBlue = 0.5 * blue + 0.5 * bgBlue
+        let brightness = 0.2126 * mixedRed + 0.7152 * mixedGreen + 0.0722 * mixedBlue
+        let offset: CGFloat = brightness < 0.5 ? 0.4 : -0.4
+        return Color(
+            red: min(max(mixedRed + offset, 0), 1),
+            green: min(max(mixedGreen + offset, 0), 1),
+            blue: min(max(mixedBlue + offset, 0), 1)
+        )
+    }
+
+    /// 「容器：<名字>」或「容器：未创建」；多份时带份数 (LCAppBannerView.swift:147 同口径:
+    /// 没容器写「未创建」不藏行).
     private var containerLine: String {
         guard let name = app.activeContainerName else { return "容器：未创建" }
         guard app.containers.count > 1 else { return "容器：" + name }
         return "容器：" + name + "（共 \(app.containers.count) 份）"
-    }
-
-    /// 名称一行 + 锁定标记（与 LCAppBanner 同形：锁着才挂锁，隐藏时不挂）.
-    private var nameRow: some View {
-        HStack(spacing: 5) {
-            Text(app.displayName)
-                .font(AppFont.headline)
-                .foregroundStyle(.primary)
-                .lineLimit(1)
-            if app.isLocked {
-                Image(systemName: "lock.fill")
-                    .font(AppFont.caption)
-                    .foregroundStyle(.secondary)
-                    .accessibilityLabel("已锁定")
-            }
-        }
     }
 
     private var versionLine: String {
