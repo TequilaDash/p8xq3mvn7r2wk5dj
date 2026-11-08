@@ -776,14 +776,29 @@ struct SandboxContainerView: View {
             return
         }
         AppHaptics.tap()
-        let defaults = UserDefaults.standard
-        defaults.set((app.appPath as NSString).lastPathComponent, forKey: "selected")
-        defaults.set(uuid, forKey: "selectedContainer")
-        defaults.set(app.displayName, forKey: "TDLastGuestName")
-        defaults.set(app.id, forKey: "TDLastGuestBundleId")
-        defaults.set(UserDefaults.standard.bool(forKey: "TDNetBlock-\(app.id)"), forKey: "TDGuestNetBlock")
-        ToastCenter.shared.show("正在启动 \(app.displayName)…", seconds: 3.0)
-        TDLaunchGuestRestart()
+        busy = true
+        ToastCenter.shared.show("正在为 \(app.displayName) 重签…", seconds: 8.0)
+        let snapshot = app
+        let netBlock = UserDefaults.standard.bool(forKey: "TDNetBlock-\(app.id)")
+        Task {
+            let outcome = await Task.detached(priority: .userInitiated) {
+                Result { try SandboxResigner.resign(snapshot, useMainIdentifier: true) }
+            }.value
+            busy = false
+            switch outcome {
+            case .success:
+                let defaults = UserDefaults.standard
+                defaults.set((snapshot.appPath as NSString).lastPathComponent, forKey: "selected")
+                defaults.set(uuid, forKey: "selectedContainer")
+                defaults.set(snapshot.displayName, forKey: "TDLastGuestName")
+                defaults.set(snapshot.id, forKey: "TDLastGuestBundleId")
+                defaults.set(netBlock, forKey: "TDGuestNetBlock")
+                ToastCenter.shared.show("正在启动 \(snapshot.displayName)…", seconds: 3.0)
+                TDLaunchGuestRestart()
+            case .failure(let error):
+                ToastCenter.shared.show("重签失败: \(error.localizedDescription)", seconds: 6.0)
+            }
+        }
     }
 
     /// 进入已锁定应用的详情页先过本机认证（LC 同位：LCAppListView.swift:540 在启动锁定应用前
