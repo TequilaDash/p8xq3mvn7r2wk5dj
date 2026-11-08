@@ -330,7 +330,8 @@ struct SandboxContainerView: View {
                          onResign: { resign(app) },
                          onDelete: { deleteTarget = app },
                          onToggleLock: { setAccess(app, locked: !app.isLocked) },
-                         onToggleHide: { setAccess(app, locked: true, hidden: !app.isHidden) })
+                         onToggleHide: { setAccess(app, locked: true, hidden: !app.isHidden) },
+                         onSelectContainer: { container in switchContainer(app, to: container) })
             .padding(.bottom, 10)
             .rowInList
     }
@@ -510,6 +511,21 @@ struct SandboxContainerView: View {
         }
     }
 
+    /// 从横幅菜单切换激活容器：只改登记指针，写完重扫让横幅的「容器」一行跟着变.
+    private func switchContainer(_ app: SandboxApp, to container: SandboxContainerRef) {
+        guard container.folderName != app.activeContainer else { return }
+        AppHaptics.tap()
+        let bundleId = app.id
+        let folderName = container.folderName
+        Task {
+            await Task.detached(priority: .userInitiated) {
+                guard let fresh = SandboxContainerStore.scan().first(where: { $0.id == bundleId }) else { return }
+                SandboxContainerStore.setActiveContainer(for: fresh, folderName: folderName)
+            }.value
+            await reload()
+        }
+    }
+
     /// 导入 IPA：解包 + 加密判定 + 覆盖安装全在引擎侧，这里只负责遮罩与结果播报.
     ///
     /// 不传 `progress:` —— 引擎侧回调是 `@Sendable (String) -> Void`，从 View 结构体里
@@ -559,6 +575,8 @@ struct SandboxAppBanner: View {
     var onToggleLock: () -> Void
     /// 隐藏开关 —— **锁定的子选项**（LCAppSettingsView:227-235），只在已锁定时出现在菜单里.
     var onToggleHide: () -> Void
+    /// 从横幅菜单切换激活容器（LCAppBannerViewController.swift:140-151 同位置）.
+    var onSelectContainer: (SandboxContainerRef) -> Void
 
     var body: some View {
         Button(action: onSelect) {
@@ -585,11 +603,18 @@ struct SandboxAppBanner: View {
         .contentShape(RoundedRectangle(cornerRadius: AppRadius.card, style: .continuous))
     }
 
-    /// 名称 / 版本与 Bundle ID / 包体大小. 文字一律主色与次色，不做彩色.
+    /// 名称 / 版本与 Bundle ID / 激活容器 / 包体大小. 文字一律主色与次色，不做彩色.
+    ///
+    /// 激活容器一行照 LCAppBannerView.swift:147（`containerLabel`）：没有容器时写「未创建」，
+    /// 不隐藏这一行 —— 藏起来会让「有容器 / 没容器」的横幅长得不一样，列表看着忽高忽低.
     private var titleStack: some View {
         VStack(alignment: .leading, spacing: 3) {
             nameRow
             Text(versionLine)
+                .font(AppFont.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+            Text(containerLine)
                 .font(AppFont.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
@@ -598,6 +623,13 @@ struct SandboxAppBanner: View {
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
         }
+    }
+
+    /// 「容器：<名字>」或「容器：未创建」；多份时带份数.
+    private var containerLine: String {
+        guard let name = app.activeContainerName else { return "容器：未创建" }
+        guard app.containers.count > 1 else { return "容器：" + name }
+        return "容器：" + name + "（共 \(app.containers.count) 份）"
     }
 
     /// 名称一行 + 锁定标记（与 LCAppBanner 同形：锁着才挂锁，隐藏时不挂）.
@@ -623,6 +655,9 @@ struct SandboxAppBanner: View {
 
     /// 长按菜单：只放真能跑通的项. 「打开数据目录」仅在可写目录已建时出现；
     /// 「隐藏」仅在已锁定时出现（隐藏是锁定的子选项，不另开一条独立状态机）.
+    ///
+    /// 容器切换只在**多于一份**时出现（LCAppBannerViewController.swift:140 同一门槛）：
+    /// 只有一份时给一个「切换」子菜单是纯噪音.
     @ViewBuilder
     private var menu: some View {
         if app.hasDataHome {
@@ -631,6 +666,9 @@ struct SandboxAppBanner: View {
             } label: {
                 Label("打开数据目录", systemImage: "folder")
             }
+        }
+        if app.containers.count > 1 {
+            containerPickerMenu
         }
         Button {
             onResign()
@@ -650,6 +688,25 @@ struct SandboxAppBanner: View {
             onDelete()
         } label: {
             Label("删除容器", systemImage: "trash")
+        }
+    }
+
+    /// 容器切换子菜单：每份一行，当前那份打勾.
+    private var containerPickerMenu: some View {
+        Menu {
+            ForEach(app.containers) { container in
+                Button {
+                    onSelectContainer(container)
+                } label: {
+                    if container.folderName == app.activeContainer {
+                        Label(container.name, systemImage: "checkmark")
+                    } else {
+                        Text(container.name)
+                    }
+                }
+            }
+        } label: {
+            Label("切换容器", systemImage: "square.stack")
         }
     }
 
