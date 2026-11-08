@@ -63,8 +63,6 @@ struct SandboxAppIconView: View {
     var size: CGFloat = 60
 
     @State private var icon: UIImage?
-    /// LC dynamicColors 键: 关掉时横幅回落卡片底色 (设置页「界面」节真连线).
-    @AppStorage("dynamicColors") var bannerDynamicColors = true
 
     var body: some View {
         Group {
@@ -929,6 +927,8 @@ struct SandboxAppBanner: View {
     private static let bannerRadius: CGFloat = 22
 
     @State private var icon: UIImage?
+    /// LC dynamicColors 键: 关掉时横幅回落卡片底色 (设置页「界面」节真连线).
+    @AppStorage("dynamicColors") var bannerDynamicColors = true
 
     var body: some View {
         bannerBody
