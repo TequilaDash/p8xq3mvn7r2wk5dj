@@ -11,7 +11,7 @@ NS_ASSUME_NONNULL_BEGIN
 /// 同步阻塞最长 10s (内部信号量等 completion), 调试入口可接受.
 /// 返回: 成功 = @"pid=<n>"; 失败 = 错误描述 (不抛异常, 不返回 nil).
 ///
-/// userInfo 的五个键必须与 TequilaDashLiveProcess/main.m 的键名逐字一致.
+/// userInfo 的六个键必须与 TequilaDashLiveProcess/main.m 的键名逐字一致.
 NSString *TequilaDashLiveProcessDebugLaunch(NSDictionary<NSString *, id> *userInfo);
 
 NS_ASSUME_NONNULL_END

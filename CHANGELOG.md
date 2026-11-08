@@ -1,3 +1,13 @@
+## [0.3.790] - 2026-11-08
+
+- 沙盒容器.S8 真·跳访客落地：LiveContainer 核心栈**整文件搬运**进扩展 target（LCBootstrap / Dyld / SecItem / NSUserDefaults / NSFileManager / Dead10cc / IDFV / NSURLSession hooks / LCMachOUtils / LCSharedUtils / dyld_bypass_validation 等, 约 3000 行, 不重写只适配），扩展 main.m 收口 userInfo 后直进 LiveContainerMain —— hook 顺序块、NSBundle/CFBundle/ExecPath 覆写、dlopen_nolock、跳进访客 main 全走 LC 原文
+
+- 沙盒容器.适配层收敛为四类：①扩展 scheme[0] 判定改 TequilaDashliveprocess（LCBootstrap:676）；②NSExtension Handler 类名；③docPath 直取 SandboxApps 根（目录布局 Applications/ + Data/Application/ 与 LC 惯例逐层对齐）；④guest 信息源改读访客自己的 Info.plist（不再要求 LCAppInfo.plist）
+
+- 沙盒容器.证书链打通：p12 导入成功时同步落 LCCertificatePassword（UserDefaults），LC 的 JITLess dlopen 钩子门槛（LCBootstrap.m:525）原文直读，零 shim
+
+- 蜂窝.卡点失败文案区分「蜂窝隧道支持开关未开」与「开关已开但通路未建」—— 总开关默认关时跟着弹卡关蜂窝也白关，必须先开开关（随本版首次出货）
+
 ## [0.3.789] - 2026-11-08
 
 - 蜂窝.修「蜂窝下启用 JIT 报 Connection refused 且卡点弹窗不出来」（用户已报两次的 P0 欠账）：隧道就绪凭证带 systemUptime 年龄戳，三个卡点门（beginLoopbackGate / awaitLoopbackGate / glitchFlow）对超龄凭证就地重验 —— 隧道死于无路径事件的场景下缓存不再永久假阳性（task-29-①；重验失败即清凭证转卡点流程，task-29-②）

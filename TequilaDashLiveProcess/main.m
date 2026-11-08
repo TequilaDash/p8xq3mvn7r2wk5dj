@@ -3,18 +3,13 @@
 //  TequilaDashLiveProcess
 //
 //  访客进程宿主扩展入口 (LiveContainer LiveProcess 的等价物).
-//  方案: C:/Users/xcrad/.omp/work/reports/m5-extension-target-plan.md (S1 + S5 阶段).
+//  方案: C:/Users/xcrad/.omp/work/reports/m5-extension-target-plan.md (S1-S6 + S8).
 //
-//  职责边界 (本阶段):
-//    · 提供一个独立 .appex 进程与 extension request 处理骨架;
-//    · NSXPCDecoder 校验旁路 (纯 ObjC runtime, 可移植);
-//    · UIApplicationMain / NSExtensionMain 替身照 LC 同形就位.
-//    · **不跳访客** (S8): dlopen hook 需要 performHookDyldApi 等价物 (dyld4 内部
-//      LibSystemHelpers vtable 改写 + adrp/ldr 模拟, LC 在 Tweaks/Dyld.m:199-235/459-520),
-//      属于方案第 6.1 节登记的 S8 前置缺口 —— 缺口落地前 hook 装不上, UIKit 会被
-//      正常加载, UIApplicationMain 替身不会被绑定, 扩展走系统普通 extension 流程.
-//
-//  LC 对照: ref/lc_rev/LiveProcess/main.m (键名/结构逐段标注行号).
+//  本阶段 (S8 已接): beginRequest 收口 runloop 后直接进 LCBootstrap 的
+//  LiveContainerMain —— hook 顺序块 / NSBundle+CFBundle+ExecPath 覆写 /
+//  dlopen_nolock 载入访客 / 跳进访客 main, 全部走 LC 原文 (LC/ 目录, 整文件搬运).
+//  本文件只负责: 收 userInfo → 映射 LC 键 → setenv → 调 LiveContainerMain →
+//  失败时把 defaults "error" 如实 cancel 回宿主.
 //
 
 #import <dlfcn.h>
@@ -25,10 +20,12 @@
 
 #pragma mark - 访客参数键名
 
-// 宿主经 NSExtensionItem.userInfo 传入的五个键.
-// 与主 App 侧 TequilaDash/Engine/LiveProcessDebugLauncher.m 逐字对齐;
+// 宿主经 NSExtensionItem.userInfo 传入的六个键.
+// 与主 App 侧 TequilaDash/Engine/LiveProcessDebugLauncher.m 与 SandboxAppDetailView 逐字对齐;
 // 刻意不用 LC 的键名 (hostUrlScheme/selected/...), 防止与真实 LC 混跑时串味 (方案 6.2).
+// 本文件在取值后映射成 LC 的键名喂给 LCBootstrap —— LCBootstrap 原文零改动读它的键.
 static NSString * const TDLPHostSchemeKey    = @"TequilaDashHostScheme";
+static NSString * const TDLPGuestFolderNameKey = @"TequilaDashGuestFolderName";
 static NSString * const TDLPGuestBundleIDKey = @"TequilaDashGuestBundleID";
 static NSString * const TDLPContainerUUIDKey = @"TequilaDashContainerUUID";
 static NSString * const TDLPHomePathKey      = @"TequilaDashHomePath";
@@ -69,29 +66,49 @@ static NSDictionary *_tdlpRetrievedAppInfo;
 
 static char **_tdlpEnvp, **_tdlpApple = NULL;
 
-// S5 阶段: 不跳访客 —— 拿到 userInfo 打日志, 然后如实取消请求
-// (cancel 是真话: 访客启动还没接线; 等真正跳访客时这里换成 LCBootstrap 等价链路).
+// LCBootstrap 的编排入口 (LC/LCBootstrap.m:665): hook 顺序块 + 覆写 NSBundle/CFBundle/
+// ExecPath + dlopen_nolock 载入访客 + getAppEntryPoint + 跳进访客 main.
+// 成功时它**不返回** (控制权在访客 main 手里); 返回 = 失败, 错误串已写入 defaults "error".
+extern int LiveContainerMain(int argc, char *argv[]);
+
+// S8 阶段: 真·跳访客 —— LC 的 LiveProcess/main.m:38-101 同一条链 (去 SideStore 分支).
 static int TequilaDashLiveProcessMain(int argc, char *argv[]) {
     // 等 NSExtensionContext 初始化完成 (beginRequest 里 CFRunLoopStop 收口)
     CFRunLoopRun();
 
     NSDictionary *appInfo = [TequilaDashLiveProcessHandler retrievedAppInfo];
     NSLog(@"[TequilaDashLiveProcess] argc=%d userInfo=%@", argc, appInfo);
-
-    NSExtensionContext *context = [TequilaDashLiveProcessHandler extensionContext];
-    if (appInfo && context) {
-        NSArray<NSString *> *keys = @[TDLPHostSchemeKey, TDLPGuestBundleIDKey,
-                                      TDLPContainerUUIDKey, TDLPHomePathKey, TDLPBookmarksKey];
-        for (NSString *key in keys) {
-            NSLog(@"[TequilaDashLiveProcess] %@ = %@", key, appInfo[key] ?: @"<缺失>");
-        }
-        // 访客启动未接线 (S8): 如实取消, 不假装成功
-        [context cancelRequestWithError:
-            [NSError errorWithDomain:@"TequilaDashLiveProcess" code:1
-                            userInfo:@{NSLocalizedDescriptionKey:
-                                       @"访客启动未接线 (S8 未实施), 本次扩展请求仅用于链路验证"}]];
+    if (!appInfo) {
+        return 1;
     }
-    return 0;
+
+    // 家目录环境: LC_HOME_PATH = SandboxApps 根 (LCBootstrap 的 docPath 基准),
+    // 访客 HOME 由 LCBootstrap 统一 setenv (LCBootstrap.m:472-473), 这里不抢.
+    setenv("LP_HOME_PATH", getenv("HOME"), 1);
+    NSString *home = appInfo[TDLPHomePathKey];
+    if (home.fileSystemRepresentation) {
+        setenv("LC_HOME_PATH", home.fileSystemRepresentation, 1);
+    }
+
+    // LC 键映射: LCBootstrap 原文读 selected / selectedContainer / hostUrlScheme.
+    NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+    [defaults setObject:appInfo[TDLPHostSchemeKey] forKey:@"hostUrlScheme"];
+    [defaults setObject:appInfo[TDLPGuestFolderNameKey] forKey:@"selected"];
+    [defaults setObject:appInfo[TDLPContainerUUIDKey] forKey:@"selectedContainer"];
+
+    // 跳! (成功 = 不返回)
+    int ret = LiveContainerMain(argc, argv);
+
+    // 走到这 = 访客没起来: LCBootstrap 已把错误串写进 defaults "error", 如实取消请求.
+    NSString *errorText = [defaults objectForKey:@"error"];
+    NSExtensionContext *context = [TequilaDashLiveProcessHandler extensionContext];
+    if (context) {
+        NSString *message = errorText ?: [NSString stringWithFormat:@"LiveContainerMain 返回 %d", ret];
+        [context cancelRequestWithError:
+            [NSError errorWithDomain:@"TequilaDashLiveProcess" code:2
+                            userInfo:@{NSLocalizedDescriptionKey: message}]];
+    }
+    return ret;
 }
 
 #pragma mark - 入口替身

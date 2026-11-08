@@ -151,9 +151,10 @@ struct SandboxAppDetailView: View {
         .buttonStyle(.plain)
     }
 
-    /// 键名与 TequilaDashLiveProcess/main.m 逐字对齐（五个键, 刻意不用 LC 的命名防串味）.
+    /// 键名与 TequilaDashLiveProcess/main.m 逐字对齐（六个键, 刻意不用 LC 的命名防串味）.
     private enum TDLPUserInfoKey {
         static let hostScheme = "TequilaDashHostScheme"
+        static let guestFolderName = "TequilaDashGuestFolderName"
         static let guestBundleID = "TequilaDashGuestBundleID"
         static let containerUUID = "TequilaDashContainerUUID"
         static let homePath = "TequilaDashHomePath"
@@ -164,14 +165,18 @@ struct SandboxAppDetailView: View {
     private func launchLiveProcessDebug() {
         guard !busy else { return }
         busy = true
+        let guestFolderName = (app.appPath as NSString).lastPathComponent
         let guestBundleID = app.id
         let containerUUID = activeContainer ?? ""
-        let homePath = containers.first.map { SandboxContainerStore.containerPath(folderName: $0.folderName) }
-            ?? NSHomeDirectory()
+        // LC_HOME_PATH 基准 = SandboxApps 根 (LCBootstrap docPath 直取),
+        // 其下 Applications/ + Data/Application/ 与 LC 惯例一致.
+        let sandboxRoot = (app.appPath as NSString).deletingLastPathComponent
+        let homePath = containers.first.map { _ in sandboxRoot } ?? sandboxRoot
         Task {
             let outcome = await Task.detached(priority: .userInitiated) { () -> String in
                 let userInfo: NSDictionary = [
                     TDLPUserInfoKey.hostScheme: "TequilaDash",
+                    TDLPUserInfoKey.guestFolderName: guestFolderName,
                     TDLPUserInfoKey.guestBundleID: guestBundleID,
                     TDLPUserInfoKey.containerUUID: containerUUID,
                     TDLPUserInfoKey.homePath: homePath,

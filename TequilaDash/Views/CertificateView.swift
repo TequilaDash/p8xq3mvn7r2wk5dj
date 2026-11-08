@@ -150,6 +150,14 @@ struct CertificateView: View {
             Button("导入") {
                 guard let data = pendingP12Data else { return }
                 let result = certStore.importP12(data: data, password: p12Password)
+                if result.ok {
+                    // 访客进程链 (LiveProcess) 用同一把证书: LC 的 JITLess dlopen 钩子
+                    // 以 LCCertificatePassword 是否存在为门槛 (LCBootstrap.m:525),
+                    // 这里同步落一份, LCSharedUtils.certificatePassword 原文直读.
+                    UserDefaults.standard.set(p12Password, forKey: "LCCertificatePassword")
+                } else {
+                    UserDefaults.standard.removeObject(forKey: "LCCertificatePassword")
+                }
                 p12Message = result.ok ? "[完成] \(result.message)" : "[失败] \(result.message)"
                 pendingP12Data = nil
             }

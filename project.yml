@@ -27,8 +27,8 @@ settings:
   base:
     PRODUCT_BUNDLE_IDENTIFIER: com.tequila.dash
     PRODUCT_NAME: TequilaDash
-    MARKETING_VERSION: "0.3.789"
-    CURRENT_PROJECT_VERSION: "1078"
+    MARKETING_VERSION: "0.3.790"
+    CURRENT_PROJECT_VERSION: "1079"
     # 注：这里**刻意不写** `SWIFT_VERSION` —— 实测顶层 `settings.base` 的它**不被 xcodegen 采纳**，
     # 真正生效的是下面 target 层那一份（当前 `"6.0"` = Swift 6 语言模式）。
     # 另注：**编译器版本 ≠ 语言模式** —— CI 用 Xcode 27 自带的 Swift 6.4 编译器，
@@ -271,8 +271,8 @@ targets:
         # 版本号三处同步（HARD-RULES 22）：主 App 的 settings.base 与 Resources/Info.plist 之外，
         # 扩展 target 是第三处 —— 原先这里停在 0.3.587/881（落后主 App 33 个版本），
         # 会让 .appex 的 CFBundleVersion 与主 App 不一致，iOS 安装/升级可拒或把扩展判过期。
-        MARKETING_VERSION: "0.3.789"
-        CURRENT_PROJECT_VERSION: "1078"
+        MARKETING_VERSION: "0.3.790"
+        CURRENT_PROJECT_VERSION: "1079"
         IPHONEOS_DEPLOYMENT_TARGET: "18.0"
         # 与主 target 同口径的 Swift 6 严格并发（详见主 target 的说明）.
         SWIFT_VERSION: "6.0"
@@ -295,6 +295,9 @@ targets:
     sources:
       # 本目录只有 main.m (Info.plist / entitlements 由下方键直取, 不当资源).
       - path: TequilaDashLiveProcess
+        excludes:
+          # LC/main.c 是 LC 主 App 的 -e 入口 (定义 main()), 扩展链接会撞; 扩展入口在 main.m.
+          - "LC/main.c"
       # 复用主 App 已有的 C 底座, 逐个文件列, 不列目录 (方案 2.2: 列 Engine/ 会把整棵 Swift 树编进扩展).
       - path: TequilaDash/Engine/EscHookBridge.c
       - path: TequilaDash/Services/MachOLoader/uloader.c
@@ -308,8 +311,8 @@ targets:
         PRODUCT_NAME: TequilaDashLiveProcess
         # 版本号三处同步 (HARD-RULES 22): 与 Tunnel 同款纪律, 缺写则 .appex 的 CFBundleVersion 为空,
         # iOS 会因主 App 与扩展版本不一致拒装/判过期.
-        MARKETING_VERSION: "0.3.789"
-        CURRENT_PROJECT_VERSION: "1078"
+        MARKETING_VERSION: "0.3.790"
+        CURRENT_PROJECT_VERSION: "1079"
         IPHONEOS_DEPLOYMENT_TARGET: "18.0"
         SWIFT_VERSION: "6.0"
         SWIFT_STRICT_CONCURRENCY: complete

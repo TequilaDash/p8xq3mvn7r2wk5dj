@@ -10,12 +10,13 @@
 #import "LiveProcessDebugLauncher.h"
 #import <Foundation/Foundation.h>
 
-// 与 TequilaDashLiveProcess/main.m 逐字对齐的五个键 (防串味, 不用 LC 的键名).
-static NSString * const TDLPHostSchemeKey    = @"TequilaDashHostScheme";
-static NSString * const TDLPGuestBundleIDKey = @"TequilaDashGuestBundleID";
-static NSString * const TDLPContainerUUIDKey = @"TequilaDashContainerUUID";
-static NSString * const TDLPHomePathKey      = @"TequilaDashHomePath";
-static NSString * const TDLPBookmarksKey     = @"TequilaDashBookmarks";
+// 与 TequilaDashLiveProcess/main.m 逐字对齐的六个键 (防串味, 不用 LC 的键名).
+static NSString * const TDLPHostSchemeKey      = @"TequilaDashHostScheme";
+static NSString * const TDLPGuestFolderNameKey = @"TequilaDashGuestFolderName";
+static NSString * const TDLPGuestBundleIDKey   = @"TequilaDashGuestBundleID";
+static NSString * const TDLPContainerUUIDKey   = @"TequilaDashContainerUUID";
+static NSString * const TDLPHomePathKey        = @"TequilaDashHomePath";
+static NSString * const TDLPBookmarksKey       = @"TequilaDashBookmarks";
 
 NSString * const TequilaDashLiveProcessBundleID = @"com.tequila.dash.liveprocess";
 
