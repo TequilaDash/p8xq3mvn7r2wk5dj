@@ -1,6 +1,9 @@
 @import Darwin;
 @import Foundation;
 @import MachO;
+// 本仓适配: LC 原文经 LCUtils.h 转发拿到本头 (typedef LCParseMachOCallback /
+// PATCH_EXEC_RESULT_*), 搬运集不含 LCUtils, 这里直取自己的头 (run 42478120577 实锤).
+#import "LCMachOUtils.h"
 #import "litehook.h"
 #include "dyld_cache_format.h"
 
