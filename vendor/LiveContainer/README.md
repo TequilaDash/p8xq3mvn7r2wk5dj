@@ -56,6 +56,21 @@ fishhook/  litehook/  ZSign/  xcconfigs/  Resources/
 2. `TequilaDashLiveProcess/main.m` — 扩展入口类名改 `TequilaDashLiveProcessHandler`。
 3. `TequilaDash/HostGuestEntry.m` — 双模入口（本仓特有，LC 用 `-e _LiveContainerMain`）。
 4. `ZSign/tequiladash_wrapper.mm` — 本仓签名器桥接（LC 无此文件）。
+5. `TequilaDashLCUIAdapters/Utilities/LCUtils.m` — **编译用适配副本**，替代镜像里的
+   `LiveContainerSwiftUI/Utilities/LCUtils.m`（该镜像文件在 framework target 的 sources 里被
+   `excludes` 排除）。三处差异：
+   - `#import <IOKit/IOKitLib.h>` 与 `isTXMScriptRequired` 的 IOKit 调用用
+     `#if TARGET_OS_MACCATALYST || TARGET_OS_OSX` 包住（上游链接 MacOSX SDK 的
+     IOKit.framework，本仓只编 iOS，iOS SDK 无公开 IOKit 头）。
+   - 三个 `../../` 相对 include 改裸名（`LCSharedUtils.h` /
+     `DecoratedAppSceneViewController.h` / `zsigner.h`），由 `HEADER_SEARCH_PATHS` 解析。
+   同步上游 LCUtils.m 时把这三处差异重新应用到适配副本。
+6. `project.yml` 的 `LiveContainerSwiftUI` framework target：模块名必须为
+   `LiveContainerSwiftUI`（3 个多任务 ObjC 文件 import 生成的 `LiveContainerSwiftUI-Swift.h`），
+   `SWIFT_VERSION: "5.0"`（上游 pbxproj:1197/1240 原值），排除上游 `@main` 入口
+   `App/LiveContainerSwiftUIApp.swift`（宿主入口是 `HostGuestEntry.m → TDHostBoot()`）。
+   LC 核心 `.m` 不编进 framework（主 App 已编适配副本），用 `-Wl,-undefined,dynamic_lookup`
+   运行时解析，避免同进程两份 ObjC 类。
 
 ## 同步上游的标准流程
 
