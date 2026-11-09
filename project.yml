@@ -240,6 +240,12 @@ targets:
       - path: vendor/LiveContainer/Resources/Frameworks
         type: folder
         buildPhase: resources
+      # LC 的 en.lproj (上游 Resources/en.lproj): LC framework 里 Shared.swift:162-166 的
+      # String.enBundle 用 `Bundle(path: path!)` 强解包 en.lproj —— 缺它则首个未命中本地化键
+      # 直接崩 (启动闪退真凶之一). 只带 en (LC 的 fallback 语言), 不引入 40+ 语言目录.
+      - path: vendor/LiveContainer/Resources/en.lproj
+        type: folder
+        buildPhase: resources
     settings:
       base:
         # Swift 6 语言模式迁移（原 `swift6-migration` 分支，2026-09-18 已合入 `migrate-xcode`）。

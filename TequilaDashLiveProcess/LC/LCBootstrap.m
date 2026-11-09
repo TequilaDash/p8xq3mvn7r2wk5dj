@@ -276,7 +276,17 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
     NSFileManager *fm = NSFileManager.defaultManager;
     // 本仓适配: LC_HOME_PATH 直接传 SandboxApps 根 (…/Documents/SandboxApps),
     // 其下就是 LC 同款布局 Applications/<name>.app + Data/Application/<UUID>, 不再拼 /Documents.
-    NSString *docPath = [NSString stringWithUTF8String:getenv("LC_HOME_PATH")];
+    // 本仓适配 (启动闪退加固): getenv 可能为 NULL, 而 [NSString stringWithUTF8String:NULL]
+    // 是未定义行为 (实测崩溃). LC_HOME_PATH 缺失时回落 HOME; 两者都缺则如实报错返回.
+    const char *lcHomeEnv = getenv("LC_HOME_PATH");
+    if (!lcHomeEnv) {
+        lcHomeEnv = getenv("HOME");
+    }
+    if (!lcHomeEnv) {
+        NSLog(@"[LCBootstrap][step4a] LC_HOME_PATH and HOME both unset");
+        return @"LC_HOME_PATH 与 HOME 均未设置, 无法定位容器根目录";
+    }
+    NSString *docPath = [NSString stringWithUTF8String:lcHomeEnv];
     
     NSURL *appGroupFolder = nil;
     
@@ -480,6 +490,12 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
 
     }
     
+    // 本仓适配 (启动闪退加固): newHomePath 为 nil 时 .UTF8String 返回 NULL,
+    // setenv(name, NULL, 1) 是未定义行为 (崩溃). 缺路径就如实报错, 不带着半配置去跳 main.
+    if (!newHomePath.length) {
+        NSLog(@"[LCBootstrap][step6a] newHomePath is nil, cannot set guest HOME");
+        return @"访客可写容器路径为空, 未设置 HOME (检查 selectedContainer 与包体 Info.plist)";
+    }
     setenv("CFFIXED_USER_HOME", newHomePath.UTF8String, 1);
     setenv("HOME", newHomePath.UTF8String, 1);
     // we don't change TMP's env in case some apps clear cache by directly deleting the tmp folder,
@@ -691,11 +707,19 @@ int LiveContainerMain(int argc, char *argv[]) {
     lcUserDefaults = NSUserDefaults.standardUserDefaults;
     
     lcSharedDefaults = [[NSUserDefaults alloc] initWithSuiteName: [LCSharedUtils appGroupID]];
-    lcAppUrlScheme = NSBundle.mainBundle.infoDictionary[@"CFBundleURLTypes"][0][@"CFBundleURLSchemes"][0];
+    // 本仓适配 (启动闪退加固): 原写法 infoDictionary[@"CFBundleURLTypes"][0][...][0] 在
+    // CFBundleURLTypes 为空时会对空数组取下标 -> NSRangeException 崩溃. firstObject 全部空安全.
+    NSArray *lcUrlTypes = lcMainBundle.infoDictionary[@"CFBundleURLTypes"];
+    NSArray *lcUrlSchemes = [lcUrlTypes.firstObject objectForKey:@"CFBundleURLSchemes"];
+    lcAppUrlScheme = lcUrlSchemes.firstObject;
     lcAppGroupPath = [[NSFileManager.defaultManager containerURLForSecurityApplicationGroupIdentifier:[NSClassFromString(@"LCSharedUtils") appGroupID]] path];
     // 本仓适配: 扩展 scheme[0] 是 TequilaDashliveprocess (不与真实 LC 的 liveprocess 撞), 判定同步改
     isLiveProcess = [lcAppUrlScheme isEqualToString:@"TequilaDashliveprocess"];
-    setenv("LC_HOME_PATH", getenv("HOME"), 0);
+    // 本仓适配 (启动闪退加固): getenv 可能为 NULL, setenv(name, NULL, ...) 是未定义行为.
+    const char *bootHomeEnv = getenv("HOME");
+    if (bootHomeEnv) {
+        setenv("LC_HOME_PATH", bootHomeEnv, 0);
+    }
 
     NSString *selectedApp = [lcUserDefaults stringForKey:@"selected"];
     NSString *selectedContainer = [lcUserDefaults stringForKey:@"selectedContainer"];
