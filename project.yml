@@ -447,6 +447,18 @@ targets:
         SWIFT_VERSION: "5.0"
         CLANG_ENABLE_OBJC_ARC: "YES"
         CLANG_ENABLE_MODULES: "YES"
+        # 上游 framework 设置 (LiveContainer.xcodeproj:1161-1244):
+        # framework 必须自己有 Info.plist, 否则主 App embed 阶段报
+        # "did not contain an Info.plist" (CI run 42640334187 实测).
+        GENERATE_INFOPLIST_FILE: "YES"
+        SKIP_INSTALL: "YES"
+        DYLIB_COMPATIBILITY_VERSION: "1"
+        DYLIB_CURRENT_VERSION: "1"
+        DYLIB_INSTALL_NAME_BASE: "@rpath"
+        LD_RUNPATH_SEARCH_PATHS:
+          - "$(inherited)"
+          - "@executable_path/Frameworks"
+          - "@loader_path/Frameworks"
         # 用本仓适配桥接头 (CI run 42626661044 实测: 上游原件会让 FoundationPrivate.h
         # 被引入两次, NSExtension 等重复 @interface 导致 PCH 失败). 镜像原件保持原样.
         SWIFT_OBJC_BRIDGING_HEADER: "$(SRCROOT)/TequilaDashLCUIAdapters/LCUI-Bridging-Header.h"
