@@ -112,6 +112,18 @@ fishhook/  litehook/  ZSign/  xcconfigs/  Resources/
     与 `TweakLoader` 的区别：TweakLoader 是访客进程内的 tweak 装载器（LCBootstrap dlopen），
     TestJITLess 只是 JIT-less 能力探针（constructor 置 `LC_JITLESS_TEST_LOADED`）。
 
+14. **JIT-less 诊断入口桥（本仓特有，上游无）** —— 上游 `LCJITLessDiagnoseView` 只在
+    `LCSettingsView` 里可达，本仓宿主不渲染上游设置页。桥接三件套：
+    - `TequilaDashLCUIAdapters/JITLessDiagnoseBridge.swift`（编进 framework）：
+      `@objc class TDJITLessDiagnoseHost.makeViewController()`，包 `LCJITLessDiagnoseView()`
+      并注入 `DataManager.shared.model`（缺它 `@EnvironmentObject` 首帧崩）。
+    - `TequilaDash/Views/JITLessDiagnoseView.swift`（宿主）：`NSClassFromString` 反射拿
+      UIViewController，反射不到显示 `ContentUnavailableView`，不留假入口。
+    - `TequilaDash/Views/MoreView.swift`：「元数据与诊断」组新增「JIT-less 诊断」行。
+    另注意：新 dylib target 必须整段覆盖顶层 `OTHER_LDFLAGS`（含主 App 专用的
+    `$(DERIVED_FILE_DIR)/SAP/lib/libunicorn.a`），否则继承后链接期找不到文件
+    （CI run 42663291263 实测，对齐 Tunnel 的覆盖写法）。
+
 ## 同步上游的标准流程
 
 ```bash
