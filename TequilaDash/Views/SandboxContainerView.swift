@@ -138,9 +138,8 @@ struct SandboxContainerView: View {
     @State private var showTweakImporter = false
     /// 启动重签期间的全页遮罩开关
     @State private var busy = false
-    /// 蜂窝区状态 (设置页 onAppear 从 UserDefaults 同步)
-    @State private var cellularEnabled = false
-    @State private var cellularMode: CellularTunnelManager.ToggleMode = .auto
+    /// 存储管理行: 容器可写目录的实测占用 (打开设置页时后台统计, nil = 统计中).
+    @State private var storageUsageText: String?
     @State private var deleteTarget: SandboxApp?
     /// 已锁定应用的二次确认目标：第一道确认走 `deleteTarget`，锁定项再走这一道.
     @State private var lockedDeleteTarget: SandboxApp?
@@ -428,89 +427,22 @@ struct SandboxContainerView: View {
 
     // MARK: - 弹出层
 
-    /// 设置页：只放**真能生效**的一项 —— 列表排序. 改前这里是「设置待接入」空态，
-    /// 换成排序选择器，不放假开关.
-    /// 设置页: LCSettingsView 同构 (证书 → 界面 → 通知 → 关于 → 开发者),
-    /// 蜂窝区 = 本仓等效 LC 的 JIT 启用器配置; 排序留底部 (列表页设置).
+    /// 设置页, LCSettingsView 同序: 排序 → 显示 → 存储 → 证书 → 界面 → 通知 → 关于 → 开发者.
+    /// 只放**真能生效**的项 (排序落 @AppStorage, 存储行读真实目录, 不放假开关).
+    /// 蜂窝网络节已按 owner 指令删除: 那是「更多-蜂窝隧道支持」二级页
+    /// (CellularSupportView) 的域, 不属于容器设置.
+    /// 每节独立计算属性: 本仓 CI 四次实证「视图构造 + 多层修饰」堆在一条 body 里会超时.
     private var settingsSheet: some View {
         NavigationStack {
             List {
-                Section {
-                    NavigationLink {
-                        CertificateView()
-                    } label: {
-                        Text(UserDefaults.standard.string(forKey: "LCCertificatePassword") != nil
-                             ? "查看 / 移除证书" : "导入证书 (JITLess 需要)")
-                    }
-                } header: {
-                    Text("证书 (JITLess)")
-                } footer: {
-                    Text("iOS 26 起无 JIT 必须走 JITLess: 导入 p12 开发证书后, 访客以重签+钩子方式运行.")
-                }
-                Section {
-                    Toggle("蜂窝隧道支持", isOn: $cellularEnabled)
-                        .onChange(of: cellularEnabled) { newValue in
-                            UserDefaults.standard.set(newValue, forKey: CellularTunnelManager.enabledKey)
-                        }
-                    if cellularEnabled {
-                        Picker("关蜂窝方式", selection: $cellularMode) {
-                            ForEach(CellularTunnelManager.ToggleMode.allCases, id: \.self) { mode in
-                                Text(mode.label).tag(mode)
-                            }
-                        }
-                        .onChange(of: cellularMode) { newValue in
-                            CellularTunnelManager.shared.toggleMode = newValue
-                        }
-                    }
-                } header: {
-                    Text("蜂窝网络")
-                } footer: {
-                    Text("蜂窝下使用本地隧道需开此开关 (本仓等效 LC 的 JIT 启用器配置).")
-                }
-                Section {
-                    Toggle("动态配色", isOn: $dynamicColors)
-                } header: {
-                    Text("界面")
-                } footer: {
-                    Text("横幅背景与应用图标主色联动 (LCAppBannerView 的 dynamicColors 同款).")
-                }
-                Section {
-                    Button {
-                        AppHaptics.tap()
-                        UNUserNotificationCenter.current().removeAllDeliveredNotifications()
-                        ToastCenter.shared.show("已清除通知", seconds: 2.0)
-                    } label: {
-                        Text("清除通知")
-                    }
-                }
-                Section {
-                    HStack {
-                        Image(systemName: "link")
-                        Button("LiveContainer/LiveContainer") {
-                            if let url = URL(string: "https://github.com/LiveContainer/LiveContainer") {
-                                UIApplication.shared.open(url)
-                            }
-                        }
-                    }
-                    infoRow("版本", Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?")
-                        .onTapGesture(count: 5) {
-                            developerMode = true
-                        }
-                } header: {
-                    Text("关于")
-                } footer: {
-                    Text("沙盒容器基于 LiveContainer (GPL) 移植.")
-                }
-                if developerMode {
-                    Section {
-                        Toggle("启动 App 时忽略 JIT 检查", isOn: $ignoreJITOnLaunch)
-                    } header: {
-                        Text("开发者")
-                    } footer: {
-                        Text("LCBootstrap 的 checkJITEnabled 读取本键; 供 JITLess 调试.")
-                    }
-                }
                 sortSection
+                displaySection
+                storageSection
+                certSection
+                interfaceSection
+                notificationsSection
+                aboutSection
+                developerSections
             }
             .listStyle(.plain)
             .listSectionSpacing(12)
@@ -518,9 +450,146 @@ struct SandboxContainerView: View {
             .background(AppTheme.surfaceBase)
             .navigationTitle("设置")
             .navigationBarTitleDisplayMode(.inline)
-            .onAppear {
-                cellularEnabled = UserDefaults.standard.bool(forKey: CellularTunnelManager.enabledKey)
-                cellularMode = CellularTunnelManager.shared.toggleMode
+            .onAppear(perform: refreshSettingsState)
+        }
+    }
+
+    /// 打开设置页时同步一次动态值 (存储占用后台统计, 不卡打开动画).
+    ///
+    /// 磁盘遍历走 `Task.detached` (与 reloadContainers / launchGuest 同一取向);
+    /// 算完回 MainActor 再落 @State, 不在隔离域外写视图状态.
+    private func refreshSettingsState() {
+        storageUsageText = nil
+        Task {
+            let bytes = await Task.detached(priority: .utility) {
+                (try? FileService().countTree(at: SandboxContainerStore.dataDirectory.path))?.bytes ?? 0
+            }.value
+            storageUsageText = IPADownloadLibrary.sizeText(bytes)
+        }
+    }
+
+    /// 排序: 原 sortSection 收进节头 (LCSettingsView 把排序/杂项放顶部).
+    private var sortSection: some View {
+        Section {
+            sortPicker
+        } header: {
+            Text("排序")
+        } footer: {
+            Text("容器列表顺序, 关掉再开仍是上次的选择.")
+        }
+    }
+
+    /// 显示: 隐藏应用找回入口 —— 搜索框有字时隐藏项照常露面 (filteredApps 同口径).
+    private var displaySection: some View {
+        Section {
+            Text("隐藏的容器不在主列表, 在列表页搜索框输入名称或 Bundle ID 就能找到它们.")
+                .font(AppFont.caption)
+                .foregroundStyle(.secondary)
+        } header: {
+            Text("显示")
+        } footer: {
+            Text("单个应用的锁定 / 隐藏开关在各应用的管理页.")
+        }
+    }
+
+    /// 存储管理: 容器可写目录的真实占用 (后台统计, 与 FileBrowser 同一套磁盘读).
+    private var storageSection: some View {
+        Section {
+            infoRow("可写目录占用", storageUsageText ?? "统计中…")
+        } header: {
+            Text("存储管理")
+        } footer: {
+            Text("Documents/SandboxApps/Data 的实测大小; 重建入口在各应用的管理页.")
+        }
+    }
+
+    /// 证书 (JITLess): 原样保留, 只是拆成独立属性.
+    private var certSection: some View {
+        Section {
+            certRow
+        } header: {
+            Text("证书 (JITLess)")
+        } footer: {
+            Text("iOS 26 起无 JIT 必须走 JITLess: 导入 p12 开发证书后, 访客以重签+钩子方式运行.")
+        }
+    }
+
+    private var certRow: some View {
+        NavigationLink {
+            CertificateView()
+        } label: {
+            Text(UserDefaults.standard.string(forKey: "LCCertificatePassword") != nil
+                 ? "查看 / 移除证书" : "导入证书 (JITLess 需要)")
+        }
+    }
+
+    /// 界面: 动态配色真连线 (横幅染色跟随).
+    private var interfaceSection: some View {
+        Section {
+            Toggle("动态配色", isOn: $dynamicColors)
+        } header: {
+            Text("界面")
+        } footer: {
+            Text("横幅背景与应用图标主色联动 (LCAppBannerView 的 dynamicColors 同款).")
+        }
+    }
+
+    /// 通知: 清除已送达通知 (真调用 UNUserNotificationCenter).
+    private var notificationsSection: some View {
+        Section {
+            clearNotificationsRow
+        } header: {
+            Text("通知")
+        }
+    }
+
+    private var clearNotificationsRow: some View {
+        Button {
+            AppHaptics.tap()
+            UNUserNotificationCenter.current().removeAllDeliveredNotifications()
+            ToastCenter.shared.show("已清除通知", seconds: 2.0)
+        } label: {
+            Text("清除通知")
+        }
+    }
+
+    /// 关于: 仓库链接 + 版本 (连点五次进开发者节, 与 LCSettingsView 同玩法).
+    private var aboutSection: some View {
+        Section {
+            aboutRows
+        } header: {
+            Text("关于")
+        } footer: {
+            Text("沙盒容器基于 LiveContainer (GPL) 移植.")
+        }
+    }
+
+    @ViewBuilder
+    private var aboutRows: some View {
+        HStack {
+            Image(systemName: "link")
+            Button("LiveContainer/LiveContainer") {
+                if let url = URL(string: "https://github.com/LiveContainer/LiveContainer") {
+                    UIApplication.shared.open(url)
+                }
+            }
+        }
+        infoRow("版本", Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?")
+            .onTapGesture(count: 5) {
+                developerMode = true
+            }
+    }
+
+    /// 开发者节: 连点版本五次才出现, 开关真被 LCBootstrap 的 checkJITEnabled 读取.
+    @ViewBuilder
+    private var developerSections: some View {
+        if developerMode {
+            Section {
+                Toggle("启动 App 时忽略 JIT 检查", isOn: $ignoreJITOnLaunch)
+            } header: {
+                Text("开发者")
+            } footer: {
+                Text("LCBootstrap 的 checkJITEnabled 读取本键; 供 JITLess 调试.")
             }
         }
     }
@@ -584,7 +653,7 @@ struct SandboxContainerView: View {
                 } header: {
                     Text("全局模块 (Tweaks)")
                 } footer: {
-                    Text("目录: Documents/SandboxApps/Tweaks (LC_GLOBAL_TWEAKS_FOLDER 同款, 已挂给访客). dylib 注入装载器 (TweakLoader) 下一版接入.")
+                    Text("目录: Documents/SandboxApps/Tweaks (LC_GLOBAL_TWEAKS_FOLDER 同款, 已挂给访客). 访客启动时由 TweakLoader.dylib 按 LC 原样递归 dlopen 全局模块与每应用选定目录.")
                 }
             }
             .listStyle(.plain)
@@ -626,24 +695,6 @@ struct SandboxContainerView: View {
             .navigationTitle("源")
             .navigationBarTitleDisplayMode(.inline)
         }
-    }
-
-    /// 排序一项，落 `@AppStorage`，关掉再开仍是上次的选择.
-    ///
-    /// 标题行与选择器拆成两个属性：本仓 CI 四次实证「视图构造 + 多层修饰」堆在一起会超时.
-    private var sortSection: some View {
-        Section {
-            sortHeader
-            sortPicker
-        }
-    }
-
-    private var sortHeader: some View {
-        AppSectionHeader("排序", subtitle: "容器列表顺序", symbol: "arrow.up.arrow.down.circle",
-                         tint: AppModule.store.tint)
-            .padding(.top, 4)
-            .padding(.bottom, 10)
-            .rowInList
     }
 
     private var sortPicker: some View {

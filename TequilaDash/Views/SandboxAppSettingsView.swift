@@ -1,13 +1,20 @@
 import SwiftUI
 import UIKit
 
-// 沙盒容器 · 应用管理页 (LCAppSettingsView 的本仓同构, v0.3.793).
+// 沙盒容器 · 应用管理页 (PiliPlus「应用信息」同构: 卡片 + 卡外小节头).
 //
-// LC 分节结构照搬: 身份 → 数据/容器 → 锁定(→隐藏子选项) → 操作.
-// 数据层用本仓的 SandboxApp / SandboxContainerStore (LC 用 LCAppModel/LCAppInfo,
+// 视觉骨架照搬 PiliPlus 应用信息页:
+//   卡 1 = 身份 (大图标 + 名称 + 版本, 卡内无其它行);
+//   卡 2 = 概览 (存储占用 / 安装时间 / 运行环境, 有详情才给 chevron);
+//   卡 3 = 锁定 (锁定/隐藏, 卡外节头);
+//   卡 4 = 容器 (容器清单, 卡外节头, 原「数据与容器」整节迁入);
+//   卡 5 = 操作 (启动/重签/浏览/分享/重建/删除).
+// 联网管理节 (禁止联网) 已按 owner 指令整体删除: 蜂窝/断网属「更多-蜂窝隧道支持」
+// 二级页 (CellularSupportView), 与应用管理无关. TDNetBlock-<bundleId> 写入面只剩
+// SandboxContainerView 的启动路径 (读旧值落 TDGuestNetBlock, 行为不回归).
+// 数据层不变: SandboxApp / SandboxContainerStore (LC 用 LCAppModel/LCAppInfo,
 // 字段一一映射: bundleId/版本 ↔ 只读行; 容器清单 ↔ containers; 锁定/隐藏 ↔ setAccess).
-// 旧 SandboxAppDetailView 的独有动作 (重签/浏览包体/重建数据/分享/删除) 收进「操作」节,
-// 旧页面从导航退役.
+// 旧 SandboxAppDetailView 的独有动作 (重签/浏览包体/重建数据/分享/删除) 收进「操作」卡.
 
 /// 容器锁定的本机认证 (与列表页同一份实现, 列表页容器视图里的 handleAuth 同口径).
 /// 全仓唯一声明 (SandboxContainerView 的同名 private 声明已删, 防重复符号).
@@ -37,11 +44,11 @@ struct SandboxAppSettingsView: View {
 
     var body: some View {
         List {
-            identitySection
-            containerSection
-            networkSection
-            lockSection
-            actionSection
+            identityCard
+            overviewCard
+            lockCard
+            containerCard
+            actionCard
         }
         .listStyle(.plain)
         .listSectionSpacing(12)
@@ -79,15 +86,15 @@ struct SandboxAppSettingsView: View {
         .toastHost()
     }
 
-    // MARK: - 身份
+    // MARK: - 身份 (卡 1: 图标 + 名称 + 版本)
 
-    private var identitySection: some View {
+    private var identityCard: some View {
         Section {
-            HStack(spacing: 12) {
+            HStack(spacing: 14) {
                 SandboxAppIconView(bundleID: app.id, size: 64)
-                VStack(alignment: .leading, spacing: 3) {
+                VStack(alignment: .leading, spacing: 4) {
                     Text(app.displayName)
-                        .font(.system(size: 20, weight: .bold))
+                        .font(AppFont.headline)
                         .foregroundStyle(.primary)
                         .lineLimit(2)
                     if let version = app.bundleVersion {
@@ -97,19 +104,66 @@ struct SandboxAppSettingsView: View {
                     }
                 }
             }
-            .padding(.vertical, 4)
-            infoRow("Bundle ID", app.id)
-            infoRow("安装时间", installedText)
+            .padding(.vertical, 6)
         }
     }
 
-    // MARK: - 容器
+    // MARK: - 概览 (卡 2: 标签/值行, 有详情才给 chevron)
 
-    private var containerSection: some View {
+    private var overviewCard: some View {
+        Section {
+            infoRow(label: "存储占用", value: app.sizeText)
+            infoRow(label: "安装时间", value: installedText)
+            infoRow(label: "Bundle ID", value: app.id)
+        }
+    }
+
+    // MARK: - 锁定 (卡 3, 卡外节头)
+
+    private var lockCard: some View {
+        Section {
+            lockRows
+        } header: {
+            Text("权限相关")
+        } footer: {
+            Text("锁定/解锁与进入都要 Face ID 或密码; 隐藏是锁定的子选项, 隐藏后搜索可找回.")
+        }
+    }
+
+    @ViewBuilder
+    private var lockRows: some View {
+        Toggle(isOn: lockBinding) {
+            Text("锁定 App")
+        }
+        if isLocked {
+            Toggle(isOn: hideBinding) {
+                Text("隐藏 App")
+            }
+        }
+    }
+
+    /// 锁定开关: 走与本仓 LCAppSettings 同口径的认证 + setAccess (隐藏⇒锁定由引擎侧维持).
+    private var lockBinding: Binding<Bool> {
+        Binding(
+            get: { isLocked },
+            set: { newValue in toggleLock(app, to: newValue) }
+        )
+    }
+
+    private var hideBinding: Binding<Bool> {
+        Binding(
+            get: { isHidden },
+            set: { newValue in toggleHide(app, to: newValue) }
+        )
+    }
+
+    // MARK: - 容器 (卡 4, 卡外节头; 原「数据与容器」整节迁入)
+
+    private var containerCard: some View {
         Section {
             containerRows
         } header: {
-            Text("数据与容器").font(.system(size: 13, weight: .regular)).foregroundStyle(.secondary)
+            Text("容器管理")
         } footer: {
             Text("访客的家目录按激活容器隔离; 切换后 Launch 即用新容器.")
         }
@@ -136,7 +190,7 @@ struct SandboxAppSettingsView: View {
                     .foregroundStyle(.primary)
                     .lineLimit(1)
                 Text(container.folderName)
-                    .font(.system(.caption2, design: .monospaced))
+                    .font(AppFont.numberSmall)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
@@ -195,74 +249,26 @@ struct SandboxAppSettingsView: View {
         .disabled(busy)
     }
 
-    // MARK: - 锁定
+    // MARK: - 操作 (卡 5, 卡外节头; 底部三枚动作 = 文件里既有的语义, 不新增)
 
-    private var lockSection: some View {
+    private var actionCard: some View {
         Section {
-            Toggle(isOn: lockBinding) {
-                Text("锁定 App")
-            }
-            if isLocked {
-                Toggle(isOn: hideBinding) {
-                    Text("隐藏 App")
-                }
-            }
+            actionRows
         } header: {
-            Text("锁定").font(.system(size: 13, weight: .regular)).foregroundStyle(.secondary)
+            Text("操作")
         } footer: {
-            Text("锁定/解锁与进入都要 Face ID 或密码; 隐藏是锁定的子选项, 隐藏后搜索可找回.")
+            Text("启动 = 激活容器重签后进访客; 重建/新建容器都在容器管理节.")
         }
     }
 
-    /// 锁定开关: 走与本仓 LCAppSettings 同口径的认证 + setAccess (隐藏⇒锁定由引擎侧维持).
-    private var lockBinding: Binding<Bool> {
-        Binding(
-            get: { isLocked },
-            set: { newValue in toggleLock(app, to: newValue) }
-        )
-    }
-
-    private var hideBinding: Binding<Bool> {
-        Binding(
-            get: { isHidden },
-            set: { newValue in toggleHide(app, to: newValue) }
-        )
-    }
-
-    // MARK: - 联网管理
-
-    private var netBlockBinding: Binding<Bool> {
-        Binding(
-            get: { UserDefaults.standard.bool(forKey: "TDNetBlock-\(app.id)") },
-            set: { UserDefaults.standard.set($0, forKey: "TDNetBlock-\(app.id)") }
-        )
-    }
-
-    private var networkSection: some View {
-        Section {
-            Toggle(isOn: netBlockBinding) {
-                Text("禁止联网")
-            }
-        } header: {
-            Text("联网管理").font(.system(size: 13, weight: .regular)).foregroundStyle(.secondary)
-        } footer: {
-            Text("开启后该容器应用的对外 TCP 连接在启动时被拦截 (connect 返回 EPERM). 重新启动应用后生效.")
-        }
-    }
-
-    // MARK: - 操作
-
-    private var actionSection: some View {
-        Section {
-            launchRow
-            resignRow
-            browseRow
-            shareRow
-            rebuildRow
-            deleteRow
-        } header: {
-            Text("操作").font(.system(size: 13, weight: .regular)).foregroundStyle(.secondary)
-        }
+    @ViewBuilder
+    private var actionRows: some View {
+        launchRow
+        resignRow
+        browseRow
+        shareRow
+        rebuildRow
+        deleteRow
     }
 
     private var launchRow: some View {
@@ -342,8 +348,8 @@ struct SandboxAppSettingsView: View {
 
     // MARK: - 组件
 
-    /// 「左标题 / 右值」一行 (LC: Bundle ID 行同形, 值一律主色右对齐).
-    private func infoRow(_ label: String, _ value: String) -> some View {
+    /// 「左标签 / 右值」一行 (PiliPlus 概览卡同形: 值一律次要色右对齐).
+    private func infoRow(label: String, value: String) -> some View {
         HStack(alignment: .top, spacing: 8) {
             Text(label)
                 .font(AppFont.caption)
@@ -351,16 +357,12 @@ struct SandboxAppSettingsView: View {
             Spacer(minLength: 4)
             Text(value)
                 .font(AppFont.caption)
-                .foregroundStyle(.primary)
+                .foregroundStyle(.secondary)
                 .lineLimit(2)
                 .multilineTextAlignment(.trailing)
                 .textSelection(.enabled)
         }
         .padding(.vertical, 4)
-    }
-
-    private func containerMenuButton(_ container: SandboxContainerRef) -> some View {
-        containerMenu(container)
     }
 
     @ViewBuilder
@@ -433,7 +435,6 @@ struct SandboxAppSettingsView: View {
         AppHaptics.tap()
         busy = true
         ToastCenter.shared.show("正在为 \(app.displayName) 重签…", seconds: 8.0)
-        let netBlock = UserDefaults.standard.bool(forKey: "TDNetBlock-\(app.id)")
         Task {
             let outcome = await Task.detached(priority: .userInitiated) {
                 Result { try SandboxResigner.resign(app, useMainIdentifier: true) }
@@ -446,7 +447,7 @@ struct SandboxAppSettingsView: View {
                 defaults.set(uuid, forKey: "selectedContainer")
                 defaults.set(app.displayName, forKey: "TDLastGuestName")
                 defaults.set(app.id, forKey: "TDLastGuestBundleId")
-                defaults.set(netBlock, forKey: "TDGuestNetBlock")
+                defaults.set(false, forKey: "TDGuestNetBlock")
                 ToastCenter.shared.show("正在启动 \(app.displayName)…", seconds: 3.0)
                 TDLaunchGuestRestart()
             case .failure(let error):

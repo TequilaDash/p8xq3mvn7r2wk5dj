@@ -25,15 +25,21 @@ DECL = re.compile(
 # 一次性探针目录：仓库根下的 .tmp* / scratch / _build / .build 不参与普查。
 # 这些目录里的一次性 .swift 会声明顶层 AppTheme / AppSettingsRow 之类撞真身名字，
 # 让全员红对全仓误报（2026-10-21 实测）.
+# LC 上游镜像 (vendor/LiveContainer)：只作同步上游的参照, 不在 xcodegen sources 里,
+# 不参与编译 —— 它与 TequilaDash/ 同名类型 (AppIconView) 属预期, 且上游 SwiftUI 层与
+# ShareExtension 本来就不在同一 target (2026-11-09 实测: 镜像入库后 5 组假阳性).
 SKIP_DIRS = {".build", "_build", "scratch"}
-
 
 
 def _skip(dirpath, root):
     name = os.path.basename(dirpath)
     if name in SKIP_DIRS or name.startswith(".tmp") or name.startswith("_tmp"):
         return True
-    return os.path.abspath(dirpath) == os.path.abspath(root) and False
+    # 镜像按「仓库根相对路径」整树排除 (basename 匹配不到带分隔符的路径).
+    rel = os.path.relpath(dirpath, root).replace(os.sep, "/")
+    if rel == "vendor/LiveContainer" or rel.startswith("vendor/LiveContainer/"):
+        return True
+    return False
 
 
 def scan(root):

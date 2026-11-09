@@ -249,6 +249,8 @@ static void *getAppEntryPoint(void *handle) {
 }
 
 static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContainer, int argc, char *argv[]) {
+    // 本仓适配: 分步面包屑 ([LCBootstrap][stepN]), 访客起不来时控制台逐级定位卡死的步骤.
+    NSLog(@"[LCBootstrap][step1] invokeAppMain enter: selectedApp=%@ selectedContainer=%@", selectedApp, selectedContainer);
     NSString *appError = nil;
     if([[lcUserDefaults objectForKey:@"LCWaitForDebugger"] boolValue]) {
         sleep(100);
@@ -256,6 +258,7 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
     if (!LCSharedUtils.certificatePassword && !isSideStore) {
 #if !TARGET_OS_SIMULATOR
         if(@available(iOS 26.0 ,*))  {
+            NSLog(@"[LCBootstrap][step2] JIT gate: iOS 26+ without certificate password, JITLess mode required");
             return @"JITLess mode is required since iOS 26. Please set it up in settings. \nPlease go to LiveContainer settings -> tap \"Import Certificate from SideStore\" / \"Import Certificate\"";
         }
 #endif
@@ -264,6 +267,7 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
             usleep(1000*100);
         }
         if (!checkJITEnabled()) {
+            NSLog(@"[LCBootstrap][step3] JIT gate: checkJITEnabled still failing after retries");
             appError = @"JIT was not enabled. If you want to use LiveContainer without JIT, setup JITLess mode in settings.";
             return appError;
         }
@@ -284,11 +288,13 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
     } else {
         bundlePath = [[NSBundle.mainBundle.bundleURL URLByAppendingPathComponent:@"Frameworks/SideStoreApp.framework"] path];
     }
+    NSLog(@"[LCBootstrap][step4] guest app bundle path resolved: %@", bundlePath);
     
 
     // 本仓适配: 不写 LCAppInfo.plist, 直接读访客自己的 Info.plist
     // (LCDataUUID 等 LC 专有键缺席无碍 —— selectedContainer 恒由宿主传入).
     guestAppInfo = [NSDictionary dictionaryWithContentsOfFile:[NSString stringWithFormat:@"%@/Info.plist", bundlePath]];
+    NSLog(@"[LCBootstrap][step5] guest Info.plist read at %@: %@", bundlePath, guestAppInfo ? @"found" : @"missing");
 
     // not found locally, let's look for the app in shared folder
     if(!guestAppInfo) {
@@ -300,6 +306,7 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
     }
 
     if(!guestAppInfo) {
+        NSLog(@"[LCBootstrap][step6] guest Info.plist still missing after shared-folder fallback, bundlePath=%@", bundlePath);
         return @"App bundle not found! Unable to read Info.plist.";
     }
     
@@ -666,6 +673,11 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
 
 static void exceptionHandler(NSException *exception) {
     NSString *error = [NSString stringWithFormat:@"%@\nCall stack: %@", exception.reason, exception.callStackSymbols];
+    NSLog(@"[LCBootstrap][step8] uncaught exception, persisting to shared defaults: %@", error);
+    // 本仓适配: 两个分支都把完整错误串写进共享 suite ([LCSharedUtils appGroupID]) 的
+    // lastGuestLaunchError, 宿主 SwiftUI 端读它弹持久 alert; systemUptime 供宿主判陈旧.
+    [lcSharedDefaults setObject:error forKey:@"lastGuestLaunchError"];
+    [lcSharedDefaults setDouble:[[NSProcessInfo processInfo] systemUptime] forKey:@"lastGuestLaunchErrorUptime"];
     if(isLiveProcess) {
         NSExtensionContext *context = [NSClassFromString(@"TequilaDashLiveProcessHandler") extensionContext];
         [context cancelRequestWithError:[NSError errorWithDomain:@"LiveProcess" code:1 userInfo:@{NSLocalizedDescriptionKey: error}]];
@@ -822,6 +834,11 @@ int LiveContainerMain(int argc, char *argv[]) {
         }
         NSString *appError = invokeAppMain(selectedApp, selectedContainer, argc, argv);
         if (appError) {
+            NSLog(@"[LCBootstrap][step7] invokeAppMain returned error, guest launch failed: %@", appError);
+            // 本仓适配: 失败原因同步落共享 suite ([LCSharedUtils appGroupID]) 的 lastGuestLaunchError,
+            // 宿主 SwiftUI 端 (SandboxContainerView) 回壳首帧读它弹持久 alert; systemUptime 供宿主判陈旧.
+            [lcSharedDefaults setObject:appError forKey:@"lastGuestLaunchError"];
+            [lcSharedDefaults setDouble:[[NSProcessInfo processInfo] systemUptime] forKey:@"lastGuestLaunchErrorUptime"];
             if(isLiveProcess) {
                 dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(100 * NSEC_PER_MSEC)), dispatch_get_main_queue(), ^{
                     NSExtensionContext *context = [NSClassFromString(@"TequilaDashLiveProcessHandler") extensionContext];

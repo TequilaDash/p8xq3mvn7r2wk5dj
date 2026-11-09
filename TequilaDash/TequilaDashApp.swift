@@ -11,14 +11,10 @@ struct TequilaDashApp: App {
         // 写 Documents/LoginLogs/crash.log（信号 + 栈帧地址），SSH 可直接 cat.
         CrashGuard.install()
         let previousCrashCount = CrashGuard.previousCrashCount()
-        // 上一次访客启动失败的遗言 (LCBootstrap 写 defaults "error", HostGuestEntry.m
-        // 清键后回壳): 回到宿主 UI 的第一件事就是如实播报, 不让失败无声无息.
-        if let lastError = UserDefaults.standard.string(forKey: "error") {
-            UserDefaults.standard.removeObject(forKey: "error")
-            DispatchQueue.main.async {
-                ToastCenter.shared.show("上次访客启动失败: \(lastError)", seconds: 5.0)
-            }
-        }
+        // 上一次访客启动失败的遗言不再用 5 秒即逝的 Toast 播报 (owner 截图前就消失了):
+        // LCBootstrap 两条失败路都把完整错误串落盘共享 suite 的 lastGuestLaunchError
+        // (LCBootstrap.m exceptionHandler 崩溃路 + invokeAppMain 返回路), 根视图 RootView
+        // 启动 .task 消费并弹 LC 同款 sheet (GuestLaunchErrorSheet), 见 Views/GuestLaunchError.swift.
         // 注册宿主内置的「模块原生 SwiftUI 界面」.
         // 模块清单（module.json）里 `ui.view` 写的是**注册名**，SwiftUI 视图没法从
         // zip 加载，必须编译进宿主；注册必须在任何 UI 构建之前完成 —— 模块卡片的

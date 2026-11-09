@@ -19,6 +19,9 @@ struct RootView: View {
     @StateObject private var moduleUIRouter = ModuleUIRouter.shared
     /// 蜂窝卡点弹窗（Gnoix 移植）—— 断网窗口内跑 misagent 等回环操作.
     @StateObject private var glitchCoordinator = CellularGlitchCoordinator.shared
+    /// 访客启动失败遗言 (LC LCTabView 同构: 根视图消费 + sheet 呈现, LCTabView.swift:12-14 同名).
+    @State private var crashReportShow = false
+    @State private var errorInfo = ""
 
     var body: some View {
         TabView(selection: $selectedTab) {
@@ -69,6 +72,11 @@ struct RootView: View {
         )) { request in
             CellularGlitchModalView(request: request)
         }
+        // 访客启动失败遗言 (LC LCTabView.swift:63-96 同款 sheet): 等宽可选文本 + 左上 ShareLink + 右上「好」.
+        // LC 在根视图 .task 里消费 (LCTabView.swift:97-104), 本仓同位: RootView 就是 LC 的 LCTabView 对应物.
+        .sheet(isPresented: $crashReportShow) {
+            GuestLaunchErrorSheet(text: errorInfo)
+        }
         // 模块原生二级界面 —— 用 fullScreenCover 而不是 push/sheet，
         // 目的是**完全盖住 TabView**（用户看到的底部导航栏是模块自己的，不是 App 默认底栏）.
         // 顶栏常驻「返回上一级 / 主页」两个出口（见 ModuleHostShell）.
@@ -108,12 +116,23 @@ struct RootView: View {
             viewModel.reload()
             warmUpAutoLogin()
         }
+        // LC LCTabView.swift:97-104 同位: 根视图启动即消费上次启动失败的遗言, 读完即清.
+        .task {
+            checkLastLaunchError()
+        }
         .onChange(of: hasAcknowledgedLimits) { _, acknowledged in
             if acknowledged {
                 viewModel.reload()
             }
         }
 
+    }
+
+    /// LC LCTabView.checkLastLaunchError 同构 (LCTabView.swift:159-173): 读完即清, 有遗言才弹.
+    private func checkLastLaunchError() {
+        guard let errorStr = GuestLaunchError.consumeLastLaunchError() else { return }
+        errorInfo = errorStr
+        crashReportShow = true
     }
 
     /// app 启动后后台预热「IPA 侧载」与「证书管理」的 Apple ID 登录态，

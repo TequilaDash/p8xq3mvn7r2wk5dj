@@ -137,6 +137,12 @@ targets:
       # 由调试入口（LiveProcessDebugLauncher）按需拉起验证链路.
       - target: TequilaDashLiveProcess
         embed: true
+      # Tweak 注入装载器 (LC 同款 dynamic library): LCBootstrap.m:618-629 的 dlopen 钩子
+      # 需要 Frameworks/TweakLoader.dylib 真实存在, 否则模块页导入的 .dylib 永远不会被加载.
+      # 源用上游完整镜像 vendor/LiveContainer/TweakLoader (保持原目录名, 相对 include
+      # "../LiveContainer/utils.h" 天然可解), 与主 App 的 LC 适配副本互不干扰.
+      - target: TequilaDashTweakLoader
+        embed: true
     sources:
       # 模块原生 UI 源码（生成目录，见 TequilaDash/Modules/README.md）——
       # 由 Resources/Scripts/sync_bundled_modules.py 在 xcodegen **之前**从
@@ -223,6 +229,14 @@ targets:
           - "**/PrivacyInfo.xcprivacy"
           # 同 Resources/ZSign：README.md 平铺进 .app 根会互相撞车
           - "**/README.md"
+      # CydiaSubstrate.framework (LC 同款, arm64): 作为 folder reference 落进 bundle 的
+      # Frameworks/ 子路径 —— TweakLoader.m:105-106 运行时按
+      # <mainBundle>/Frameworks/CydiaSubstrate.framework/CydiaSubstrate dlopen,
+      # LCBootstrap.m:355-375 的 symlink 也指向这里. 上游同样走 Resources 拷贝 (pbxproj:287-294),
+      # 不参与链接.
+      - path: vendor/LiveContainer/Resources/Frameworks
+        type: folder
+        buildPhase: resources
     settings:
       base:
         # Swift 6 语言模式迁移（原 `swift6-migration` 分支，2026-09-18 已合入 `migrate-xcode`）。
@@ -346,5 +360,47 @@ targets:
         # orig_dyld_* 函数指针是头内暂定定义, Dyld.m 与 dyld_bypass_validation.m 两个 TU
         # 都 include 它 —— LC 靠 -fcommon 让暂定定义跨 TU 合并 (run 42478527343 实锤
         # -fno-common 下重复符号). 照抄 LC, 不自创 extern 改写.
+        OTHER_CFLAGS:
+          - "-fcommon"
+
+  # Tweak 注入装载器: LC 的 TweakLoader.dylib 等价物 (LiveContainer.xcodeproj:581-597).
+  # 职责: constructor 读 LC_GLOBAL_TWEAKS_FOLDER, dlopen 全局/选定目录下的 .dylib/.framework,
+  # 失败时弹 UIAlertController (TweakLoader.m:59-77). 由 LCBootstrap.m 在访客进程内 dlopen.
+  # 源码 = 上游镜像原样 (不改动, 便于同步上游); 只在本仓补构建设置.
+  TequilaDashTweakLoader:
+    type: library.dynamic
+    platform: iOS
+    sources:
+      - path: vendor/LiveContainer/TweakLoader
+        excludes:
+          - "**/README.md"
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.tequila.dash.tweakloader
+        # LC 同款: EXECUTABLE_PREFIX 为空, 产物名才是 TweakLoader.dylib 而非 libTweakLoader.dylib.
+        PRODUCT_NAME: TweakLoader
+        EXECUTABLE_PREFIX: ""
+        DYLIB_COMPATIBILITY_VERSION: 1
+        DYLIB_CURRENT_VERSION: 1
+        DYLIB_INSTALL_NAME_BASE: "@rpath"
+        SKIP_INSTALL: "YES"
+        MARKETING_VERSION: "0.3.797"
+        CURRENT_PROJECT_VERSION: "1086"
+        IPHONEOS_DEPLOYMENT_TARGET: "18.0"
+        CLANG_ENABLE_OBJC_ARC: "YES"
+        CLANG_ENABLE_MODULES: "YES"
+        # TweakLoader 的 4 个 .m 引用 "../LiveContainer/utils.h" 及 LCSharedUtils.h /
+        # UIKitPrivate.h / FoundationPrivate.h / Localization.h, 全部在上游镜像的 LiveContainer/ 里.
+        HEADER_SEARCH_PATHS:
+          - "$(SRCROOT)/vendor/LiveContainer"
+          - "$(SRCROOT)/vendor/LiveContainer/LiveContainer"
+          - "$(SRCROOT)/TequilaDashLiveProcess/LC"
+        # LC 同款 (LiveContainer.xcodeproj:1257-1261): 私有类符号允许未定义,
+        # 运行时由宿主 UIKit/FrontBoard 提供. 不自创 -undefined dynamic_lookup.
+        OTHER_LDFLAGS:
+          - "-Wl,-U,_OBJC_CLASS_$_FBSSceneParameters"
+          - "-Wl,-U,_OBJC_CLASS_$_LSApplicationWorkspace"
+          - "-Wl,-U,_OBJC_CLASS_$_DOCConfiguration"
+        # dyld_bypass_validation.h 暂定定义跨 TU 合并 (主/扩展 target 同口径).
         OTHER_CFLAGS:
           - "-fcommon"
