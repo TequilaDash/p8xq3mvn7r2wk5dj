@@ -41,21 +41,32 @@
 
 
 #pragma mark Multitasking
-+ (NSString *)liveProcessBundleIdentifier {
-    // first check if we have LiveProcess extension in our own bundle
-    NSBundle *liveProcessBundle = [NSBundle bundleWithPath:[NSBundle.mainBundle.builtInPlugInsPath stringByAppendingPathComponent:@"LiveProcess.appex"]];
-    if(liveProcessBundle) {
-        return liveProcessBundle.bundleIdentifier;
-    }
-    
-    // in LC2, attempt to guess LC1's LiveProcess extension
-    NSString *bundleID = [NSString stringWithFormat:@"com.kdt.livecontainer.%@.LiveProcess", LCSharedUtils.teamIdentifier];
-    if([NSExtension extensionWithIdentifier:bundleID error:nil]) {
-        return bundleID;
-    }
-    
-    return nil;
-}
+ + (NSString *)liveProcessBundleIdentifier {
+     // 本仓适配 (2026-11-09): 上游硬编码 "LiveProcess.appex", 本仓扩展产物名是
+     // TequilaDashLiveProcess.appex (project.yml PRODUCT_NAME), 直接找会返回 nil,
+     // 多任务启动即报 "LiveProcess extension not found".
+     // 顺序: 上游名 -> 扫 PlugIns 里 bundleId 以 .liveprocess 结尾的 appex -> 上游 LC1 猜测链.
+     NSString *pluginsPath = NSBundle.mainBundle.builtInPlugInsPath;
+     NSBundle *upstreamBundle = [NSBundle bundleWithPath:
+         [pluginsPath stringByAppendingPathComponent:@"LiveProcess.appex"]];
+     if (upstreamBundle) {
+         return upstreamBundle.bundleIdentifier;
+     }
+     NSArray<NSString *> *entries = [NSFileManager.defaultManager contentsOfDirectoryAtPath:pluginsPath error:nil];
+     for (NSString *entry in entries) {
+         if (![entry hasSuffix:@".appex"]) continue;
+         NSBundle *candidate = [NSBundle bundleWithPath:[pluginsPath stringByAppendingPathComponent:entry]];
+         NSString *bundleId = candidate.bundleIdentifier;
+         if ([bundleId.lowercaseString hasSuffix:@".liveprocess"]) {
+             return bundleId;
+         }
+     }
+     NSString *bundleID = [NSString stringWithFormat:@"com.kdt.livecontainer.%@.LiveProcess", LCSharedUtils.teamIdentifier];
+     if([NSExtension extensionWithIdentifier:bundleID error:nil]) {
+         return bundleID;
+     }
+     return nil;
+ }
 
 + (void)launchMultitaskGuestApp:(NSString *)displayName completionHandler:(void (^)(NSNumber *pid, NSError *error))completionHandler {
     if(!self.liveProcessBundleIdentifier) {

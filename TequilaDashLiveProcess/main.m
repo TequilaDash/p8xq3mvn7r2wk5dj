@@ -91,10 +91,26 @@ static int TequilaDashLiveProcessMain(int argc, char *argv[]) {
     }
 
     // LC 键映射: LCBootstrap 原文读 selected / selectedContainer / hostUrlScheme.
+    //
+    // 两处加固 (启动闪退真实成因 + 多任务兼容):
+    // 1. `setObject:nil forKey:` 会抛 NSInvalidArgumentException —— 只要宿主少传一个键
+    //    (例如 LC 的 MultitaskSupport 只发 selected/selectedContainer) 就整进程崩溃.
+    //    逐项判空, 缺键就不写.
+    // 2. 同时接受 LC 原键名: MultitaskSupport/AppSceneViewController.m:58-63 走 virtual window
+    //    路径时用 LC 键; 本仓自有键优先, 缺失时回落 LC 键.
     NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
-    [defaults setObject:appInfo[TDLPHostSchemeKey] forKey:@"hostUrlScheme"];
-    [defaults setObject:appInfo[TDLPGuestFolderNameKey] forKey:@"selected"];
-    [defaults setObject:appInfo[TDLPContainerUUIDKey] forKey:@"selectedContainer"];
+    NSString *mappedHostScheme = appInfo[TDLPHostSchemeKey] ?: appInfo[@"hostUrlScheme"];
+    NSString *mappedGuestName  = appInfo[TDLPGuestFolderNameKey] ?: appInfo[@"selected"];
+    NSString *mappedContainer  = appInfo[TDLPContainerUUIDKey] ?: appInfo[@"selectedContainer"];
+    if (mappedHostScheme) {
+        [defaults setObject:mappedHostScheme forKey:@"hostUrlScheme"];
+    }
+    if (mappedGuestName) {
+        [defaults setObject:mappedGuestName forKey:@"selected"];
+    }
+    if (mappedContainer) {
+        [defaults setObject:mappedContainer forKey:@"selectedContainer"];
+    }
 
     // 跳! (成功 = 不返回)
     int ret = LiveContainerMain(argc, argv);
