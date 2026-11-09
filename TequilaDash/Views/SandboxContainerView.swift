@@ -2,6 +2,12 @@ import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
 
+// LC framework 的多任务门面 (LCMultitaskLauncher). canImport 守卫: framework 未链接时
+// 菜单项自动不出现, 不留假入口.
+#if canImport(LiveContainerSwiftUI)
+import LiveContainerSwiftUI
+#endif
+
 // TDLaunchGuestRestart 的全仓唯一 @_silgen_name 声明在 SandboxAppSettingsView.swift (防重复符号).
 
 // 沙盒容器 · 列表页（v0.3.785 改版）
@@ -1165,6 +1171,22 @@ struct SandboxAppBanner: View {
         if app.containers.count > 1 {
             containerPickerMenu
         }
+        #if canImport(LiveContainerSwiftUI)
+        if #available(iOS 16.0, *), let containerUUID = app.activeContainer {
+            // LC 同款多任务入口 (虚拟窗口路径). 走 LCMultitaskLauncher 门面: 它内部用 LC 默认模式的
+            // DecoratedAppSceneViewController 手工建窗, 不依赖 SwiftUI openWindow/WindowGroup.
+            Button {
+                let ok = LCMultitaskLauncher.openVirtualWindow(displayName: app.displayName,
+                                                               bundleId: app.id,
+                                                               dataUUID: containerUUID)
+                if !ok {
+                    ToastCenter.shared.show("虚拟窗口启动失败", seconds: 3.0)
+                }
+            } label: {
+                Label("在新窗口打开", systemImage: "rectangle.on.rectangle")
+            }
+        }
+        #endif
         Button {
             onResign()
         } label: {
