@@ -104,23 +104,38 @@
 #pragma mark Code signing
 
 
+/// 确保 ZSigner 类可用.
+///
+/// 本仓适配 (与上游唯一的语义差异): 上游 ZSign 是**独立 dylib**, 必须 dlopen
+/// `@executable_path/Frameworks/ZSign.dylib`; 本仓把 ZSign 静态编进主 App
+/// (project.yml 主 target sources 含 `ZSign/`), 进程内已有 `ZSigner` 类,
+/// 没有也不该有那个 dylib. 所以先查类, 查到即成功; 查不到才回落上游的 dlopen
+/// (兼容将来把 ZSign 拆回 dylib 的接法).
 + (void)loadStoreFrameworksWithError2:(NSError **)error {
-    // too lazy to use dispatch_once
     static BOOL loaded = NO;
     if (loaded) return;
+
+    // 静态链接路径: ZSigner 已在进程内.
+    if (NSClassFromString(@"ZSigner")) {
+        loaded = YES;
+        return;
+    }
 
     void* handle = dlopen("@executable_path/Frameworks/ZSign.dylib", RTLD_GLOBAL);
     const char* dlerr = dlerror();
     if (!handle || (uint64_t)handle > 0xf00000000000) {
-        if (dlerr) {
-            *error = [NSError errorWithDomain:NSBundle.mainBundle.bundleIdentifier code:1 userInfo:@{NSLocalizedDescriptionKey: [NSString stringWithFormat:@"Failed to load ZSign: %s", dlerr]}];
-        } else {
-            *error = [NSError errorWithDomain:NSBundle.mainBundle.bundleIdentifier code:1 userInfo:@{NSLocalizedDescriptionKey: [NSString stringWithFormat:@"Failed to load ZSign: An unknown error occurred."]}];
+        if (error) {
+            NSString* reason = dlerr ? [NSString stringWithUTF8String:dlerr]
+                                     : @"ZSigner 类不存在且 ZSign.dylib 不可加载";
+            *error = [NSError errorWithDomain:NSBundle.mainBundle.bundleIdentifier
+                                         code:1
+                                     userInfo:@{NSLocalizedDescriptionKey:
+                                                    [NSString stringWithFormat:@"Failed to load ZSign: %@", reason]}];
         }
-        NSLog(@"[LC] %s", dlerr);
+        NSLog(@"[LC] failed to load ZSign: %s", dlerr ? dlerr : "(no dlerror)");
         return;
     }
-    
+
     loaded = YES;
 }
 
@@ -141,7 +156,7 @@
 }
 
 + (NSProgress *)signAppBundleWithZSign:(NSURL *)path completionHandler:(void (^)(BOOL success, NSError *error))completionHandler {
-    NSError *error;
+    NSError *error = nil;
 
     // use zsign as our signer~
     // Load libraries from Documents, yeah
@@ -160,7 +175,7 @@
 }
 
 + (NSProgress *)signFilesWithZSignWithURLs:(NSArray<NSURL*>*)urls completionHandler:(void (^)(BOOL success, NSError *error))completionHandler {
-    NSError *error;
+    NSError *error = nil;
     [self loadStoreFrameworksWithError2:&error];
     if (error) {
         completionHandler(NO, error);
@@ -176,7 +191,7 @@
 }
 
 + (NSString*)getCertTeamIdWithKeyData:(NSData*)keyData password:(NSString*)password {
-    NSError *error;
+    NSError *error = nil;
     [self loadStoreFrameworksWithError2:&error];
     if (error) {
         return nil;
@@ -186,12 +201,17 @@
 }
 
 + (int)validateCertificateWithCompletionHandler:(void(^)(int status, NSDate *expirationDate, NSString *organizationalUnitName, NSString *error))completionHandler {
-    NSError *error;
+    NSError *error = nil;
     NSData *certData = [LCUtils certificateData];
-    if (error) {
+    // 上游此处判 `if (error)` 时 error 还没被任何调用赋值, 等于永不触发; 真实意图是
+    // 「没有证书就别往下走」. 按意图修正: 证书数据为空直接报 -6 (与上游失败码一致).
+    if (!certData) {
         return -6;
     }
     [self loadStoreFrameworksWithError2:&error];
+    if (error) {
+        return -6;
+    }
     int ans = [NSClassFromString(@"ZSigner") checkCert:certData pass:[LCSharedUtils certificatePassword] completionHandler:completionHandler];
     return ans;
 }
