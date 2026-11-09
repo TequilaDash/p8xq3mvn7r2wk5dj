@@ -440,6 +440,11 @@ targets:
         MARKETING_VERSION: "0.3.797"
         CURRENT_PROJECT_VERSION: "1086"
         IPHONEOS_DEPLOYMENT_TARGET: "15.0"
+        # 顶层 settings 的 OTHER_LDFLAGS 含 $(DERIVED_FILE_DIR)/SAP/lib/libunicorn.a
+        # (主 App 的 SAP 登录底座). 本 target 无 prepare.sap 脚本, 继承该键会在链接期
+        # 找不到文件而炸 (CI run 42663291263 实测), 故整段覆盖 (对齐 Tunnel 的写法).
+        OTHER_LDFLAGS:
+          - "-framework Foundation"
 
   # LiveContainerSwiftUI.framework (LC 上游同款 framework, LiveContainer.xcodeproj:558-580).
   # 编译源 = 上游镜像 LiveContainerSwiftUI/ 全层 + MultitaskSupport/ 17 文件
