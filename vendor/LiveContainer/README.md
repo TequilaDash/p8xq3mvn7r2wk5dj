@@ -93,6 +93,16 @@ fishhook/  litehook/  ZSign/  xcconfigs/  Resources/
 11. `TequilaDashLCUIAdapters/Utilities/LCUtils.m` 的 `liveProcessBundleIdentifier`：
     上游硬编码 `LiveProcess.appex`，本仓产物名是 `TequilaDashLiveProcess.appex`；
     适配为「上游名 → 扫 PlugIns 里 bundleId 以 `.liveprocess` 结尾的 appex → 上游 LC1 猜测链」。
+12. **启动崩溃检测（本仓特有，上游无）** —— 无 app group 时 `LCSharedUtils.appGroupID`
+    返回 `"Unknown"`，扩展容器与宿主不共享 suite，`lastGuestLaunchError` 跨进程读不到。
+    替代链路（三处，缺一不可）：
+    - `TequilaDash/Engine/LaunchGuest.m`：`TDLaunchGuestRestart(NSString *pendingMarkerPath)`
+      在重启前落 `<可用容器>/.td_guest_launch_pending` 并把绝对路径记进标准 defaults
+      的 `TDGuestLaunchMarker`。
+    - `TequilaDashLiveProcess/LC/LCBootstrap.m`：`invokeAppMain` 里紧挨 `// Go!`
+      （沙盒接管 + dyld 注入 + bundle 装载 + 入口点解析全部通过之后）删该文件。
+    - `TequilaDash/Views/GuestLaunchError.swift`：宿主启动时若文件仍在 = 上次崩在
+      启动阶段，生成中文诊断串交给 `GuestLaunchErrorSheet`。
 
 ## 同步上游的标准流程
 
