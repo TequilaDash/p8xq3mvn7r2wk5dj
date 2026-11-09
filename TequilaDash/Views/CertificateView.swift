@@ -150,13 +150,19 @@ struct CertificateView: View {
             Button("导入") {
                 guard let data = pendingP12Data else { return }
                 let result = certStore.importP12(data: data, password: p12Password)
+                let defaults = UserDefaults.standard
                 if result.ok {
-                    // 访客进程链 (LiveProcess) 用同一把证书: LC 的 JITLess dlopen 钩子
-                    // 以 LCCertificatePassword 是否存在为门槛 (LCBootstrap.m:525),
-                    // 这里同步落一份, LCSharedUtils.certificatePassword 原文直读.
-                    UserDefaults.standard.set(p12Password, forKey: "LCCertificatePassword")
+                    // LC 侧签名/JIT-less 测试读的是 LCCertificateData (原始 p12 字节) +
+                    // LCCertificatePassword: 上游 LCSettingsView.swift:577-579 同款写法,
+                    // ZSigner 的 checkCert/getTeamId/signMachOPathArr 全部按 p12 解析.
+                    // 不写 LCCertificateData 则 LCUtils.certificateData 恒为 nil, 证书校验直接失败.
+                    defaults.set(data, forKey: "LCCertificateData")
+                    defaults.set(p12Password, forKey: "LCCertificatePassword")
+                    defaults.set(Date(), forKey: "LCCertificateUpdateDate")
                 } else {
-                    UserDefaults.standard.removeObject(forKey: "LCCertificatePassword")
+                    defaults.removeObject(forKey: "LCCertificateData")
+                    defaults.removeObject(forKey: "LCCertificatePassword")
+                    defaults.removeObject(forKey: "LCCertificateUpdateDate")
                 }
                 p12Message = result.ok ? "[完成] \(result.message)" : "[失败] \(result.message)"
                 pendingP12Data = nil
@@ -168,6 +174,14 @@ struct CertificateView: View {
         .alert("删除本地签名证书？", isPresented: $showRemoveCertConfirm) {
             Button("删除", role: .destructive) {
                 let result = certStore.removeLocalCert()
+                if result.ok {
+                    // LC 侧同源清理: 留着 LCCertificateData/Password 会让证书校验与
+                    // JIT-less 测试仍按「有证书」走, 实际已无可用签名材料.
+                    let defaults = UserDefaults.standard
+                    defaults.removeObject(forKey: "LCCertificateData")
+                    defaults.removeObject(forKey: "LCCertificatePassword")
+                    defaults.removeObject(forKey: "LCCertificateUpdateDate")
+                }
                 p12Message = result.ok ? "[完成] \(result.message)" : "[失败] \(result.message)"
             }
             Button("取消", role: .cancel) {}
