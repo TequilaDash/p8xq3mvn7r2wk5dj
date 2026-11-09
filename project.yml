@@ -143,6 +143,10 @@ targets:
       # "../LiveContainer/utils.h" 天然可解), 与主 App 的 LC 适配副本互不干扰.
       - target: TequilaDashTweakLoader
         embed: true
+      # JIT-less 探针 (LC 同款): LCUtils.m:265-266 按 Frameworks/TestJITLess.dylib 拷进
+      # 临时目录做注入试验; 不嵌入则该诊断路径静默失效.
+      - target: TestJITLess
+        embed: true
       # LC 模型层 + 多任务整层: framework 形式嵌入, 供本仓 UI 侧调用.
       - target: LiveContainerSwiftUI
         embed: true
@@ -413,6 +417,29 @@ targets:
         # dyld_bypass_validation.h 暂定定义跨 TU 合并 (主/扩展 target 同口径).
         OTHER_CFLAGS:
           - "-fcommon"
+
+  # JIT-less 探针 dylib: LC 的 TestJITLess 等价物 (LiveContainer.xcodeproj:643, settings :1345-1372).
+  # 职责: constructor 里置 LC_JITLESS_TEST_LOADED 标记 (TestJITLess.m:3-7), 由主 App 拷进临时目录
+  # 再签进测试包, 用来验证 JIT-less 环境是否能加载注入库 (LCUtils.m:262-272 读
+  # <主Bundle>/Frameworks/TestJITLess.dylib). 零依赖, 上游镜像原样编译.
+  TestJITLess:
+    type: library.dynamic
+    platform: iOS
+    sources:
+      - path: vendor/LiveContainer/TestJITLess
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.tequila.dash.testjitless
+        # LC 同款: 前缀为空, 产物名才是 TestJITLess.dylib (LCUtils.m:266 按此名取).
+        PRODUCT_NAME: TestJITLess
+        EXECUTABLE_PREFIX: ""
+        DYLIB_COMPATIBILITY_VERSION: 1
+        DYLIB_CURRENT_VERSION: 1
+        DYLIB_INSTALL_NAME_BASE: "@rpath"
+        SKIP_INSTALL: "YES"
+        MARKETING_VERSION: "0.3.797"
+        CURRENT_PROJECT_VERSION: "1086"
+        IPHONEOS_DEPLOYMENT_TARGET: "15.0"
 
   # LiveContainerSwiftUI.framework (LC 上游同款 framework, LiveContainer.xcodeproj:558-580).
   # 编译源 = 上游镜像 LiveContainerSwiftUI/ 全层 + MultitaskSupport/ 17 文件
