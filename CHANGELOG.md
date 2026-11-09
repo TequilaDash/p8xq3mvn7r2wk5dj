@@ -1,3 +1,11 @@
+## [0.3.798] - 2026-11-10
+
+- LiveContainer 上游源码**完整搬入** `vendor/LiveContainer/`：281 个文件逐文件 SHA256 与上游一致（含 `.github/`、`screenshots/`、`.gitignore`、`.gitmodules`），镜像 `README.md` 恢复上游原文，本仓适配点清单独立为 `ADAPTERS.md`（14 条）
+- 启动闪退加固 9 处：`LCBootstrap` 的 `getenv`/`setenv` NULL 未定义行为、`CFBundleURLTypes[0]` 越界、`setObject:nil` 抛异常（扩展输入键逐项判空）；补回 `Localization.h/.m`；`en.lproj` 打进 bundle（`Bundle(path:)!` 强解包）
+- 多任务入口真接线：`TDMultitaskOpenVirtualWindow`（纯 C 符号）走 LC 默认模式的 `DecoratedAppSceneViewController` 手工建窗；沙盒横幅菜单新增「在新窗口打开」
+- 启动崩溃检测（无 app group 的替代链路）：重启前落 `.td_guest_launch_pending` 标记，`LCBootstrap` 在跳访客 main 前清除；宿主启动时标记仍在 = 上次崩在启动阶段，走 `GuestLaunchErrorSheet` 弹出诊断
+- `TestJITLess.dylib` target 接入 + JIT-less 诊断入口（更多 → 元数据与诊断），反射桥 framework 内 `LCJITLessDiagnoseView`，不引入模块导入
+
 ## [0.3.797] - 2026-11-08
 
 - 应用管理页 UI 对齐参考图：大标题 + 首卡图标/名称/版本 + 分组头外置灰字 13pt
