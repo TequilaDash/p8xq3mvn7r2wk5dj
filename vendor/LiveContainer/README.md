@@ -71,6 +71,28 @@ fishhook/  litehook/  ZSign/  xcconfigs/  Resources/
    `App/LiveContainerSwiftUIApp.swift`（宿主入口是 `HostGuestEntry.m → TDHostBoot()`）。
    LC 核心 `.m` 不编进 framework（主 App 已编适配副本），用 `-Wl,-undefined,dynamic_lookup`
    运行时解析，避免同进程两份 ObjC 类。
+7. `TequilaDashLiveProcess/LC/LCBootstrap.m` **启动闪退加固四处**（对上游同名文件的有意加固）：
+   - `docPath`：`getenv("LC_HOME_PATH")` 为 NULL 时回落 `HOME`，两者皆空则返回错误串
+     （原写法 `[NSString stringWithUTF8String:NULL]` 是 UB）。
+   - `newHomePath` 为空时不 `setenv`（`setenv(name, NULL, 1)` 是 UB）。
+   - `lcAppUrlScheme` 改用 `firstObject` 链取（原 `[0]` 在 `CFBundleURLTypes` 为空时越界崩溃）。
+   - `LC_HOME_PATH` 的 `setenv` 前判 `getenv("HOME")` 非空。
+   另补 `Localization.h/.m`（上游有、原适配副本缺失，`AppSceneViewController.m` 依赖 `NSString.loc`）。
+8. `TequilaDashLiveProcess/main.m` **键映射加固**：`setObject:` 逐项判空（
+   `setObject:nil` 抛 `NSInvalidArgumentException`，是启动闪退真因之一），
+   并同时接受 LC 原键名 `hostUrlScheme` / `selected` / `selectedContainer`
+   （LC 的 MultitaskSupport 只发这三个）。
+9. `TequilaDashLCUIAdapters/MultitaskFacade.swift` — 多任务 public 门面
+   `LCMultitaskLauncher.openVirtualWindow(displayName:bundleId:dataUUID:)`。
+   framework 内 `MultitaskWindowManager`/`DataManager`/`SharedModel` 均 internal，
+   宿主调不到；门面走 LC 默认的 `DecoratedAppSceneViewController` 手工建窗路径
+   （不依赖 SwiftUI `openWindow` 与 `WindowGroup(id:"appView")`）。
+10. `project.yml` 主 target 资源：`vendor/LiveContainer/Resources/en.lproj`（folder reference）。
+    上游 `Shared.swift:162-166` 的 `String.enBundle` 用 `Bundle(path: path!)` 强解包
+    `en.lproj`，缺它则首个未命中本地化键直接崩。
+11. `TequilaDashLCUIAdapters/Utilities/LCUtils.m` 的 `liveProcessBundleIdentifier`：
+    上游硬编码 `LiveProcess.appex`，本仓产物名是 `TequilaDashLiveProcess.appex`；
+    适配为「上游名 → 扫 PlugIns 里 bundleId 以 `.liveprocess` 结尾的 appex → 上游 LC1 猜测链」。
 
 ## 同步上游的标准流程
 
