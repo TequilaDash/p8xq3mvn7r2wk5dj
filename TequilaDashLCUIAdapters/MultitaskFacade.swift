@@ -16,7 +16,7 @@ import UIKit
 @available(iOS 16.0, *)
 public enum LCMultitaskLauncher {
 
-    /// 在宿主窗口上叠加一个访客虚拟窗口. 返回 false = 找不到可用宿主 rootVC.
+    /// 在宿主窗口上叠加一个访客虚拟窗口. 返回 false = 找不到宿主 rootVC 或控制器初始化失败.
     @discardableResult
     public static func openVirtualWindow(displayName: String,
                                          bundleId: String,
@@ -25,10 +25,15 @@ public enum LCMultitaskLauncher {
             NSLog("[LCMultitaskLauncher] no host rootViewController, abort")
             return false
         }
-        let controller = DecoratedAppSceneViewController(windowName: displayName,
-                                                         bundleId: bundleId,
-                                                         dataUUID: dataUUID,
-                                                         rootVC: hostRoot)
+        // ObjC 的 initWindowName:... 在 Swift 侧导入为可失败 init?, 必须 guard let
+        // (CI run 42653277259 实测: optional 未解包直接报错).
+        guard let controller = DecoratedAppSceneViewController(windowName: displayName,
+                                                               bundleId: bundleId,
+                                                               dataUUID: dataUUID,
+                                                               rootVC: hostRoot) else {
+            NSLog("[LCMultitaskLauncher] DecoratedAppSceneViewController init returned nil")
+            return false
+        }
         controller.view.autoresizingMask = [.flexibleTopMargin, .flexibleLeftMargin,
                                             .flexibleRightMargin, .flexibleBottomMargin]
         controller.view.center = hostRoot.view.center
