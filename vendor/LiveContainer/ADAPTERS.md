@@ -133,7 +133,7 @@ robocopy <新版LC> vendor/LiveContainer /MIR /XD .git screenshots
 # 2. 看上游改了什么
 git diff -- vendor/LiveContainer
 # 3. 更新 .upstream-manifest.json
-python Resources/Scripts/lc_upstream_manifest.py
+python Resources/Scripts/lc_mirror_guard.py --write   # 重新生成 .upstream-manifest.json
 # 4. 对照上面的「适配点」逐项检查 TequilaDashLiveProcess/LC/ 是否需要同步
 # 5. 跑守卫 + dispatch CI 拿真实类型检查
 ```
