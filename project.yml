@@ -443,9 +443,13 @@ targets:
         SWIFT_VERSION: "5.0"
         CLANG_ENABLE_OBJC_ARC: "YES"
         CLANG_ENABLE_MODULES: "YES"
-        SWIFT_OBJC_BRIDGING_HEADER: "$(SRCROOT)/vendor/LiveContainer/LiveContainerSwiftUI/LiveContainerSwiftUI-Bridging-Header.h"
+        # 用本仓适配桥接头 (CI run 42626661044 实测: 上游原件会让 FoundationPrivate.h
+        # 被引入两次, NSExtension 等重复 @interface 导致 PCH 失败). 镜像原件保持原样.
+        SWIFT_OBJC_BRIDGING_HEADER: "$(SRCROOT)/TequilaDashLCUIAdapters/LiveContainerSwiftUI-Bridging-Header.h"
         # 上游 :287-294 把 CydiaSubstrate.framework 当资源, 主 App 已落 bundle, 此处不重复.
         HEADER_SEARCH_PATHS:
+          # 主 App 适配副本优先: 与桥接头裸名 include 解析到同一物理路径, 避免重复 @interface.
+          - "$(SRCROOT)/TequilaDashLiveProcess/LC"
           - "$(SRCROOT)/vendor/LiveContainer/LiveContainerSwiftUI"
           - "$(SRCROOT)/vendor/LiveContainer/LiveContainerSwiftUI/Models"
           - "$(SRCROOT)/vendor/LiveContainer/LiveContainerSwiftUI/Utilities"
