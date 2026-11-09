@@ -63,3 +63,14 @@ P0_工作产物标准区/
 P1_工作产品区/
 06_审计日志/
 01_人格与指令/
+
+# LiveContainer 完整镜像例外 (v0.3.798): vendor/LiveContainer 是逐文件 SHA256 校验的
+# 上游镜像, 上面的 vendor/** 排除规则对它过宽 —— xcodeproj/.gitmodules/podspec/Tests
+# 都是"完整"的一部分, 缺了 lc_mirror_guard 会 FAIL. 否定规则必须在肯定规则之后.
+!vendor/LiveContainer/
+!vendor/LiveContainer/LiveContainer.xcodeproj/
+!vendor/LiveContainer/LiveContainer.xcodeproj/**
+!vendor/LiveContainer/litehook/Tests/
+!vendor/LiveContainer/litehook/Tests/**
+!vendor/LiveContainer/fishhook/fishhook.podspec
+!vendor/LiveContainer/.gitmodules
