@@ -462,6 +462,13 @@ targets:
           - "$(SRCROOT)/vendor/LiveContainer/ZSign"
           - "$(SRCROOT)/ZSign"
           # 生成的 Swift 头在 DERIVED_FILE_DIR, Xcode 自动可见; 显式列出便于排查.
+          # ObjC 侧 import "LiveContainerSwiftUI-Swift.h" (Swift 生成的接口头).
+          # Xcode 只往 -I 里加 DerivedSources*, 不加 Objects-normal/<arch>; 而 swiftc 的
+          # -emit-objc-header-path 落在 Objects-normal/<arch> (CI run 42633695500 实测:
+          # Swift 编译已完成, ObjC ScanDependencies 才报 file not found).
+          - "$(OBJROOT)/$(PROJECT_NAME).build/$(CONFIGURATION)$(EFFECTIVE_PLATFORM_NAME)/$(TARGET_NAME).build/Objects-normal/$(CURRENT_ARCH)"
+          - "$(OBJROOT)/$(PROJECT_NAME).build/$(CONFIGURATION)$(EFFECTIVE_PLATFORM_NAME)/$(TARGET_NAME).build/Objects-normal/arm64"
+          - "$(BUILT_PRODUCTS_DIR)/$(PUBLIC_HEADERS_FOLDER_PATH)"
           - "$(DERIVED_FILE_DIR)"
         # 上游 :1190/1233 的私有类符号 + LCUtils.m 里 ZSigner/私有 UIKit 类.
         OTHER_LDFLAGS:
