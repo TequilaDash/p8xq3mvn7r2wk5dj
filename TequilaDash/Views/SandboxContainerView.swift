@@ -2,11 +2,12 @@ import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
 
-// LC framework 的多任务门面 (LCMultitaskLauncher). canImport 守卫: framework 未链接时
-// 菜单项自动不出现, 不留假入口.
-#if canImport(LiveContainerSwiftUI)
-import LiveContainerSwiftUI
-#endif
+// LC 多任务虚拟窗口入口. 不用 `import LiveContainerSwiftUI`: 主 App 导入该模块会把 framework 的
+// ObjC 头拉进同一翻译单元, 与已有桥接头重复定义枚举 (LCUtils.h 的 Unknown / LCAppInfo.h 的
+// Disabled, CI run 42657238035 实测). 走纯 C 符号, house rule 同 TDLaunchGuestRestart.
+// 返回 1 = 已建窗, 0 = 无宿主 rootVC / 控制器初始化失败.
+@_silgen_name("TDMultitaskOpenVirtualWindow")
+func TDMultitaskOpenVirtualWindow(_ displayName: NSString, _ bundleId: NSString, _ dataUUID: NSString) -> Int32
 
 // TDLaunchGuestRestart 的全仓唯一 @_silgen_name 声明在 SandboxAppSettingsView.swift (防重复符号).
 
@@ -1176,22 +1177,20 @@ struct SandboxAppBanner: View {
         if app.containers.count > 1 {
             containerPickerMenu
         }
-        #if canImport(LiveContainerSwiftUI)
-        if #available(iOS 16.0, *), let containerUUID = app.activeContainer {
-            // LC 同款多任务入口 (虚拟窗口路径). 走 LCMultitaskLauncher 门面: 它内部用 LC 默认模式的
+        if let containerUUID = app.activeContainer {
+            // LC 同款多任务入口 (虚拟窗口路径): 内部用 LC 默认模式的
             // DecoratedAppSceneViewController 手工建窗, 不依赖 SwiftUI openWindow/WindowGroup.
             Button {
-                let ok = LCMultitaskLauncher.openVirtualWindow(displayName: app.displayName,
-                                                               bundleId: app.id,
-                                                               dataUUID: containerUUID)
-                if !ok {
+                let opened = TDMultitaskOpenVirtualWindow(app.displayName,
+                                                          app.id,
+                                                          containerUUID) != 0
+                if !opened {
                     ToastCenter.shared.show("虚拟窗口启动失败", seconds: 3.0)
                 }
             } label: {
                 Label("在新窗口打开", systemImage: "rectangle.on.rectangle")
             }
         }
-        #endif
         Button {
             onResign()
         } label: {

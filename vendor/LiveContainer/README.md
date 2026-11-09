@@ -82,11 +82,13 @@ fishhook/  litehook/  ZSign/  xcconfigs/  Resources/
    `setObject:nil` 抛 `NSInvalidArgumentException`，是启动闪退真因之一），
    并同时接受 LC 原键名 `hostUrlScheme` / `selected` / `selectedContainer`
    （LC 的 MultitaskSupport 只发这三个）。
-9. `TequilaDashLCUIAdapters/MultitaskFacade.swift` — 多任务 public 门面
-   `LCMultitaskLauncher.openVirtualWindow(displayName:bundleId:dataUUID:)`。
-   framework 内 `MultitaskWindowManager`/`DataManager`/`SharedModel` 均 internal，
-   宿主调不到；门面走 LC 默认的 `DecoratedAppSceneViewController` 手工建窗路径
-   （不依赖 SwiftUI `openWindow` 与 `WindowGroup(id:"appView")`）。
+9. `TequilaDashLCUIAdapters/MultitaskBridge.h/.m` — 多任务入口
+   `int TDMultitaskOpenVirtualWindow(displayName, bundleId, dataUUID)`（编进 framework）。
+   走 LC 默认的 `DecoratedAppSceneViewController` 手工建窗路径（不依赖 SwiftUI
+   `openWindow` 与 `WindowGroup(id:"appView")`）。宿主侧用 `@_silgen_name` 声明调用。
+   **不要**在主 App 里 `import LiveContainerSwiftUI`：会把 framework 的 ObjC 头拉进同一
+   翻译单元，与既有桥接头重复定义枚举（`LCUtils.h` 的 `Unknown` / `LCAppInfo.h` 的
+   `Disabled`，CI run 42657238035 实测）。
 10. `project.yml` 主 target 资源：`vendor/LiveContainer/Resources/en.lproj`（folder reference）。
     上游 `Shared.swift:162-166` 的 `String.enBundle` 用 `Bundle(path: path!)` 强解包
     `en.lproj`，缺它则首个未命中本地化键直接崩。
