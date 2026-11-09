@@ -176,6 +176,11 @@ struct MoreView: View {
                 MoreItem("configurations", "checklist", "配置管理",
                          "系统配置管理",
                          ConfigurationsView()),
+                // LC 同款 JIT-less 诊断页 (上游 LCJITLessDiagnoseView): 检查 app group /
+                // 证书 / TestJITLess.dylib 注入链. 上游入口在 LCSettingsView.swift:113,140.
+                MoreItem("jitless-diagnose", "bolt.badge.clock.fill", "JIT-less 诊断",
+                         "证书 / app group / 注入链自检",
+                         JITLessDiagnoseView()),
             ]),
         ]
     }

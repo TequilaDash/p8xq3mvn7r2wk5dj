@@ -60,6 +60,7 @@ bolt.badge.a.fill
 bolt.circle
 bolt.fill
 bolt.slash
+bolt.badge.clock.fill
 book
 bookmark
 calendar
@@ -116,6 +117,7 @@ esc.notifications
 esc.restrictions
 esc.webclip
 exclamationmark.octagon
+exclamationmark.triangle
 exclamationmark.shield.fill
 externaldrive
 externaldrive.fill.badge.plus
@@ -213,6 +215,7 @@ questionmark.app.dashed
 questionmark.circle
 questionmark.circle.fill
 rectangle.portrait.and.arrow.right
+rectangle.on.rectangle
 repeat
 road.lanes
 safari
