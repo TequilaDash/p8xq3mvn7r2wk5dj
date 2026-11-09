@@ -426,6 +426,10 @@ targets:
           # 用 TequilaDashLCUIAdapters/LCUtils.m 的 iOS 适配副本代替.
           - "Utilities/LCUtils.m"
           - "**/README.md"
+          # 上游桥接头原件不编: 本仓用 TequilaDashLCUIAdapters/LCUI-Bridging-Header.h
+          # (同名文件两个 source path 会被 xcodegen 各复制一份 public header, 产物撞车,
+          #  CI run 42631551176 实测). 镜像原件保留作上游同步参照.
+          - "LiveContainerSwiftUI-Bridging-Header.h"
       - path: vendor/LiveContainer/MultitaskSupport
       - path: TequilaDashLCUIAdapters
     settings:
@@ -445,7 +449,7 @@ targets:
         CLANG_ENABLE_MODULES: "YES"
         # 用本仓适配桥接头 (CI run 42626661044 实测: 上游原件会让 FoundationPrivate.h
         # 被引入两次, NSExtension 等重复 @interface 导致 PCH 失败). 镜像原件保持原样.
-        SWIFT_OBJC_BRIDGING_HEADER: "$(SRCROOT)/TequilaDashLCUIAdapters/LiveContainerSwiftUI-Bridging-Header.h"
+        SWIFT_OBJC_BRIDGING_HEADER: "$(SRCROOT)/TequilaDashLCUIAdapters/LCUI-Bridging-Header.h"
         # 上游 :287-294 把 CydiaSubstrate.framework 当资源, 主 App 已落 bundle, 此处不重复.
         HEADER_SEARCH_PATHS:
           # 主 App 适配副本优先: 与桥接头裸名 include 解析到同一物理路径, 避免重复 @interface.
