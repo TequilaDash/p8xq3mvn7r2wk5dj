@@ -229,6 +229,11 @@ struct SandboxContainerView: View {
             // 旧 SandboxAppDetailView 从导航退役 (独有动作已收进新页的操作节).
             SandboxAppSettingsView(app: app, onChange: { Task { await reload() } })
         }
+        // 外部 .ipa 打开 (ExternalIPAOpenHandler) 在后台导入完成后通知重扫,
+        // 否则列表要等用户手动下拉才看到新装的 App.
+        .onReceive(NotificationCenter.default.publisher(for: .sandboxAppsDidChange)) { _ in
+            Task { await reload() }
+        }
         .documentPicker(isPresented: $showImporter, allowedTypes: [UTType(filenameExtension: "ipa") ?? .data]) { urls in
             for url in urls { importOne(url) }
         }

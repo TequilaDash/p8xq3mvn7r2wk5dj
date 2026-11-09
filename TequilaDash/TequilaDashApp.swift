@@ -128,6 +128,12 @@ struct TequilaDashApp: App {
         WindowGroup {
             RootView()
                 .tint(AppTheme.accent)
+                // 外部打开 .ipa (文件 App / 分享面板 / 浏览器下载 → 用本 App 打开):
+                // Info.plist 早就声明了接收 com.apple.itunes.ipa, 但此前没有接收方,
+                // 系统拉起 App 后什么都不发生. 走已有导入实现, 不需要 app group.
+                .onOpenURL { url in
+                    ExternalIPAOpenHandler.handle(url)
+                }
         }
     }
 }
