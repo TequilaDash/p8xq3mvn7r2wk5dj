@@ -105,6 +105,12 @@ fishhook/  litehook/  ZSign/  xcconfigs/  Resources/
       （沙盒接管 + dyld 注入 + bundle 装载 + 入口点解析全部通过之后）删该文件。
     - `TequilaDash/Views/GuestLaunchError.swift`：宿主启动时若文件仍在 = 上次崩在
       启动阶段，生成中文诊断串交给 `GuestLaunchErrorSheet`。
+13. `project.yml` 的 `TestJITLess` target（`library.dynamic`，源 `vendor/LiveContainer/TestJITLess`
+    原样，`EXECUTABLE_PREFIX: ""` 让产物叫 `TestJITLess.dylib`）+ 主 App embed。
+    消费方是上游 `LiveContainerSwiftUI/Utilities/LCUtils.m:265-266`：按
+    `<主Bundle>/Frameworks/TestJITLess.dylib` 拷进临时目录再做注入试验，不嵌入则该诊断路径静默失效。
+    与 `TweakLoader` 的区别：TweakLoader 是访客进程内的 tweak 装载器（LCBootstrap dlopen），
+    TestJITLess 只是 JIT-less 能力探针（constructor 置 `LC_JITLESS_TEST_LOADED`）。
 
 ## 同步上游的标准流程
 
