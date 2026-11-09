@@ -1181,9 +1181,9 @@ struct SandboxAppBanner: View {
             // LC 同款多任务入口 (虚拟窗口路径): 内部用 LC 默认模式的
             // DecoratedAppSceneViewController 手工建窗, 不依赖 SwiftUI openWindow/WindowGroup.
             Button {
-                let opened = TDMultitaskOpenVirtualWindow(app.displayName,
-                                                          app.id,
-                                                          containerUUID) != 0
+                let opened = TDMultitaskOpenVirtualWindow(app.displayName as NSString,
+                                                          app.id as NSString,
+                                                          containerUUID as NSString) != 0
                 if !opened {
                     ToastCenter.shared.show("虚拟窗口启动失败", seconds: 3.0)
                 }
