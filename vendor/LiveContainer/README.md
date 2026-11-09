@@ -1,144 +1,211 @@
-# LiveContainer 上游源码镜像（权威副本）
+<div align="center">
+   <img width="217" height="217" src="./screenshots/livecontainer_icon.png" alt="Logo">
+</div>
+   
 
-> 本目录是 **LiveContainer 上游源码的完整镜像**，不是本仓的可编译源码。
-> 目的：以后同步上游更新时，可以直接把新版 LC 源码覆盖进来，
-> `diff -r vendor/LiveContainer <新版>` 就能看清上游改了什么，再逐项对照下面的适配清单。
-> 我们不是分叉：交互、弹窗、启动链、数据模型都以 LC 为准，差异只在本仓必需的适配点。
+<div align="center">
+  <h1><b>LiveContainer</b></h1>
+  <p><i>An app launcher that runs iOS apps without actually installing them! </i></p>
+</div>
+<h6 align="center">
 
-## 镜像来源与版本
+Crowdin Project: [![Crowdin](https://badges.crowdin.net/livecontainer/localized.svg)](https://crowdin.com/project/livecontainer) &nbsp;| &nbsp; Documentation:[livecontainer.github.io](https://livecontainer.github.io/docs/intro)
 
-| 项 | 值 |
-|---|---|
-| 本地参照树 | `C:/Users/xcrad/.omp/work/ref/lc_rev`（LC 上游摊平副本） |
-| 镜像时间 | 2026-11-09 |
-| 文件数 | 318 |
-| 校验清单 | `.upstream-manifest.json`（每个文件 SHA256 前 16 位） |
-| 上游工程参照 | `LiveContainer.xcodeproj/project.pbxproj`（target / build settings 的权威定义） |
+# LiveContainer
 
-上游目录（保持原名，便于 diff）：
+- LiveContainer is an app launcher (not emulator or hypervisor) that allows you to run iOS apps inside it.
+- Allows you to install unlimited apps (3 app/10 app id free developer account limit does not apply here) with only one app & app id. You can also have multiple versions of an app installed with multiple data containers.
+- (Below iOS 26) When JIT is available, codesign is entirely bypassed, no need to sign your apps before installing. Otherwise, your app will be signed with the same certificate used by LiveContainer.
 
-```
-LiveContainer/          27 个源文件 — LC 核心启动栈 (LCBootstrap/LCSharedUtils/LCMachOUtils/Tweaks/*)
-LiveContainerSwiftUI/   44 个源文件 — SwiftUI 层 (LCTabView/LCAppModel/LCAppInfo/LCSettingsView/AppList/*)
-MultitaskSupport/       17 个源文件 — 多任务 / 虚拟窗口 / PiP
-TweakLoader/             4 个源文件 — Tweak 注入加载器 (dylib)
-LaunchAppExtension/      4 个源文件 — 启动扩展
-LiveProcess/             2 个源文件 — 扩展入口
-ShareExtension/          9 个源文件 — 分享扩展
-SideStoreSupport/       10 个源文件 — SideStore 支持
-TestJITLess/             1 个源文件
-fishhook/  litehook/  ZSign/  xcconfigs/  Resources/
-```
+> [!CAUTION]
+> **Important Notice Regarding Third-Party Builds of LiveContainer**
+>
+> We have recently noticed the appearance of certain closed-source third-party builds of LiveContainer. Please be aware that all your apps are installed within LiveContainer, which means these third-party builds **have full access to your data, including sensitive information such as keychain items and login credentials**. 
+> 
+> Furthermore, please note that we do not provide any support for issues of these third-party builds.
 
-## 本仓与上游的对应关系
 
-| 上游 | 本仓 | 关系 |
-|---|---|---|
-| `LiveContainer/` | `TequilaDashLiveProcess/LC/` | **已搬 + 适配**（见下） |
-| `LiveProcess/` | `TequilaDashLiveProcess/`（main.m / Info.plist / entitlements） | **已搬 + 适配** |
-| `fishhook/` | `vendor/fishhook/` | 原样 |
-| `litehook/` | `vendor/litehook/` | 原样 |
-| `ZSign/` | `ZSign/` | 已搬 + 适配（tequiladash wrapper） |
-| `LiveContainerSwiftUI/` | `TequilaDash/Views/` 等 | **用本仓 SwiftUI 重写**（UI 现代化要求），行为/结构对齐 LC |
-| `MultitaskSupport/` | 待接入 | 见 `docs/LC_UPSTREAM_SYNC.md` 进度表 |
-| `TweakLoader/` | 待接入 | `LCBootstrap.m:611-623` 的 dlopen 钩子已就位，缺 dylib target |
-| 其余扩展 | 待评估 | 按需 |
+# Installation
+**LiveContainer comes with a standalone version and a version with built-in SideStore. [Please read the install guide here](https://livecontainer.github.io/docs/installation)**
 
-## 已搬部分的本仓适配点（同步上游时必须保留）
+If you encounter any issue please [read our FAQ here](https://livecontainer.github.io/docs/faq)
 
-这些是本仓相对 LC 上游的**有意差异**，覆盖镜像前先确认：
+### Standalone 
+<table>
+<tr>
+<td>
+Stable
+</td>
+<td>
+<a href="https://stikstore.app/altdirect/?url=https://github.com/LiveContainer/LiveContainer/releases/download/1.0/apps.json&exclude=livecontainer" target="_blank">
+   <img src="https://raw.githubusercontent.com/StikStore/altdirect/refs/heads/main/assets/png/AltSource_Blue.png" alt="Add AltSource" width="200"/>
+</a>
+</td>
+<td>
+<a href="https://github.com/LiveContainer/LiveContainer/releases/latest/download/LiveContainer.ipa" target="_blank">
+   <img src="https://raw.githubusercontent.com/StikStore/altdirect/refs/heads/main/assets/png/Download_Blue.png" alt="Download .ipa" width="200"/>
+</a>
+</td>
+</tr>
+<tr>
+<td>
+Nightly
+</td>
+<td>
+<a href="https://stikstore.app/altdirect/?url=https://github.com/LiveContainer/LiveContainer/releases/download/nightly/apps_nightly.json&exclude=livecontainer" target="_blank">
+   <img src="https://raw.githubusercontent.com/StikStore/altdirect/refs/heads/main/assets/png/AltSource_Blue.png" alt="Add AltSource" width="200"/>
+</a>
+</td>
+<td>
+<a href="https://github.com/LiveContainer/LiveContainer/releases/download/nightly/LiveContainer.ipa" target="_blank">
+   <img src="https://raw.githubusercontent.com/StikStore/altdirect/refs/heads/main/assets/png/Download_Blue.png" alt="Download .ipa" width="200"/>
+</a>
+</td>
+</tr>
+</table>
 
-1. `TequilaDashLiveProcess/LC/LCBootstrap.m`
-   - 家目录路径：`LC_HOME_PATH` 直接传 `Documents/SandboxApps` 根，不再拼 `/Documents`（本仓目录模型）。
-   - 不写 `LCAppInfo.plist`，直接读访客自己的 `Info.plist`（`:289-291`）。
-   - `[LCBootstrap][stepN]` 分步 NSLog（可诊断性改造，崩溃取证用）。
-   - `exceptionHandler` / `invokeAppMain` 返回路：把完整错误串写共享 suite 的 `lastGuestLaunchError` + `lastGuestLaunchErrorUptime`（本仓 iOS 26 扩展跨进程需要）。
-2. `TequilaDashLiveProcess/main.m` — 扩展入口类名改 `TequilaDashLiveProcessHandler`。
-3. `TequilaDash/HostGuestEntry.m` — 双模入口（本仓特有，LC 用 `-e _LiveContainerMain`）。
-4. `ZSign/tequiladash_wrapper.mm` — 本仓签名器桥接（LC 无此文件）。
-5. `TequilaDashLCUIAdapters/Utilities/LCUtils.m` — **编译用适配副本**，替代镜像里的
-   `LiveContainerSwiftUI/Utilities/LCUtils.m`（该镜像文件在 framework target 的 sources 里被
-   `excludes` 排除）。三处差异：
-   - `#import <IOKit/IOKitLib.h>` 与 `isTXMScriptRequired` 的 IOKit 调用用
-     `#if TARGET_OS_MACCATALYST || TARGET_OS_OSX` 包住（上游链接 MacOSX SDK 的
-     IOKit.framework，本仓只编 iOS，iOS SDK 无公开 IOKit 头）。
-   - 三个 `../../` 相对 include 改裸名（`LCSharedUtils.h` /
-     `DecoratedAppSceneViewController.h` / `zsigner.h`），由 `HEADER_SEARCH_PATHS` 解析。
-   同步上游 LCUtils.m 时把这三处差异重新应用到适配副本。
-6. `project.yml` 的 `LiveContainerSwiftUI` framework target：模块名必须为
-   `LiveContainerSwiftUI`（3 个多任务 ObjC 文件 import 生成的 `LiveContainerSwiftUI-Swift.h`），
-   `SWIFT_VERSION: "5.0"`（上游 pbxproj:1197/1240 原值），排除上游 `@main` 入口
-   `App/LiveContainerSwiftUIApp.swift`（宿主入口是 `HostGuestEntry.m → TDHostBoot()`）。
-   LC 核心 `.m` 不编进 framework（主 App 已编适配副本），用 `-Wl,-undefined,dynamic_lookup`
-   运行时解析，避免同进程两份 ObjC 类。
-7. `TequilaDashLiveProcess/LC/LCBootstrap.m` **启动闪退加固四处**（对上游同名文件的有意加固）：
-   - `docPath`：`getenv("LC_HOME_PATH")` 为 NULL 时回落 `HOME`，两者皆空则返回错误串
-     （原写法 `[NSString stringWithUTF8String:NULL]` 是 UB）。
-   - `newHomePath` 为空时不 `setenv`（`setenv(name, NULL, 1)` 是 UB）。
-   - `lcAppUrlScheme` 改用 `firstObject` 链取（原 `[0]` 在 `CFBundleURLTypes` 为空时越界崩溃）。
-   - `LC_HOME_PATH` 的 `setenv` 前判 `getenv("HOME")` 非空。
-   另补 `Localization.h/.m`（上游有、原适配副本缺失，`AppSceneViewController.m` 依赖 `NSString.loc`）。
-8. `TequilaDashLiveProcess/main.m` **键映射加固**：`setObject:` 逐项判空（
-   `setObject:nil` 抛 `NSInvalidArgumentException`，是启动闪退真因之一），
-   并同时接受 LC 原键名 `hostUrlScheme` / `selected` / `selectedContainer`
-   （LC 的 MultitaskSupport 只发这三个）。
-9. `TequilaDashLCUIAdapters/MultitaskBridge.h/.m` — 多任务入口
-   `int TDMultitaskOpenVirtualWindow(displayName, bundleId, dataUUID)`（编进 framework）。
-   走 LC 默认的 `DecoratedAppSceneViewController` 手工建窗路径（不依赖 SwiftUI
-   `openWindow` 与 `WindowGroup(id:"appView")`）。宿主侧用 `@_silgen_name` 声明调用。
-   **不要**在主 App 里 `import LiveContainerSwiftUI`：会把 framework 的 ObjC 头拉进同一
-   翻译单元，与既有桥接头重复定义枚举（`LCUtils.h` 的 `Unknown` / `LCAppInfo.h` 的
-   `Disabled`，CI run 42657238035 实测）。
-10. `project.yml` 主 target 资源：`vendor/LiveContainer/Resources/en.lproj`（folder reference）。
-    上游 `Shared.swift:162-166` 的 `String.enBundle` 用 `Bundle(path: path!)` 强解包
-    `en.lproj`，缺它则首个未命中本地化键直接崩。
-11. `TequilaDashLCUIAdapters/Utilities/LCUtils.m` 的 `liveProcessBundleIdentifier`：
-    上游硬编码 `LiveProcess.appex`，本仓产物名是 `TequilaDashLiveProcess.appex`；
-    适配为「上游名 → 扫 PlugIns 里 bundleId 以 `.liveprocess` 结尾的 appex → 上游 LC1 猜测链」。
-12. **启动崩溃检测（本仓特有，上游无）** —— 无 app group 时 `LCSharedUtils.appGroupID`
-    返回 `"Unknown"`，扩展容器与宿主不共享 suite，`lastGuestLaunchError` 跨进程读不到。
-    替代链路（三处，缺一不可）：
-    - `TequilaDash/Engine/LaunchGuest.m`：`TDLaunchGuestRestart(NSString *pendingMarkerPath)`
-      在重启前落 `<可用容器>/.td_guest_launch_pending` 并把绝对路径记进标准 defaults
-      的 `TDGuestLaunchMarker`。
-    - `TequilaDashLiveProcess/LC/LCBootstrap.m`：`invokeAppMain` 里紧挨 `// Go!`
-      （沙盒接管 + dyld 注入 + bundle 装载 + 入口点解析全部通过之后）删该文件。
-    - `TequilaDash/Views/GuestLaunchError.swift`：宿主启动时若文件仍在 = 上次崩在
-      启动阶段，生成中文诊断串交给 `GuestLaunchErrorSheet`。
-13. `project.yml` 的 `TestJITLess` target（`library.dynamic`，源 `vendor/LiveContainer/TestJITLess`
-    原样，`EXECUTABLE_PREFIX: ""` 让产物叫 `TestJITLess.dylib`）+ 主 App embed。
-    消费方是上游 `LiveContainerSwiftUI/Utilities/LCUtils.m:265-266`：按
-    `<主Bundle>/Frameworks/TestJITLess.dylib` 拷进临时目录再做注入试验，不嵌入则该诊断路径静默失效。
-    与 `TweakLoader` 的区别：TweakLoader 是访客进程内的 tweak 装载器（LCBootstrap dlopen），
-    TestJITLess 只是 JIT-less 能力探针（constructor 置 `LC_JITLESS_TEST_LOADED`）。
+### LiveContainer+SideStore
+|Stable|Nightly|
+|:-:|:-:|
+|<a href="https://github.com/LiveContainer/LiveContainer/releases/latest/download/LiveContainer+SideStore.ipa" target="_blank"><img src="https://raw.githubusercontent.com/StikStore/altdirect/refs/heads/main/assets/png/Download_Blue.png" alt="Download .ipa" width="200" /></a>|<a href="https://github.com/LiveContainer/LiveContainer/releases/download/nightly/LiveContainer+SideStore.ipa" target="_blank"><img src="https://raw.githubusercontent.com/StikStore/altdirect/refs/heads/main/assets/png/Download_Blue.png" alt="Download .ipa" width="200" /></a>|
 
-14. **JIT-less 诊断入口桥（本仓特有，上游无）** —— 上游 `LCJITLessDiagnoseView` 只在
-    `LCSettingsView` 里可达，本仓宿主不渲染上游设置页。桥接三件套：
-    - `TequilaDashLCUIAdapters/JITLessDiagnoseBridge.swift`（编进 framework）：
-      `@objc class TDJITLessDiagnoseHost.makeViewController()`，包 `LCJITLessDiagnoseView()`
-      并注入 `DataManager.shared.model`（缺它 `@EnvironmentObject` 首帧崩）。
-    - `TequilaDash/Views/JITLessDiagnoseView.swift`（宿主）：`NSClassFromString` 反射拿
-      UIViewController，反射不到显示 `ContentUnavailableView`，不留假入口。
-    - `TequilaDash/Views/MoreView.swift`：「元数据与诊断」组新增「JIT-less 诊断」行。
-    另注意：新 dylib target 必须整段覆盖顶层 `OTHER_LDFLAGS`（含主 App 专用的
-    `$(DERIVED_FILE_DIR)/SAP/lib/libunicorn.a`），否则继承后链接期找不到文件
-    （CI run 42663291263 实测，对齐 Tunnel 的覆盖写法）。
 
-## 同步上游的标准流程
+## Requirements
 
-```bash
-# 1. 覆盖镜像（保持上游目录名）
-robocopy <新版LC> vendor/LiveContainer /MIR /XD .git screenshots
-# 2. 看上游改了什么
-git diff -- vendor/LiveContainer
-# 3. 更新 .upstream-manifest.json
-python Resources/Scripts/lc_upstream_manifest.py
-# 4. 对照上面的「适配点」逐项检查 TequilaDashLiveProcess/LC/ 是否需要同步
-# 5. 跑守卫 + dispatch CI 拿真实类型检查
-```
+- iOS/iPadOS 15+
+   + Multitasking requires iOS/iPadOS 16.0+
+- AltStore 2.0+ / SideStore 0.6.0+
 
-## 为什么镜像放在 `vendor/` 而不参与编译
 
-- xcodegen `project.yml` 的 `sources:` 是**显式 path 列表**，`vendor/LiveContainer` 不在其中，不会被编译。
-- 仓库守卫（`swift_ui_copy_guard.py` / `sf_symbol_guard.py` 等）只扫 `TequilaDash/`，镜像在 `vendor/` 下不触发。
-- 这样镜像可以 100% 保持上游原样（含上游自己的中文句号/配色/符号），不会被本仓硬规则误伤。
+# Features & Guides
+
+### Installing Apps
+- Open LiveContainer, tap the plus icon in the upper right hand corner and select IPA files to install.
+- Choose the app you want to open in the next launch.
+- You can long-press the app to manage it.
+
+### [Add Apps to Home Screen](https://livecontainer.github.io/docs/guides/add-to-home-screen)
+
+### [Multiple LiveContainers](https://livecontainer.github.io/docs/guides/multiple-livecontainers)
+Using multiple LiveContainers allows you to run multiples different apps simultaneously, with *almost* seamless data transfer between the LiveContainers.
+
+### [Multitasking](https://livecontainer.github.io/docs/guides/multitask)
+You can now launch multiple apps simultaneously in in-app virtual windows. These windows can be resized, scaled, and even displayed using the native Picture-in-Picture (PiP) feature. On iPads, apps can run in native window mode, displaying each app in a separate system window. And if you wish, you can choose to run apps in multitasking mode by default in settings.
+
+To use multitasking, hold its banner and tap **"Multitask"**. You can also make Multitask the default launch mode in settings.
+
+>[!Note]
+>1. To use multitasking, ensure you select **"Keep App Extensions"** when installing via SideStore/AltStore.  
+>2. If you want to enable JIT for multitasked apps, you’ll need a JIT enabler that supports attaching by PID. (StikDebug)
+
+### [JIT Support](https://livecontainer.github.io/docs/guides/jit-support)
+### [Installing external tweaks](https://livecontainer.github.io/docs/guides/tweaks)
+### [Multiple Containers/External Containers](https://livecontainer.github.io/docs/guides/containers-and-external-data)
+### [Hiding Apps](https://livecontainer.github.io/docs/guides/lock-app)
+
+### Fix File Picker & Local Notification
+Some apps may experience issues with their file pickers or not be able to apply for notification permission in LiveContainer. To resolve this, enable "Fix File Picker" & "Fix Local Notifications" accordingly in the app-specific settings.
+
+### "Open In App" Support
+- You can simply share a URL or a file to app simply by using iOS's native share sheet. In share sheet, select LiveContainer, and LiveContainer will ask you which app you'd like to open that URL/file in.
+- What's more, you also can tap the link icon in the top-right corner of the "Apps" tab and input the URL. LiveContainer will detect the appropriate app and ask if you want to launch it.
+
+## Compatibility
+Unfortunately, not all apps work in LiveContainer, so we have a [compatibility list](https://github.com/LiveContainer/LiveContainer/labels/compatibility) to tell if there is apps that have issues. If they aren't on this list, then it's likely going run. However, if it doesn't work, please make an [issue](https://github.com/LiveContainer/LiveContainer/issues/new/choose) about it.
+
+## Building
+Open Xcode, edit `DEVELOPMENT_TEAM[config=Debug]` in `xcconfigs/Global.xcconfig` to your team id and compile.
+
+## Project structure
+### Main executable
+- Core of LiveContainer
+- Contains the logic of setting up guest environment and loading guest app.
+- If no app is selected, it loads LiveContainerSwiftUI.
+
+### LiveContainerSwiftUI
+- SwiftUI rewrite of LiveContainerUI (by @hugeBlack)
+- Language file `Localizable.xcstrings` is in here for multilingual support. To help us translate LiveContainer, please visit [our crowdin project](https://crowdin.com/project/livecontainer)
+
+### MultitaskSupport
+- Contains the implementation of multitasking feature.
+- Based on [FrontBoardAppLauncher](https://github.com/khanhduytran0/FrontBoardAppLauncher)
+
+### SideStore
+- Supporting code for SideStore's app refreshing integration
+
+### TweakLoader
+- A simple tweak injector, which loads CydiaSubstrate and loads tweaks.
+- Injected to every app you install in LiveContainer.
+
+### ZSign
+- The app signer shipped with LiveContainer.
+- Originally made by [zhlynn](https://github.com/zhlynn/zsign).
+- LiveContainer uses [Feather's](https://github.com/khcrysalis/Feather) version of ZSign modified by khcrysalis.
+- Changes are made to meet LiveContainer's needs.
+
+## How does it work?
+
+### Patching guest executable
+- Patch `__PAGEZERO` segment:
+  + Change `vmaddr` to `0xFFFFC000` (`0x100000000 - 0x4000`)
+  + Change `vmsize` to `0x4000`
+- Change `MH_EXECUTE` to `MH_DYLIB`.
+- Inject a load command to load `TweakLoader.dylib`
+
+### Patching `@executable_path`
+- Hook `dyld4::APIs::_NSGetExecutablePath`
+- Call `_NSGetExecutablePath`
+- Replace `config.process.mainExecutablePath`
+  - Calculate address of `config.process.mainExecutablePath` using `dyld4::APIs` instance (passed as first parameter)
+  - Use `builtin_vm_protect` or TPRO unlock to make it writable
+  - Replace the address with one we have control of
+- Put the original `dyld4::APIs::_NSGetExecutablePath` back
+
+> Old Method
+>- Call `_NSGetExecutablePath` with an invalid buffer pointer input -> SIGSEGV
+>- Do some [magic stuff](https://github.com/khanhduytran0/LiveContainer/blob/5ef1e6a/main.m#L74-L115) to overwrite the contents of executable_path.
+
+### Patching `NSBundle.mainBundle`
+- This property is overwritten with the guest app's bundle.
+
+### Bypassing Library Validation
+- JIT is optional to bypass codesigning. In JIT-less mode, all executables are signed so this does not apply.
+- Derived from [Restoring Dyld Memory Loading](https://blog.xpnsec.com/restoring-dyld-memory-loading)
+
+### dlopening the executable
+- Call `dlopen` with the guest app's executable
+- TweakLoader loads all tweaks in the selected folder
+- Find the entry point
+- Jump to the entry point
+- The guest app's entry point calls `UIApplicationMain` and start up like any other iOS apps.
+
+### Multi-Account support & Keychain Semi-Separation
+[128 keychain access groups](./entitlements.xml) are created and LiveContainer allocates them randomly to each container of the same app. So you can create 128 container with different keychain access groups.
+
+## Limitations
+- Entitlements from the guest app are not applied to the host app. This isn't a big deal since sideloaded apps requires only basic entitlements.
+- App Permissions are globally applied.
+- Guest app containers are not sandboxed. This means one guest app can access other guest apps' data.
+- App extensions aren't supported. they cannot be registered because: LiveContainer is sandboxed, SpringBoard doesn't know what apps are installed in LiveContainer, and they take up App ID.
+- Multitasking can be achieved by using multiple LiveContainer and the multitasking feature. However, while we were able to fix physical keyboard input issue on iPadOS (https://github.com/LiveContainer/LiveContainer/issues/524), iPhone Mirroring uses different checks which still broke it (https://github.com/LiveContainer/LiveContainer/issues/793).
+- Remote push notification will not work
+- Querying custom URL schemes might not work(?)
+
+## TODO
+- Use ChOma instead of custom MachO parser
+
+## License
+[GNU Affero General Public License v3.0](https://github.com/LiveContainer/LiveContainer/blob/main/LICENSE)
+
+## Credits
+- [xpn's blogpost: Restoring Dyld Memory Loading](https://blog.xpnsec.com/restoring-dyld-memory-loading)
+- [LinusHenze's CFastFind](https://github.com/pinauten/PatchfinderUtils/blob/master/Sources/CFastFind/CFastFind.c): [MIT license](https://github.com/pinauten/PatchfinderUtils/blob/master/LICENSE)
+- [litehook](https://github.com/opa334/litehook): [MIT license](https://github.com/opa334/litehook/blob/main/LICENSE)
+- @haxi0 & @m1337v for icon
+- @Vishram1123 for the initial shortcut implementation.
+- @hugeBlack for SwiftUI contribution
+- @Staubgeborener for automatic AltStore/SideStore source updater
+- @fkunn1326 for improved app hiding
+- @slds1 for dynamic color feature
+- @Vishram1123 for iOS 26+ JIT Script Support
+- @StephenDev0 for AltStore source support
