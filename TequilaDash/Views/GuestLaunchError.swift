@@ -43,6 +43,27 @@ enum GuestLaunchError {
                 message = legacy
             }
         }
+        // 无 app group 时的唯一可靠信号 (本仓适配): 宿主重启前落的 pending 标记文件.
+        // 写入侧 = Engine/LaunchGuest.m, 清除侧 = LCBootstrap.m（临门一脚前）.
+        // 文件仍在 = 上次重启进访客后在启动阶段就退出了, 一个字的遗言都来不及留.
+        let host = UserDefaults.standard
+        if let marker = host.string(forKey: "TDGuestLaunchMarker") {
+            let stillPending = FileManager.default.fileExists(atPath: marker)
+            host.removeObject(forKey: "TDGuestLaunchMarker")
+            if stillPending {
+                if message.isEmpty {
+                    let guestName = host.string(forKey: "TDLastGuestName") ?? "访客应用"
+                    message = """
+                    上次启动 \(guestName) 时, 访客进程在启动阶段退出 (没有异常遗言).
+
+                    标记文件仍在: \(marker)
+                    可能原因: 沙盒接管失败 / dyld 注入失败 / 访客二进制架构不符.
+                    排查: 控制台过滤 "LCBootstrap" 与 "step" 看最后停在哪一步.
+                    """
+                }
+                try? FileManager.default.removeItem(atPath: marker)
+            }
+        }
         return message.isEmpty ? nil : message
     }
 }

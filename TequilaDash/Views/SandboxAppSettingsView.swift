@@ -18,8 +18,9 @@ import UIKit
 
 /// 容器锁定的本机认证 (与列表页同一份实现, 列表页容器视图里的 handleAuth 同口径).
 /// 全仓唯一声明 (SandboxContainerView 的同名 private 声明已删, 防重复符号).
+/// - Parameter pendingMarkerPath: 「启动进行中」标记文件路径 (访客容器根下). 见 Engine/LaunchGuest.m.
 @_silgen_name("TDLaunchGuestRestart")
-func TDLaunchGuestRestart()
+func TDLaunchGuestRestart(_ pendingMarkerPath: NSString?)
 
 struct SandboxAppSettingsView: View {
     let app: SandboxApp
@@ -449,7 +450,12 @@ struct SandboxAppSettingsView: View {
                 defaults.set(app.id, forKey: "TDLastGuestBundleId")
                 defaults.set(false, forKey: "TDGuestNetBlock")
                 ToastCenter.shared.show("正在启动 \(app.displayName)…", seconds: 3.0)
-                TDLaunchGuestRestart()
+                // 标记文件落在访客容器根 (与 LCBootstrap 的 newHomePath 同处), 供下次启动
+                // 判定上次是否崩在启动阶段.
+                let markerPath = app.dataPath.map {
+                    ($0 as NSString).appendingPathComponent(".td_guest_launch_pending")
+                }
+                TDLaunchGuestRestart(markerPath as NSString?)
             case .failure(let error):
                 ToastCenter.shared.show("重签失败: \(error.localizedDescription)", seconds: 6.0)
             }

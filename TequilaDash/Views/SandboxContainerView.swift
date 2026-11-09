@@ -854,7 +854,12 @@ struct SandboxContainerView: View {
                 defaults.set(snapshot.id, forKey: "TDLastGuestBundleId")
                 defaults.set(netBlock, forKey: "TDGuestNetBlock")
                 ToastCenter.shared.show("正在启动 \(snapshot.displayName)…", seconds: 3.0)
-                TDLaunchGuestRestart()
+                // 标记文件落在访客容器根 (与 LCBootstrap 的 newHomePath 同处), 供下次启动
+                // 判定上次是否崩在启动阶段.
+                let markerPath = snapshot.dataPath.map {
+                    ($0 as NSString).appendingPathComponent(".td_guest_launch_pending")
+                }
+                TDLaunchGuestRestart(markerPath as NSString?)
             case .failure(let error):
                 ToastCenter.shared.show("重签失败: \(error.localizedDescription)", seconds: 6.0)
             }

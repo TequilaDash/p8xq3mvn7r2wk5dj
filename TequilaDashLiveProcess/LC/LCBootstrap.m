@@ -674,6 +674,18 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
         return appError;
     }
 
+    // 启动进行中标记 (本仓适配): 宿主重启前落的 pending 文件在这里删 —— 能走到这一行说明
+    // 沙盒接管 / dyld 注入 / bundle 装载 / 入口点解析全部通过, 之后的崩溃归访客二进制自己.
+    // 无 app group 时这是宿主唯一可靠的「上次崩在启动阶段」信号 (扩展容器与本进程不共享 suite).
+    if (newHomePath.length > 0) {
+        NSString *tdPendingMarker = [newHomePath stringByAppendingPathComponent:@".td_guest_launch_pending"];
+        NSFileManager *tdFM = [NSFileManager defaultManager];
+        if ([tdFM fileExistsAtPath:tdPendingMarker]) {
+            [tdFM removeItemAtPath:tdPendingMarker error:nil];
+            NSLog(@"[LCBootstrap][step6b] pending launch marker cleared: %@", tdPendingMarker);
+        }
+    }
+
     // Go!
     NSLog(@"[LCBootstrap] jumping to main %p", appMain);
     int ret;

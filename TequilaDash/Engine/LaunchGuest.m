@@ -17,7 +17,17 @@
 // LC 同款私有常量 (LCSharedUtils.m:11), 不链接系统符号
 static NSString * const TDFBSOpenApplicationOptionKeyActivateAsClassic = @"__ActivateAsClassic";
 
-void TDLaunchGuestRestart(void) {
+void TDLaunchGuestRestart(NSString * _Nullable pendingMarkerPath) {
+    // 启动进行中标记 (本仓适配): 落文件 + 记住绝对路径. 重启后 LCBootstrap 在临门一脚前删它;
+    // 下次宿主启动若文件仍在 = 上次崩在启动阶段. 无 app group 时扩展容器与本进程不共享
+    // suite, 这是唯一可靠的失败信号. 写失败不拦路 (只是少一条诊断).
+    if (pendingMarkerPath.length > 0) {
+        NSFileManager *fm = [NSFileManager defaultManager];
+        [fm createFileAtPath:pendingMarkerPath contents:[NSData data] attributes:nil];
+        NSUserDefaults *hostDefaults = [NSUserDefaults standardUserDefaults];
+        [hostDefaults setObject:pendingMarkerPath forKey:@"TDGuestLaunchMarker"];
+        [hostDefaults synchronize];
+    }
     Class wsClass = NSClassFromString(@"LSApplicationWorkspace");
     SEL wsSel = NSSelectorFromString(@"defaultWorkspace");
     if (!wsClass || ![(id)wsClass respondsToSelector:wsSel]) {
