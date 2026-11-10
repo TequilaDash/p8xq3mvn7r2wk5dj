@@ -166,9 +166,12 @@ final class CellularGlitchCoordinator: ObservableObject, @unchecked Sendable {
         // task-29-①：isReady 为真**不许无条件早退** —— 凭证超龄时先就地重验
         // （隧道死于无路径事件时缓存会永久假阳性，盲放行 = 直连被拒 + 卡点弹窗永不出现）.
         if TunnelGate.isReady {
-            if TunnelGate.isReadyWithin(maxAge: CellularTunnelManager.credentialMaxAgeSeconds) {
-                return false
-            }
+            // v0.3.814: **不再**因「凭证未超龄」就无条件放行。
+            // 真机实测：卡点弹窗成功 → 用户开回蜂窝 → 10 秒内点 JIT，走的就是这条早退，
+            // 结果盲放行去撞 `Connection refused (os error 61)`，且卡点弹窗不再出现
+            // （因为门没走到 gateOutcome）。时间戳只说明「刚才成功过」，
+            // 不说明「现在 utun 还在」——蜂窝开回来时系统可能已回收 utun。
+            // 因此无论是否超龄，一律现场探测一次（≤0.25s 封顶），不可达就清凭证走卡点。
             if Thread.isMainThread {
                 TunnelDiagnostics.note("主线程隧道调用", "beginLoopbackGate 凭证超龄重验（≤0.25s 封顶，同 guardReady 口径）")
             }

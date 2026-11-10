@@ -1,3 +1,20 @@
+## [0.3.814] - 2026-11-10
+
+- 修复.杀后台重进沙盒容器 App 列表消失: `LCPathBridge.hostContainerRoot` 还拼着 `SandboxApps`，
+  而 `SandboxContainerStore.root` 已改成 `Documents/` → 导入写到 `Documents/Applications`，
+  LC 原生 UI 扫 `Documents/SandboxApps/Applications` → 列表空。三处同源为 `Documents/`
+- 修复.卡点成功→开蜂窝→点 JIT 仍 `Connection refused` 且不再弹卡点（真机实测）:
+  ① `turnOffDataIfNeeded` 的 `guard !didTurnOffData` 早退 —— 用户手动开回蜂窝走不到
+     `turnOnDataIfNeeded`，标志停在 true。改为按实际网络状态自愈复位
+  ② `beginLoopbackGate` 的 `isReadyWithin(maxAge: 10)` 盲放行 —— 时间戳只说明「刚才成功过」，
+     不说明「现在 utun 还在」。改为无论是否超龄一律现场探测（≤0.25s），不可达即清凭证走卡点
+- 补.`keychain-access-groups` 128 个（上游 entitlements.xml 同款）:
+  LC 的 `Tweaks/SecItem.m:120-127` 把访客 SecItem 调用 hook 到
+  `<TEAMID>.com.kdt.livecontainer.shared[.N]`，每容器随机分配一个 N 实现 keychain 隔离。
+  原先一个都没写 → 访客读写 keychain 会撞主 App 或彼此
+- 修复.app group 值改为侧载工具实际注入的 `group.com.tequila.dash.$(DEVELOPMENT_TEAM)`
+  （截图实测本机可用的是 `group.com.tequila.dash.U82B5LN29B`）
+
 ## [0.3.813] - 2026-11-10
 
 - 修复.两个扩展运行时缺 LCSharedUtils 类: 扩展是**独立进程**，主 App 的 LC 类不存在于此进程。

@@ -333,6 +333,15 @@ final class CellularTunnelManager: @unchecked Sendable {
     @discardableResult
     func turnOffDataIfNeeded(orchestratedByGate: Bool = false, shouldAbort: (() -> Bool)? = nil) async -> Bool {
         guard isSupported && isEnabled else { return false }
+        // 按**实际网络状态**校正缓存，而不是信任 `didTurnOffData`：
+        // 用户按卡点弹窗手动关蜂窝 → 手动开回蜂窝时走不到 `turnOnDataIfNeeded`，
+        // 标志停在 true → 下次调用在这里 `return false` 早退 → 不弹卡点 →
+        // `guardReady` 直连被拒（真机实测 "Connection refused (os error 61)"）。
+        // 判据：网络已连通（蜂窝回来了）就说明「上次关的那次」已经结束，标志必须复位。
+        if didTurnOffData && CellularNetworkChecker.shared.isNetworkConnectedNow {
+            CellularLogStore.shared.log("网络已恢复，重置「已关蜂窝」标志（上次是手动开回的）")
+            didTurnOffData = false
+        }
         guard !didTurnOffData else { return false }
         guard !Self.isWiFiSatisfied() else {
             LoginLogger.shared.log("[Cellular] Wi-Fi 已连接，跳过关蜂窝",

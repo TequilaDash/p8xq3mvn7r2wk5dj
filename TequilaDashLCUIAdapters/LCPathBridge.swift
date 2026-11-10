@@ -31,13 +31,16 @@ enum LCPathBridge {
         return FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).last!
     }()
 
-    /// 宿主侧（非访客进程）用的容器根: `Documents/SandboxApps/`.
+    /// 宿主侧（非访客进程）用的容器根: **`Documents/`**.
     ///
-    /// 宿主 App 自己启动时 `LC_HOME_PATH` 还没设（那是进访客前才设），
-    /// 所以这里显式拼 `SandboxApps`，与 `SandboxContainerStore.root` 完全一致。
+    /// v0.3.814 修复: 原先这里拼了 `SandboxApps`，而 `SandboxContainerStore.root`
+    /// 已改成 `Documents/`（对齐 LC 的 `LCPath.docPath`）。两套路径不一致导致:
+    /// 导入写到 `Documents/Applications`，LC 原生 UI 却扫 `Documents/SandboxApps/Applications`
+    /// → 装完能看见、杀后台重进列表空（真机截图实测）。
+    ///
+    /// 现在三处同源: `LCPath.docPath` = `SandboxContainerStore.root` = 本属性 = `Documents/`。
     static var hostContainerRoot: URL {
-        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).last!
-        return docs.appendingPathComponent("SandboxApps", isDirectory: true)
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).last!
     }
 
     static var applications: URL { hostContainerRoot.appendingPathComponent("Applications", isDirectory: true) }
