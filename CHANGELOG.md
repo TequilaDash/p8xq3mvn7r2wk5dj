@@ -1,3 +1,12 @@
+## [0.3.812] - 2026-11-10
+
+- 修复.app group 值照抄上游：`group.com.SideStore.SideStore` + `group.com.rileytestut.AltStore`
+  （上游 `xcconfigs/Global.xcconfig:14-15` 的 `APP_GROUP_SIDESTORE`/`APP_GROUP_ALTSTORE`，
+  Release 时 `DEVELOPMENT_TEAM_SUFFIX` 为空）。侧载工具会给应用注入这两个 group，
+  自签/免费账号没有 → 须删掉这两项（主 App 其余功能不受影响）
+- 新增.`project.yml` 顶层 `APP_GROUP_SIDESTORE`/`APP_GROUP_ALTSTORE` 变量，
+  两个扩展的 entitlements 用 `$(...)` 引用它们（与上游同一套变量名）
+
 ## [0.3.811] - 2026-11-10
 
 - 修复.加 app group 后证书读不到（我 0.3.808 引入的回归）: LC 的
