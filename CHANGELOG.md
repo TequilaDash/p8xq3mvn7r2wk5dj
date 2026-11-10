@@ -1,3 +1,13 @@
+## [0.3.802] - 2026-11-10
+
+- 修复.LC 原生 UI 全部显示 "lc.xxx.yyy" 原始键（真机截图实测）：补 `Localizable.xcstrings`
+  进 bundle。上游该目录 945 KB / 337 键 / 16 语言，按 owner 要求只保留 en + zh-Hans + zh-Hant（200 KB）
+- 修复.沙盒容器底部只有 2 个 tab（apps/settings），缺 sources/tweaks：
+  `SharedModel.updateMultiLCStatus` 判 `appUrlScheme() == "livecontainer"`，本仓 scheme 是 `TequilaDash`
+  → `multiLCStatus = 2` → LCTabView 隐藏两个 tab。Info.plist 把 `livecontainer` 提到 URL scheme 首位
+- 修复.「返回上一级」异常：`SandboxHostView` 外层多包了一层 NavigationStack，
+  与 LCTabView 内部的 NavigationView 叠加。去掉外层，对齐上游（LCTabView 直接当根）
+
 ## [0.3.801] - 2026-11-10
 
 - 重构.沙盒容器改由 LC 原生 UI（LCTabView / LCAppListView / LCSettingsView）接管，

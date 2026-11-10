@@ -118,8 +118,13 @@
 			<string>com.tequila.dash.urlscheme</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
-				<!-- 主 App 的 [0][0] = 宿主身份 scheme (m5 方案 5.1): LiveProcessDebugLauncher 与
-				     将来的 LCBootstrap 等价代码都读 [0][0]; 不能是 liveprocess 系, 否则判定翻转. -->
+				<!-- v0.3.802: [0] 必须是 "livecontainer" —— LC 的 SharedModel.updateMultiLCStatus
+				     (Utilities/Shared.swift:95-101) 判 `appUrlScheme() == "livecontainer"`,
+				     不等则 multiLCStatus = 2, LCTabView 会**隐藏 sources 与 tweaks 两个 tab**
+				     (Views/LCTabView.swift:29-46 的条件)。真机截图实测只剩 apps+settings 两个 tab.
+				     [1] 保留本仓身份 scheme: LiveProcessDebugLauncher / LCBootstrap 等价代码读 [0][0],
+				     但它们在 multiLCStatus 判定之后才用到, 且 LCSharedUtils.lcUrlSchemes 会读全部. -->
+				<string>livecontainer</string>
 				<string>TequilaDash</string>
 			</array>
 		</dict>
@@ -137,9 +142,9 @@
 		<string>iPhoneOS</string>
 	</array>
 	<key>CFBundleShortVersionString</key>
-	<string>0.3.801</string>
+	<string>0.3.802</string>
 	<key>CFBundleVersion</key>
-	<string>1090</string>
+	<string>1091</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>ITSAppUsesNonExemptEncryption</key>

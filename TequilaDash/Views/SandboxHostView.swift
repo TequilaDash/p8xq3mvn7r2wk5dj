@@ -13,6 +13,11 @@ import UIKit
 // 容器根已对齐 `Documents/`（与 `LCPath.docPath` 同源），所以 LC 的列表天然看得见访客 App.
 
 /// 沙盒容器整屏宿主：承载 LC 原生 UI.
+///
+/// **不要**在外面再包 NavigationStack —— 上游 `LiveContainerSwiftUIApp.body` 是直接
+/// `LCTabView()` 当根（App/LiveContainerSwiftUIApp.swift:105-108），而 LCTabView 内部
+/// 自己用 `NavigationView`（Views/LCTabView.swift:64）。两层导航叠加会导致
+/// 子页返回按钮层级错乱（真机实测「返回上一级」行为异常）。
 struct SandboxHostView: View {
     var body: some View {
         LCUIHostView()
