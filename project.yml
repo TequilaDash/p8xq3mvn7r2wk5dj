@@ -575,7 +575,9 @@ targets:
         PRODUCT_MODULE_NAME: ShareExtension
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_FILE: vendor/LiveContainer/ShareExtension/Info.plist
-        INFOPLIST_KEY_CFBundleDisplayName: ShareExtension
+        # ShareExtension 的 main.m 自带 lcMainBundle 全局 + NSUserDefaults(ShareExtension) category,
+        # LCSharedGlobalsShim.m 据此跳过 lcMainBundle 定义（否则 duplicate symbol）.
+        
         SKIP_INSTALL: YES
         CODE_SIGN_ENTITLEMENTS: vendor/LiveContainer/ShareExtension/ShareExtension.entitlements
         MARKETING_VERSION: "0.3.813"
@@ -586,17 +588,19 @@ targets:
         # 与 LCUI framework 同款: 私有类与 LC 核心符号运行时解析, 不产生编译期链接.
         OTHER_LDFLAGS:
           - "-Wl,-undefined,dynamic_lookup"
-        # 只指镜像目录: 扩展桥接头用 `#import "../LiveContainer/LCSharedUtils.h"`,
-        # 解析到 vendor/LiveContainer/LiveContainer/. 不要加 TequilaDashLiveProcess/LC ——
-        # 那里有同名头文件 (LCSharedUtils.h/Localization.h/FoundationPrivate.h), 会重复声明.
-        # 实现符号由主 App 的 LC 核心提供 (-Wl,-undefined,dynamic_lookup 运行时解析).
+        # 扩展桥接头用 `#import "../LiveContainer/LCSharedUtils.h"`（解析到镜像目录）;
+        # 同时扩展**自带** LCSharedUtils.m / Localization.m（适配副本），其头文件在
+        # TequilaDashLiveProcess/LC —— 两处同名头内容一致（镜像 vs 适配副本），
+        # 搜索顺序让镜像优先，适配副本作为兜底（Localization.h 只有适配副本有补充）.
         HEADER_SEARCH_PATHS:
           - "$(SRCROOT)/vendor/LiveContainer"
           - "$(SRCROOT)/vendor/LiveContainer/LiveContainer"
-          # 扩展自带 LCSharedUtils.m / Localization.m（适配副本），头文件在这里.
           - "$(SRCROOT)/TequilaDashLiveProcess/LC"
+        # ShareExtension 的 main.m 自带 lcMainBundle 全局 + NSUserDefaults(ShareExtension) category,
+        # LCSharedGlobalsShim.m 据此跳过 lcMainBundle 定义（否则 duplicate symbol）.
         OTHER_CFLAGS:
           - "-fcommon"
+          - "-DTD_EXT_HAS_LC_MAIN_BUNDLE"
 
   # LaunchAppExtension (LC 上游同款, LiveContainer.xcodeproj:665 / settings :1373-1445).
   # ExtensionKit 的 AppIntent 扩展: 快捷指令「Launch App」→ 解析 livecontainer-launch URL
@@ -636,14 +640,13 @@ targets:
         SWIFT_OBJC_BRIDGING_HEADER: "$(SRCROOT)/vendor/LiveContainer/LaunchAppExtension/LaunchAppExtension-Bridging-Header.h"
         OTHER_LDFLAGS:
           - "-Wl,-undefined,dynamic_lookup"
-        # 只指镜像目录: 扩展桥接头用 `#import "../LiveContainer/LCSharedUtils.h"`,
-        # 解析到 vendor/LiveContainer/LiveContainer/. 不要加 TequilaDashLiveProcess/LC ——
-        # 那里有同名头文件 (LCSharedUtils.h/Localization.h/FoundationPrivate.h), 会重复声明.
-        # 实现符号由主 App 的 LC 核心提供 (-Wl,-undefined,dynamic_lookup 运行时解析).
+        # 扩展桥接头用 `#import "../LiveContainer/LCSharedUtils.h"`（解析到镜像目录）;
+        # 同时扩展**自带** LCSharedUtils.m / Localization.m（适配副本），其头文件在
+        # TequilaDashLiveProcess/LC —— 两处同名头内容一致（镜像 vs 适配副本），
+        # 搜索顺序让镜像优先，适配副本作为兜底（Localization.h 只有适配副本有补充）.
         HEADER_SEARCH_PATHS:
           - "$(SRCROOT)/vendor/LiveContainer"
           - "$(SRCROOT)/vendor/LiveContainer/LiveContainer"
-          # 扩展自带 LCSharedUtils.m / Localization.m（适配副本），头文件在这里.
           - "$(SRCROOT)/TequilaDashLiveProcess/LC"
         OTHER_CFLAGS:
           - "-fcommon"
