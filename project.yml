@@ -261,6 +261,11 @@ targets:
       # xcstrings 由 Xcode 编译期生成 Localizable.strings 并放进 .lproj.
       - path: Resources/Localizable.xcstrings
         buildPhase: resources
+      # LC 的图标资源 (Assets.xcassets, 837 KB): 上游 LCAltStoreSourcesView.swift:1074
+      # 用 `Image("DefaultIcon")` 取访客无图标时的占位, 缺它显示空白.
+      # 同时含 AccentColor / BadgeColor / JITBadgeColor 等 LC 内部配色.
+      - path: vendor/LiveContainer/Resources/Assets.xcassets
+        buildPhase: resources
     settings:
       base:
         # Swift 6 语言模式迁移（原 `swift6-migration` 分支，2026-09-18 已合入 `migrate-xcode`）。
