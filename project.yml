@@ -160,6 +160,9 @@ targets:
       # 侧载时由签名 profile 提供；免费账号签不出 app group 时该扩展装上也不可用.
       - target: ShareExtension
         embed: true
+      # 快捷指令「Launch App」扩展（LC 上游同款）: 依赖 ShareExtension 已装 + 同一 app group.
+      - target: LaunchAppExtension
+        embed: true
     sources:
       # 模块原生 UI 源码（生成目录，见 TequilaDash/Modules/README.md）——
       # 由 Resources/Scripts/sync_bundled_modules.py 在 xcodegen **之前**从
@@ -558,6 +561,40 @@ targets:
         SWIFT_VERSION: "5.0"
         SWIFT_OBJC_BRIDGING_HEADER: "$(SRCROOT)/vendor/LiveContainer/ShareExtension/ShareExtension-Bridging-Header.h"
         # 与 LCUI framework 同款: 私有类与 LC 核心符号运行时解析, 不产生编译期链接.
+        OTHER_LDFLAGS:
+          - "-Wl,-undefined,dynamic_lookup"
+        HEADER_SEARCH_PATHS:
+          - "$(SRCROOT)/vendor/LiveContainer"
+          - "$(SRCROOT)/vendor/LiveContainer/LiveContainer"
+          - "$(SRCROOT)/TequilaDashLiveProcess/LC"
+        OTHER_CFLAGS:
+          - "-fcommon"
+
+  # LaunchAppExtension (LC 上游同款, LiveContainer.xcodeproj:665 / settings :1373-1445).
+  # ExtensionKit 的 AppIntent 扩展: 快捷指令「Launch App」→ 解析 livecontainer-launch URL
+  # → 选空闲实例/容器 → 写 LCLaunchExtension* 共享键 → 主 App 消费
+  # (LCBootstrap.m:708-723 已读这些键)。
+  # 依赖: ShareExtension 已装（LaunchAppExtension.swift:65-85 用 NSExtension(identifier:)
+  # 解析 "<主bundleId>.ShareExtension"）+ 同一 app group.
+  LaunchAppExtension:
+    type: extensionkit-extension
+    platform: iOS
+    sources:
+      - path: vendor/LiveContainer/LaunchAppExtension
+        excludes:
+          - "LaunchAppExtension-Bridging-Header.h"
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.tequila.dash.LaunchAppExtension
+        PRODUCT_NAME: LaunchAppExtension
+        PRODUCT_MODULE_NAME: LaunchAppExtension
+        INFOPLIST_FILE: vendor/LiveContainer/LaunchAppExtension/Info.plist
+        CODE_SIGN_ENTITLEMENTS: vendor/LiveContainer/LaunchAppExtension/LaunchAppExtension.entitlements
+        MARKETING_VERSION: "0.3.808"
+        CURRENT_PROJECT_VERSION: "1097"
+        IPHONEOS_DEPLOYMENT_TARGET: "16.0"
+        SWIFT_VERSION: "5.0"
+        SWIFT_OBJC_BRIDGING_HEADER: "$(SRCROOT)/vendor/LiveContainer/LaunchAppExtension/LaunchAppExtension-Bridging-Header.h"
         OTHER_LDFLAGS:
           - "-Wl,-undefined,dynamic_lookup"
         HEADER_SEARCH_PATHS:
