@@ -1,3 +1,12 @@
+## [0.3.807] - 2026-11-10
+
+- 补.LC 剩余资源进 bundle (完整性审计发现的缺口):
+  · `universal.js` —— LCUtils.m:205 按 bundle 根文件名读，LCWebView 注入脚本依赖它
+  · `DefaultIcon.png` / `AppIconGrey60x60@2x.png` / `AppIconGrey76x76@2x~ipad.png`
+    —— 重签访客时写进访客 Info.plist 的 CFBundleIconFiles
+  · `Settings.bundle` —— 系统「设置 → 本 App」页
+- 修复.LCAssets 改为 folder reference（避免 Xcode 找 AppIcon 报错）
+
 ## [0.3.806] - 2026-11-10
 
 - 修复.LC 原生 UI 扫到 App 但启动找不到容器: LC 的 `LCAppInfo.dataUUID` 读
