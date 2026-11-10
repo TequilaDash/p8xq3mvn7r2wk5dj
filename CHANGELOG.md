@@ -1,3 +1,14 @@
+## [0.3.801] - 2026-11-10
+
+- 重构.沙盒容器改由 LC 原生 UI（LCTabView / LCAppListView / LCSettingsView）接管，
+  删除自创的 840 行列表页；容器根对齐上游 `LCPath.docPath`（= `Documents/`），
+  旧 `Documents/SandboxApps/` 一次性迁移；环境对象按上游注入
+  （`DataManager.shared.model` + `LCAppSortManager.shared` + `SceneDelegate`）
+- 修复.主二进制 LC 核心符号被标 N_PEXT：`GCC_SYMBOLS_PRIVATE_EXTERN: NO`，
+  否则 framework 的 `-undefined,dynamic_lookup` 找不到 `_OBJC_CLASS_$_LCSharedUtils`
+- 修复.启动前验签跳过（对齐 LCAppInfo.m:369-380 的 `checkCodeSignature`）
+- 清理.SideStore 资源引用（保留 isSideStore 控制流，只删 SideStoreSupport.framework 的 dlopen）
+
 ## [0.3.800] - 2026-11-10
 
 - 修复.真机启动即崩第二层 (真机 .ips 114706, v0.3.799): dyld 报
