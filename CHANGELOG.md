@@ -1,3 +1,12 @@
+## [0.3.813] - 2026-11-10
+
+- 修复.两个扩展运行时缺 LCSharedUtils 类: 扩展是**独立进程**，主 App 的 LC 类不存在于此进程。
+  上游靠 `LiveContainerShared.framework`（真 dylib，两进程各自加载）解决；本仓 LC 核心静态编进
+  主 App，所以扩展必须自带一份。给 ShareExtension / LaunchAppExtension 的 sources 补
+  `LCSharedUtils.m` + `Localization.m` + 新增的 `LCSharedGlobalsShim.m`
+  （只提供 LCBootstrap.m:23-46 中 LCSharedUtils 用到的 4 个全局 + NSUserDefaults category），
+  并补 `TequilaDashLiveProcess/LC` 头文件搜索路径
+
 ## [0.3.812] - 2026-11-10
 
 - 修复.app group 值照抄上游：`group.com.SideStore.SideStore` + `group.com.rileytestut.AltStore`
