@@ -459,6 +459,10 @@
     // we remove the extension
     [manager removeItemAtURL:[appBundlePath URLByAppendingPathComponent:@"PlugIns"] error:nil];
     // remove all sidestore stuff
+    // 本仓适配 (v0.3.801): 本仓不接 SideStore, `sideStoreExist` 恒 false, 本块永不执行.
+    // 保留是防御性的 —— 若访客包是从 SideStore 版 LC 迁移过来的, 里面可能带
+    // SideStoreSupport/SideStoreApp.framework 与 intents 元数据, 清掉更干净.
+    // 不删这块的理由: 它是"清外来残留"而非"启用 SideStore", 与"不接入 SideStore"不冲突.
     if([NSUserDefaults sideStoreExist]) {
         [manager removeItemAtURL:[appBundlePath URLByAppendingPathComponent:@"Frameworks/SideStoreSupport.framework"] error:nil];
         [manager removeItemAtURL:[appBundlePath URLByAppendingPathComponent:@"Frameworks/SideStore.framework"] error:nil];

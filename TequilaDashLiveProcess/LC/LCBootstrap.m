@@ -645,13 +645,10 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
         dlopen([lcMainBundle.bundlePath stringByAppendingPathComponent:@"Frameworks/TweakLoader.dylib"].UTF8String, RTLD_LAZY|RTLD_GLOBAL);
     }
     
-    if(sideStoreExist) {
-        if (!isLiveProcess && (isSideStore || ![guestAppInfo[@"dontInjectTweakLoader"] boolValue])) {
-            dlopen([lcMainBundle.bundlePath stringByAppendingPathComponent:@"Frameworks/SideStoreSupport.framework/SideStoreSupport"].UTF8String, RTLD_LAZY);
-        } else if (isLiveProcess && isSideStore) {
-            dlopen([lcMainBundle.bundlePath stringByAppendingPathComponent:@"../../Frameworks/SideStoreSupport.framework/SideStoreSupport"].UTF8String, RTLD_LAZY);
-        }
-    }
+    // 本仓适配 (v0.3.801): 不接 SideStore —— 上面这块是上游的 SideStoreSupport.framework
+    // dlopen (上游 LCBootstrap.m 同位置). 本仓 bundle 里没有该 framework (project.yml 未接
+    // SideStoreSupport target), sideStoreExist 恒 false, 整块永不执行, 故移除以免误导.
+    // isSideStore / sideStoreExist 变量与其它判断保留 (只删资源引用, 不改控制流语义).
     
     // Fix dynamic properties of some apps
     [NSUserDefaults performSelector:@selector(initialize)];
@@ -918,9 +915,7 @@ int LiveContainerMain(int argc, char *argv[]) {
     void *LiveContainerSwiftUIHandle = dlopen("@executable_path/Frameworks/LiveContainerSwiftUI.framework/LiveContainerSwiftUI", RTLD_LAZY);
     NSCAssert(LiveContainerSwiftUIHandle, @"%s", dlerror());
     
-    if(sideStoreExist) {
-        void* sideStoreHandle = dlopen("@executable_path/Frameworks/SideStoreSupport.framework/SideStoreSupport", RTLD_LAZY);
-    }
+    // 本仓适配 (v0.3.801): 不接 SideStore, 无 SideStoreSupport.framework 可 dlopen.
 
     if ([lcUserDefaults boolForKey:@"LCLoadTweaksToSelf"]) {
         NSString *tweakFolder = nil;
