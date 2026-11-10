@@ -1,3 +1,15 @@
+## [0.3.810] - 2026-11-10
+
+- 修复.离屏转发窗口缺 windowScene 导致多任务原生窗口不可用: LC 的
+  `LCTabView.swift:149` 与 `MultitaskAppWindow.swift:226` 都写
+  `sceneDelegate.window?.windowScene?.session`，离屏 `UIWindow(frame:)` 的 windowScene 为 nil
+  → 静默返回 → `mainWindowOpened` 标记不设、多任务原生窗口拿不到 session。
+  改用 `UIWindow(windowScene:)` 关联宿主真实 scene
+- 修复.LaunchAppExtension / ShareExtension 缺 `GENERATE_INFOPLIST_FILE`：
+  AppIntents 编译期校验 Info.plist 失败（`Unable to parse Info.plist` → AppIntentsSSUTraining
+  非零退出，CI 42804531231）。照上游 pbxproj 补 `GENERATE_INFOPLIST_FILE: YES` +
+  `INFOPLIST_KEY_CFBundleDisplayName` + `SKIP_INSTALL`
+
 ## [0.3.809] - 2026-11-10
 
 - 修复.搜索栏取消后键盘又自动进入搜索态 (真机实测): 上游 `SearchContext` 用

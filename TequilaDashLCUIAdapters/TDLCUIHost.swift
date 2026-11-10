@@ -58,9 +58,23 @@ public final class TDLCUIHost: NSObject {
     /// LC 的 `sceneDelegate.window?.rootViewController?.present(...)` 会走到代理，
     /// 代理再转给当前最顶层可见控制器。代理不调用 super，因此不需要真实窗口层级。
     private static func makePresenterWindow() -> UIWindow {
-        let window = UIWindow(frame: .zero)
+        let scene = hostWindowScene()
+        // 用真实 windowScene 构造：LC 的 LCTabView.swift:149 与 MultitaskAppWindow.swift:226
+        // 都写 `sceneDelegate.window?.windowScene?.session`，离屏 window 若没有 windowScene
+        // 这两处会静默返回 —— mainWindowOpened 标记不设、多任务原生窗口拿不到 session。
+        let window = scene.map { UIWindow(windowScene: $0) } ?? UIWindow(frame: .zero)
+        window.frame = .zero
         window.rootViewController = PresenterProxyViewController()
         return window
+    }
+
+    /// 宿主当前活跃的 UIWindowScene（用于给离屏窗口挂真实 scene）.
+    private static func hostWindowScene() -> UIWindowScene? {
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        for scene in scenes where scene.activationState == .foregroundActive {
+            return scene
+        }
+        return scenes.first
     }
 
     /// 顶层可 present 的控制器（沿 presentedViewController 链向下走到底）.
