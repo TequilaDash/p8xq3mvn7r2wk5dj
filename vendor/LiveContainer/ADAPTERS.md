@@ -159,3 +159,24 @@ python Resources/Scripts/lc_mirror_guard.py --write   # 重新生成 .upstream-m
     `query` 回到 ""，SwiftUI `.searchable` 观察到变化会重新激活搜索框，
     表现为「取消搜索后键盘又自动进入搜索态」。上游作为 App 根不重建所以没暴露，
     本仓经 `UIHostingController` + `TabView` 承载会重建。
+
+17. **两个扩展自带 LC 核心（独立进程隔离）**
+    `ShareExtension` 与 `LaunchAppExtension` 是独立进程，主 App 里静态编入的 `LCSharedUtils`
+    不在那个进程。上游靠 `LiveContainerShared.framework`（真 dylib，两进程各自加载）解决；
+    本仓在 `project.yml` 的扩展 sources 里补 `TequilaDashLiveProcess/LC/LCSharedUtils.m` +
+    `Localization.m`，并新增 `TequilaDashLCUIAdapters/Extensions/LCSharedGlobalsShim.m`
+    提供 `LCSharedUtils.m` 需要的 4 个全局（`lcUserDefaults`/`lcSharedDefaults`/`lcAppUrlScheme`/
+    `lcMainBundle`）+ `NSUserDefaults` category。
+    **不整个编 `LCBootstrap.m`**（947 行，含 `LiveContainerMain`/`appMain` 主 App 专用符号）。
+    `ShareExtension/main.m` 已自带 `lcMainBundle`，故桩用 `TD_EXT_HAS_LC_MAIN_BUNDLE` 宏跳过。
+
+18. **扩展的 Info.plist 必须 `GENERATE_INFOPLIST_FILE: YES`**
+    上游 pbxproj（`17CAE623/624`）用 `GENERATE_INFOPLIST_FILE: YES` + `INFOPLIST_FILE` 合并，
+    Xcode 补 `CFBundlePackageType` 等必需键。只给 `INFOPLIST_FILE` 时 AppIntents 编译期解析失败
+    （`Unable to parse Info.plist` → `AppIntentsSSUTraining` 非零退出）。
+
+19. **app group 值用 SideStore/AltStore 的固定 group**
+    照抄上游 `xcconfigs/Global.xcconfig:14-15`：
+    `group.com.SideStore.SideStore` + `group.com.rileytestut.AltStore`
+    （Release 时 `DEVELOPMENT_TEAM_SUFFIX` 为空）。侧载工具会注入这两个 group；
+    自签/免费账号没有 → 删掉这两项即可（主 App 其余功能不受影响）。
