@@ -27,8 +27,8 @@ settings:
   base:
     PRODUCT_BUNDLE_IDENTIFIER: com.tequila.dash
     PRODUCT_NAME: TequilaDash
-    MARKETING_VERSION: "0.3.803"
-    CURRENT_PROJECT_VERSION: "1092"
+    MARKETING_VERSION: "0.3.804"
+    CURRENT_PROJECT_VERSION: "1093"
     # 注：这里**刻意不写** `SWIFT_VERSION` —— 实测顶层 `settings.base` 的它**不被 xcodegen 采纳**，
     # 真正生效的是下面 target 层那一份（当前 `"6.0"` = Swift 6 语言模式）。
     # 另注：**编译器版本 ≠ 语言模式** —— CI 用 Xcode 27 自带的 Swift 6.4 编译器，
@@ -261,16 +261,18 @@ targets:
       # xcstrings 由 Xcode 编译期生成 Localizable.strings 并放进 .lproj.
       - path: Resources/Localizable.xcstrings
         buildPhase: resources
-      # LC 的图标资源 (Assets.xcassets, 837 KB): 上游 LCAltStoreSourcesView.swift:1074
-      # 用 `Image("DefaultIcon")` 取访客无图标时的占位, 缺它显示空白.
-      # 同时含 AccentColor / BadgeColor / JITBadgeColor 等 LC 内部配色.
-      - path: vendor/LiveContainer/Resources/Assets.xcassets
+      # LC 的图标资源: **物理副本** Resources/LCAssets.xcassets (237 KB, 已剔除 AppIcon.appiconset).
+      #
+      # 为什么不直接指 vendor 路径 + excludes: xcodegen 的 `excludes` 对 `.xcassets`
+      # **内部目录无效** —— 仍会把 AppIcon.appiconset 编进 Assets.car, 主 App 图标就变成
+      # LiveContainer (v0.3.802/803 两次真机实测). 只有物理剔除才可靠.
+      # 上游同步时用 Resources/Scripts/sync_lc_assets.py 重新生成这个副本.
+      #
+      # 内容: DefaultIcon.imageset (LCAltStoreSourcesView.swift:1074 的访客占位) +
+      # AccentColor/BadgeColor/JITBadgeColor/AppBannerBG/FontColor/32BitBadgeColor
+      # + AppIconGrey.appiconset (访客重签时写进 Info.plist 的 CFBundleIconName) + GitHub/Twitter.
+      - path: Resources/LCAssets.xcassets
         buildPhase: resources
-        excludes:
-          # LC 自己的 App 图标 (AppIcon.appiconset, 1024 PNG). 它若进 bundle 会作为
-          # 主 App 的 asset catalog 编译, 覆盖我们 Resources/ 下的 AppIcon*.png (真机实测
-          # 图标变成 LiveContainer). LC 内部只用 DefaultIcon 等占位图, AppIcon 是上游 App 专用.
-          - "AppIcon.appiconset"
     settings:
       base:
         # Swift 6 语言模式迁移（原 `swift6-migration` 分支，2026-09-18 已合入 `migrate-xcode`）。
@@ -360,8 +362,8 @@ targets:
         # 版本号三处同步（HARD-RULES 22）：主 App 的 settings.base 与 Resources/Info.plist 之外，
         # 扩展 target 是第三处 —— 原先这里停在 0.3.587/881（落后主 App 33 个版本），
         # 会让 .appex 的 CFBundleVersion 与主 App 不一致，iOS 安装/升级可拒或把扩展判过期。
-        MARKETING_VERSION: "0.3.803"
-        CURRENT_PROJECT_VERSION: "1092"
+        MARKETING_VERSION: "0.3.804"
+        CURRENT_PROJECT_VERSION: "1093"
         IPHONEOS_DEPLOYMENT_TARGET: "18.0"
         # 与主 target 同口径的 Swift 6 严格并发（详见主 target 的说明）.
         SWIFT_VERSION: "6.0"
@@ -400,8 +402,8 @@ targets:
         PRODUCT_NAME: TequilaDashLiveProcess
         # 版本号三处同步 (HARD-RULES 22): 与 Tunnel 同款纪律, 缺写则 .appex 的 CFBundleVersion 为空,
         # iOS 会因主 App 与扩展版本不一致拒装/判过期.
-        MARKETING_VERSION: "0.3.803"
-        CURRENT_PROJECT_VERSION: "1092"
+        MARKETING_VERSION: "0.3.804"
+        CURRENT_PROJECT_VERSION: "1093"
         IPHONEOS_DEPLOYMENT_TARGET: "18.0"
         SWIFT_VERSION: "6.0"
         SWIFT_STRICT_CONCURRENCY: complete
@@ -449,8 +451,8 @@ targets:
         DYLIB_CURRENT_VERSION: 1
         DYLIB_INSTALL_NAME_BASE: "@rpath"
         SKIP_INSTALL: "YES"
-        MARKETING_VERSION: "0.3.803"
-        CURRENT_PROJECT_VERSION: "1092"
+        MARKETING_VERSION: "0.3.804"
+        CURRENT_PROJECT_VERSION: "1093"
         IPHONEOS_DEPLOYMENT_TARGET: "18.0"
         CLANG_ENABLE_OBJC_ARC: "YES"
         CLANG_ENABLE_MODULES: "YES"
@@ -489,8 +491,8 @@ targets:
         DYLIB_CURRENT_VERSION: 1
         DYLIB_INSTALL_NAME_BASE: "@rpath"
         SKIP_INSTALL: "YES"
-        MARKETING_VERSION: "0.3.803"
-        CURRENT_PROJECT_VERSION: "1092"
+        MARKETING_VERSION: "0.3.804"
+        CURRENT_PROJECT_VERSION: "1093"
         IPHONEOS_DEPLOYMENT_TARGET: "15.0"
         # 顶层 settings 的 OTHER_LDFLAGS 含 $(DERIVED_FILE_DIR)/SAP/lib/libunicorn.a
         # (主 App 的 SAP 登录底座). 本 target 无 prepare.sap 脚本, 继承该键会在链接期
@@ -529,8 +531,8 @@ targets:
         PRODUCT_MODULE_NAME: LiveContainerSwiftUI
         PRODUCT_NAME: LiveContainerSwiftUI
         DEFINES_MODULE: "YES"
-        MARKETING_VERSION: "0.3.803"
-        CURRENT_PROJECT_VERSION: "1092"
+        MARKETING_VERSION: "0.3.804"
+        CURRENT_PROJECT_VERSION: "1093"
         IPHONEOS_DEPLOYMENT_TARGET: "18.0"
         # 上游用 SWIFT_VERSION 5.0 (pbxproj:1197/1240); 本仓主 target 是 6.0 complete,
         # framework 单独用 5.0 保持上游源码原样可编 (Swift 6 严格并发会炸上游 Swift 5 代码).

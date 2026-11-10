@@ -22,24 +22,42 @@ struct SandboxHostView: View {
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        // 底部叠一个悬浮「关闭」钮：LC 的 LCTabView 是 App 根（上游无返回需求），
-        // 本仓经 fullScreenCover 进入，必须有退出入口，否则用户困在 LC 里.
-        // 用 overlay 叠在 LC 原生 UI 之上，不侵入 LCTabView 内部结构.
-        ZStack(alignment: .topTrailing) {
-            LCUIHostView()
-                .ignoresSafeArea(edges: .top)
+        // 返回按钮用 `safeAreaInset(edge: .top)` **插一条独立栏**，而不是 overlay 悬浮：
+        //   · overlay 放右上角会盖住 LC App 页的「搜索」图标（真机截图实测）
+        //   · 放左上角会盖住 LC 的「+ / ?」两个按钮
+        // 插一条 44pt 的栏，LC 的 LCTabView 整体下移，任何 LC 按钮都不会被遮挡，
+        // 返回按钮落在左上角，同时把原本空着的顶部安全区利用起来.
+        LCUIHostView()
+            .safeAreaInset(edge: .top, spacing: 0) {
+                backBar
+            }
+            .ignoresSafeArea(edges: .bottom)
+    }
+
+    /// 顶部返回栏：左侧「返回」，右侧留白（不放任何东西，避免再次遮挡 LC 的按钮）.
+    private var backBar: some View {
+        HStack(spacing: 0) {
             Button {
                 dismiss()
             } label: {
-                Image(systemName: "xmark.circle.fill")
-                    .font(.system(size: 28, weight: .medium))
-                    .foregroundStyle(.secondary)
-                    .padding(.trailing, 16)
-                    .padding(.top, 8)
+                HStack(spacing: 2) {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 17, weight: .semibold))
+                    Text("返回")
+                        .font(.system(size: 17))
+                }
+                .foregroundStyle(.tint)
+                .padding(.vertical, 8)
+                .padding(.trailing, 8)
+                .contentShape(Rectangle())
             }
-            .accessibilityLabel("关闭沙盒容器")
+            .buttonStyle(.plain)
+            .accessibilityLabel("返回 tequiladash")
+            Spacer(minLength: 0)
         }
-        .ignoresSafeArea(edges: .bottom)
+        .padding(.horizontal, 12)
+        .frame(height: 44)
+        .background(.bar)
     }
 }
 

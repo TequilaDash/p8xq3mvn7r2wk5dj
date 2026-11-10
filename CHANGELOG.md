@@ -1,3 +1,13 @@
+## [0.3.804] - 2026-11-10
+
+- 修复.主 App 图标仍是 LiveContainer (v0.3.803 未修好): xcodegen 的 `excludes` 对
+  `.xcassets` **内部目录无效**, AppIcon.appiconset 仍被编进 Assets.car.
+  改为物理副本 `Resources/LCAssets.xcassets` (237 KB, 已剔除 AppIcon.appiconset)
+- 修复.返回按钮盖住 LC 的搜索图标 / 加号问号: 从 overlay 悬浮改为
+  `safeAreaInset(edge: .top)` 插一条 44pt 独立栏, 返回按钮落左上角, 不遮挡任何 LC 按钮
+- 源码层完整性审计: LC 104 个顶层类型, 103 个从 LCTabView 可达 (唯一孤儿是上游 @main
+  LiveContainerSwiftUIApp, 已 excludes); 4 个 tab 根视图的 EnvironmentObject 依赖全部满足
+
 ## [0.3.803] - 2026-11-10
 
 - 修复.主 App 图标变成 LiveContainer 图标: LC 的 Assets.xcassets 含 AppIcon.appiconset
