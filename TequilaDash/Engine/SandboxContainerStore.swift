@@ -336,7 +336,10 @@ enum SandboxContainerStore {
         // 激活指针有效且目录还在 ⇒ 直接用它（幂等路径，启动器每次启动都走这里）.
         if let active = entry.activeDataUUID, entry.dataUUIDs.contains(active) {
             let existing = dataDirectory.appendingPathComponent(active, isDirectory: true)
-            if FileManager.default.fileExists(atPath: existing.path) { return existing }
+            if FileManager.default.fileExists(atPath: existing.path) {
+                writeLCAppInfoIfNeeded(appPath: app.appPath, dataUUID: active)
+                return existing
+            }
             // 目录被删了：把死指针摘掉，下面按「没有可用容器」处理.
             entry.dataUUIDs.removeAll { $0 == active }
             entry.activeDataUUID = nil
@@ -352,6 +355,7 @@ enum SandboxContainerStore {
                 entry.dataUUIDs.removeAll { !FileManager.default.fileExists(atPath: containerPath(folderName: $0)) }
                 registry.entries[app.id] = entry
                 registry.save(to: registryURL)
+                writeLCAppInfoIfNeeded(appPath: app.appPath, dataUUID: alive)
                 return dataDirectory.appendingPathComponent(alive, isDirectory: true)
             }
         }
@@ -363,6 +367,7 @@ enum SandboxContainerStore {
         entry.installedAt = entry.installedAt ?? app.installedAt
         registry.entries[app.id] = entry
         registry.save(to: registryURL)
+        writeLCAppInfoIfNeeded(appPath: app.appPath, dataUUID: folderName)
         return dataDirectory.appendingPathComponent(folderName, isDirectory: true)
     }
 
@@ -390,6 +395,7 @@ enum SandboxContainerStore {
         entry.activeDataUUID = folderName
         registry.entries[app.id] = entry
         registry.save(to: registryURL)
+        writeLCAppInfoIfNeeded(appPath: app.appPath, dataUUID: folderName)
     }
 
     /// 重命名一份容器（写容器目录里的 info plist；目录名不动，见 `SandboxContainerRef` 注释）.
@@ -493,6 +499,25 @@ enum SandboxContainerStore {
     ///
     /// 覆盖安装时**不清**容器列表：那是用户的元数据，重装包体不该带走它
     /// （与旧版「保留元数据目录」的取向一致，只是从一份变成多份）.
+    /// 写 LC 格式的 `<app>/LCAppInfo.plist`（`LCDataUUID` 等键）.
+    ///
+    /// 为什么必须写: LC 的 `LCAppInfo.dataUUID` 直接读 `_info[@"LCDataUUID"]`
+    /// （vendor/LiveContainer/LiveContainerSwiftUI/Models/LCAppInfo.m:139），而 `_info`
+    /// 来自 `<app>/LCAppInfo.plist`（:19）。本仓自有 `containers.plist` 与它无关 ——
+    /// 只写后者时，LC 原生 UI 扫得到 App 但 `dataUUID` 为 nil，点启动找不到容器。
+    ///
+    /// 只在**文件不存在**时创建，已存在则不动（保留 LC 侧写过的 tweakFolder 等键）.
+    static func writeLCAppInfoIfNeeded(appPath: String, dataUUID: String?) {
+        let fm = FileManager.default
+        let path = (appPath as NSString).appendingPathComponent("LCAppInfo.plist")
+        if fm.fileExists(atPath: path) { return }
+        var info: [String: Any] = [:]
+        if let dataUUID, !dataUUID.isEmpty {
+            info["LCDataUUID"] = dataUUID
+        }
+        (info as NSDictionary).write(toFile: path, atomically: true)
+    }
+
     static func registerInstall(bundleId: String, displayName: String, installedAt: Date) {
         var registry = SandboxRegistry.load(from: registryURL)
         var entry = registry.entries[bundleId] ?? SandboxRegistry.Entry()

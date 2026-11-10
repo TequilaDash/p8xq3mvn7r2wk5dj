@@ -1,3 +1,11 @@
+## [0.3.806] - 2026-11-10
+
+- 修复.LC 原生 UI 扫到 App 但启动找不到容器: LC 的 `LCAppInfo.dataUUID` 读
+  `<app>/LCAppInfo.plist` 的 `LCDataUUID` (Models/LCAppInfo.m:139), 本仓只写自有
+  `containers.plist`, 从不写前者 → dataUUID 恒 nil.
+  补 `SandboxContainerStore.writeLCAppInfoIfNeeded`, 在 makeDataHome 的 4 个返回点
+  (幂等命中 / 认领存活 / 新建 / 切换激活) 同步写 LC 格式
+
 ## [0.3.805] - 2026-11-10
 
 - 修复.沙盒容器所有「导入」类功能点了没反应 (真机实测): LC 的 DocModifier
