@@ -435,10 +435,11 @@ struct SandboxAppSettingsView: View {
         guard let uuid = activeContainer else { return }
         AppHaptics.tap()
         busy = true
-        ToastCenter.shared.show("正在为 \(app.displayName) 重签…", seconds: 8.0)
+        ToastCenter.shared.show("正在校验 \(app.displayName) 签名…", seconds: 8.0)
         Task {
             let outcome = await Task.detached(priority: .userInitiated) {
-                Result { try SandboxResigner.resign(app, useMainIdentifier: true) }
+                // LC 同款（LCAppInfo.m:369-380）: 签名仍有效就不重签, 直接启动.
+                Result { try SandboxResigner.resign(app, useMainIdentifier: true, force: false) }
             }.value
             busy = false
             switch outcome {

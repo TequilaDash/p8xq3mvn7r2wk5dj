@@ -94,6 +94,12 @@ int zsign_resign_app(const char *appPath, const char *bundleId,
                      int *outSigned, int *outFailed,
                      char *errBuf, int errBufSize);
 
+// v0.3.799 启动前验签（对齐 LC 上游 LCAppInfo.m:369-380 的跳过判断）.
+// LC 原文: `if(!forceSign) { if(checkCodeSignature(executablePath)) return; }` ——
+// 系统认为签名有效就不重签. 实现在 LiveProcess/LC/LCMachOUtils.m:520（已编进主 App）.
+// 返回 true = 该 Mach-O 的签名被内核接受（fcntl F_ADDFILESIGS_RETURN + F_CHECK_LV 通过）.
+bool checkCodeSignature(const char* path);
+
 
 // 监督模式工具：通过私有 API 取已安装 App 图标（移植自 Lithium）
 @interface UIImage (TequilaDashSupervised)

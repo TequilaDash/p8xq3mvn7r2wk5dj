@@ -45,8 +45,13 @@ struct SandboxResignResult: Sendable {
     let signed: Int
     let failed: Int
     let logPath: String?
+    /// true = 签名仍有效, 按 LC 上游口径跳过了重签 (LCAppInfo.m:369-380).
+    var skipped: Bool = false
 
     var summary: String {
+        if skipped {
+            return "签名有效，已跳过重签"
+        }
         if failed == 0 {
             return "已重签 \(signed) 个 Mach-O"
         }
@@ -61,19 +66,30 @@ enum SandboxResigner {
     ///   - useMainIdentifier: 传 true 时签名 identifier 用本 App 的 bundle id
     ///     （iOS 27 真机实锤：dlopen 的库 identifier 必须与主程序一致）.
     ///     容器安装场景保持 false，用访客自己的 bundle id.
+    ///   - force: false = 先按 LC 上游口径验签, 系统认为有效就跳过整包重签
+    ///     （vendor/LiveContainer/LiveContainerSwiftUI/Models/LCAppInfo.m:369-380:
+    ///      `if(!forceSign) { if(checkCodeSignature(executablePath)) return; }`）.
+    ///     安装/换证书等场景传 true 强制重签.
     static func resign(_ app: SandboxApp,
                        useMainIdentifier: Bool = false,
+                       force: Bool = false,
                        debugLog: URL? = nil) throws -> SandboxResignResult {
         let bundleId = useMainIdentifier
             ? (Bundle.main.bundleIdentifier ?? app.id)
             : app.id
-        return try resign(appPath: app.appPath, bundleId: bundleId, debugLog: debugLog)
+        return try resign(appPath: app.appPath, bundleId: bundleId, force: force, debugLog: debugLog)
     }
 
     /// 直接按路径重签（详情页/调试用）.
     static func resign(appPath: String,
                        bundleId: String,
+                       force: Bool = false,
                        debugLog: URL? = nil) throws -> SandboxResignResult {
+        // LC 上游同款跳过判断: 主可执行文件的签名被系统接受就不再重签.
+        // 与 LCAppInfo.m:369-380 逐字对齐 —— LC 只验主可执行文件, 不遍历包内所有 Mach-O.
+        if !force, let skipped = skipIfSignatureValid(appPath: appPath, bundleId: bundleId) {
+            return skipped
+        }
         guard let material = DeveloperCertStore.shared.certMaterial() else {
             throw SandboxResignError.noCertificate
         }
@@ -121,5 +137,27 @@ enum SandboxResigner {
             LoginLogger.shared.log("[失败] 沙盒容器重签 \(bundleId) rc=\(rc) \(detail)")
             throw SandboxResignError.failed(detail.isEmpty ? "rc=\(rc)" : detail)
         }
+    }
+
+    /// LC 上游 `patchExecAndSignIfNeed` 的跳过判断（LCAppInfo.m:369-380 逐字对齐）.
+    ///
+    /// LC 原文只验**主可执行文件**一个 Mach-O：读 Info.plist 的 CFBundleExecutable，
+    /// 拼出 `<appPath>/<exe>`，交给 `checkCodeSignature`（内核 fcntl 验签）。
+    /// 通过 = 系统已接受这份签名，无需重签，直接放行。
+    ///
+    /// 返回非 nil = 可跳过（调用方直接返回该结果）；nil = 需要重签.
+    private static func skipIfSignatureValid(appPath: String,
+                                             bundleId: String) -> SandboxResignResult? {
+        let infoPath = (appPath as NSString).appendingPathComponent("Info.plist")
+        guard let info = NSDictionary(contentsOfFile: infoPath),
+              let exe = info["CFBundleExecutable"] as? String, !exe.isEmpty else {
+            // 读不到 Info.plist / 没有 CFBundleExecutable: 不跳过, 交给重签路径报错.
+            return nil
+        }
+        let exePath = (appPath as NSString).appendingPathComponent(exe)
+        guard FileManager.default.fileExists(atPath: exePath) else { return nil }
+        guard exePath.withCString({ checkCodeSignature($0) }) else { return nil }
+        LoginLogger.shared.log("[跳过] \(bundleId) 签名仍有效，跳过重签直接启动")
+        return SandboxResignResult(signed: 0, failed: 0, logPath: nil, skipped: true)
     }
 }

@@ -108,7 +108,8 @@ enum SandboxContainerActions {
     static func resign(_ app: SandboxApp) async -> (ok: Bool, text: String) {
         await Task.detached(priority: .userInitiated) { () -> (ok: Bool, text: String) in
             do {
-                return (true, try SandboxResigner.resign(app).summary)
+                // 用户点「重签包体」= 明确要求重签, 强制走完整签名（不套用启动前的跳过判断）.
+                return (true, try SandboxResigner.resign(app, force: true).summary)
             } catch {
                 return (false, "重签失败：" + error.localizedDescription)
             }
@@ -848,7 +849,8 @@ struct SandboxContainerView: View {
         let netBlock = UserDefaults.standard.bool(forKey: "TDNetBlock-\(app.id)")
         Task {
             let outcome = await Task.detached(priority: .userInitiated) {
-                Result { try SandboxResigner.resign(snapshot, useMainIdentifier: true) }
+                // LC 同款（LCAppInfo.m:369-380）: 签名仍有效就不重签, 直接启动.
+                Result { try SandboxResigner.resign(snapshot, useMainIdentifier: true, force: false) }
             }.value
             busy = false
             switch outcome {
