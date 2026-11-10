@@ -512,7 +512,7 @@ struct SandboxContainerView: View {
         } header: {
             Text("存储管理")
         } footer: {
-            Text("Documents/SandboxApps/Data 的实测大小; 重建入口在各应用的管理页.")
+            Text("Documents/Data 的实测大小; 重建入口在各应用的管理页.")
         }
     }
 
@@ -618,7 +618,7 @@ struct SandboxContainerView: View {
     /// Tweaks 目录 = SandboxApps/Tweaks (LCBootstrap docPath/Tweaks 同款, 已 setenv 挂给访客).
     private var tweaksDirectory: URL {
         URL(fileURLWithPath: NSHomeDirectory())
-            .appendingPathComponent("Documents/SandboxApps/Tweaks", isDirectory: true)
+            .appendingPathComponent("Documents/Tweaks", isDirectory: true)
     }
 
     private func reloadTweaks() {
@@ -666,7 +666,7 @@ struct SandboxContainerView: View {
                 } header: {
                     Text("全局模块 (Tweaks)")
                 } footer: {
-                    Text("目录: Documents/SandboxApps/Tweaks (LC_GLOBAL_TWEAKS_FOLDER 同款, 已挂给访客). 访客启动时由 TweakLoader.dylib 按 LC 原样递归 dlopen 全局模块与每应用选定目录.")
+                    Text("目录: Documents/Tweaks (LC_GLOBAL_TWEAKS_FOLDER 同款, 已挂给访客). 访客启动时由 TweakLoader.dylib 按 LC 原样递归 dlopen 全局模块与每应用选定目录.")
                 }
             }
             .listStyle(.plain)

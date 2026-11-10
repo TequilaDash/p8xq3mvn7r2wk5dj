@@ -162,14 +162,46 @@ private struct SandboxRegistry {
 
 enum SandboxContainerStore {
 
-    /// 容器根：Documents/SandboxApps/。
+    /// 容器根：`Documents/`（**与 LC 上游 `LCPath.docPath` 完全一致**）.
+    ///
+    /// v0.3.801 根因修复: 原先是 `Documents/SandboxApps/`, 与 LC 的 `LCPath.docPath`
+    /// (= `Documents/`, vendor/LiveContainer/LiveContainerSwiftUI/Utilities/Shared.swift:15)
+    /// 差一层前缀, 导致同一份容器出现两套路径:
+    ///   · ObjC 访客启动读 `LC_HOME_PATH` → `Documents/SandboxApps/Applications/...`
+    ///   · LC 原生 UI 读 `LCPath.docPath`   → `Documents/Applications/...`
+    /// 列表看不到可启动的 App、安装落到另一处 —— 这是「逻辑不通」的真正根因.
+    /// 对齐到 `Documents/` 后, LC 的 `LCTabView`/`LCAppListView` 可以零改动直接接管,
+    /// 且 ObjC 侧 `LC_HOME_PATH` 也指向同一处 (HostGuestEntry.m 同步改).
     ///
     /// 放 Documents 下（不是 Caches）的理由与 Imports 一致：用户能在「文件」App 里看见、
     /// 能用 Finder 拷走整份容器；Caches 会被系统在空间紧张时清掉，容器被清等于装的应用凭空消失。
     static var root: URL {
         URL(fileURLWithPath: FileSystemRoots.appDocuments, isDirectory: true)
-            .appendingPathComponent("SandboxApps", isDirectory: true)
     }
+
+    /// 旧版容器根（v0.3.800 及之前）. 仅用于一次性迁移, 不要在新代码里引用.
+    static var legacyRoot: URL {
+        root.appendingPathComponent("SandboxApps", isDirectory: true)
+    }
+
+    /// 把旧 `Documents/SandboxApps/` 的内容搬进 `Documents/`（幂等, 只搬一次）.
+    ///
+    /// 搬的是 LC 布局的三个子目录 + 登记文件; 目标已存在则不覆盖（避免破坏新装的应用）.
+    /// 迁移完保留空目录（不删）, 万一回滚旧版本还能找到东西.
+    static func migrateLegacyLayoutIfNeeded() {
+        let fm = FileManager.default
+        let legacy = legacyRoot
+        guard fm.fileExists(atPath: legacy.path) else { return }
+        for name in ["Applications", "Data", "Tweaks", "containers.plist"] {
+            let src = legacy.appendingPathComponent(name)
+            guard fm.fileExists(atPath: src.path) else { continue }
+            let dst = root.appendingPathComponent(name)
+            if fm.fileExists(atPath: dst.path) { continue }
+            try? fm.moveItem(at: src, to: dst)
+            LoginLogger.shared.log("[迁移] 容器布局 SandboxApps/\(name) → \(name)")
+        }
+    }
+
 
     static var applicationsDirectory: URL { root.appendingPathComponent("Applications", isDirectory: true) }
     static var dataDirectory: URL { root.appendingPathComponent("Data/Application", isDirectory: true) }

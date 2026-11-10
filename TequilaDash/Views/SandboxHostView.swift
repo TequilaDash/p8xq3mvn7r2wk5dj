@@ -1,22 +1,63 @@
 import SwiftUI
 import UIKit
 
-// 沙盒容器 · 独立底栏宿主（v0.3.784）
+// 沙盒容器 · 独立底栏宿主（v0.3.784 / v0.3.801 改为 LC 原生 UI）
 //
 // 用户要求（2026-11-08）：「这个界面底栏自己独立一个，不要用默认界面的底栏了」.
 // 主页入口因此从 NavigationLink 改成 fullScreenCover（与 RootView:75-80 承载模块同一手段）——
 // push 进同一条 NavigationStack 时底部仍是主 App 的 TabBar，只有整屏覆盖才盖得住.
 //
-// 底栏形态照参考图（PiliPlus「应用信息」）：屏幕底部一颗悬浮玻璃丸，
-// 内含「图标 + 10pt 标签」等分列，图标着色、文字一律主色（不做彩色文字）.
+// v0.3.801 用户要求（2026-11-10）：「沙盒容器我说清楚 简直是一坨屎… 我让你移植过来
+// 你不要自己自创了」—— 因此本页**不再渲染自创的 SandboxContainerView**，
+// 改为直接承载 LC 上游原生 UI（LCTabView → LCAppListView / LCSettingsView / LCTweaksView），
+// 容器根已对齐 `Documents/`（与 `LCPath.docPath` 同源），所以 LC 的列表天然看得见访客 App.
 
-/// 沙盒容器整屏宿主：自带导航栈，容器页与详情页都在这条栈里走.
+/// 沙盒容器整屏宿主：承载 LC 原生 UI.
 struct SandboxHostView: View {
     var body: some View {
-        NavigationStack {
-            SandboxContainerView()
+        LCUIHostView()
+            .ignoresSafeArea(edges: .bottom)
+    }
+}
+
+/// LC 原生 UI 的宿主包装.
+///
+/// 走 `NSClassFromString("TDLCUIHost")` 反射：宿主不能 `import LiveContainerSwiftUI`
+/// （会与宿主桥接头重复定义枚举，CI run 42657238035 实测），而 `LCTabView` 是 SwiftUI View，
+/// 不能用 `@_silgen_name`。反射拿不到就显示明确说明，不留空白页。
+struct LCUIHostView: View {
+    var body: some View {
+        if let controller = Self.makeController() {
+            LCUIViewControllerView(controller: controller)
+        } else {
+            ContentUnavailableView(
+                "沙盒容器不可用",
+                systemImage: "exclamationmark.triangle",
+                description: Text("LiveContainerSwiftUI framework 未链接到本构建")
+            )
         }
     }
+
+    private static func makeController() -> UIViewController? {
+        guard let cls = NSClassFromString("TDLCUIHost") as? NSObject.Type else { return nil }
+        let sel = NSSelectorFromString("makeTabViewController")
+        guard cls.responds(to: sel),
+              let value = cls.perform(sel)?.takeUnretainedValue() as? UIViewController else {
+            return nil
+        }
+        return value
+    }
+}
+
+/// UIViewController 承载（UIKit 生命周期交给 controller 自己）.
+private struct LCUIViewControllerView: UIViewControllerRepresentable {
+    let controller: UIViewController
+
+    func makeUIViewController(context: Context) -> UIViewController {
+        controller
+    }
+
+    func updateUIViewController(_ uiViewController: UIViewController, context: Context) {}
 }
 
 /// 玻璃丸里的一格：图标着色 + 主色小标签.
@@ -89,4 +130,3 @@ struct SandboxBarDivider: View {
             .frame(width: 0.5, height: 26)
     }
 }
-

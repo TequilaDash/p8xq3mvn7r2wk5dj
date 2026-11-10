@@ -20,6 +20,10 @@ struct TequilaDashApp: App {
         // zip 加载，必须编译进宿主；注册必须在任何 UI 构建之前完成 —— 模块卡片的
         // 「打开」入口要靠注册表判断该注册名是否存在（缺失就不给入口）.
         registerBuiltinModuleUIs()
+        // v0.3.801 一次性迁移: 旧版容器根 Documents/SandboxApps/ → Documents/（对齐 LC LCPath）.
+        // 幂等, 只搬一次; 必须在任何容器扫描之前跑, 否则列表会先扫到空目录.
+        SandboxContainerStore.migrateLegacyLayoutIfNeeded()
+        try? SandboxContainerStore.ensureRoot()
         // (read/write) so guest containers — including shared/"converted" App
         // Group data — are reachable for scanning and reclaim on iOS 26.
         SandboxEscape.bootstrapLiveContainerExtensions()

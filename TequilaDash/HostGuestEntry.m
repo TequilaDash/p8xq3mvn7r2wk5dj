@@ -46,9 +46,10 @@ int main(int argc, char *argv[]) {
             setenv("TD_NET_BLOCK",
                    [defaults boolForKey:netBlockKey] ? "1" : "0", 1);
 
-            // LC_HOME_PATH = SandboxApps 根: 其下 Applications/<name>.app +
-            // Data/Application/<UUID> 与 LC 惯例逐层一致 (LCBootstrap docPath 直取).
-            NSString *root = [NSHomeDirectory() stringByAppendingPathComponent:@"Documents/SandboxApps"];
+            // LC_HOME_PATH = 容器根. v0.3.801 起与 LC 上游 `LCPath.docPath` 对齐为
+            // `Documents/`（原先多一层 SandboxApps/, 导致 LC 原生 UI 与访客看不同目录）.
+            // 其下 Applications/<name>.app + Data/Application/<UUID> 与 LC 惯例逐层一致.
+            NSString *root = [NSHomeDirectory() stringByAppendingPathComponent:@"Documents"];
             setenv("LC_HOME_PATH", root.UTF8String, 1);
 
             int ret = LiveContainerMain(argc, argv);

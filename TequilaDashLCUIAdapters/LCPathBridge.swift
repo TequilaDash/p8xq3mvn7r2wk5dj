@@ -1,0 +1,56 @@
+import Foundation
+
+/// LC 容器根路径的单一事实来源（本仓适配层）.
+///
+/// 为什么需要: 上游 `LCPath.docPath` 写死 `Documents/`（vendor/LiveContainer/
+/// LiveContainerSwiftUI/Utilities/Shared.swift:15-23），而本仓把沙盒容器放在
+/// `Documents/SandboxApps/`，并通过 `LC_HOME_PATH` 环境变量告诉 **ObjC 侧**
+/// （HostGuestEntry.m:51-52 → LCBootstrap.m:281-289 的 docPath）.
+///
+/// 于是同一份数据出现两套路径:
+///   · 访客启动 (ObjC) 读 `LC_HOME_PATH` → `Documents/SandboxApps/Applications/...`
+///   · LC 原生 UI (Swift) 读 `LCPath.docPath` → `Documents/Applications/...`
+/// 列表看不到访客能启动的 App，安装也落到另一处 —— 这就是「逻辑不通」的根因.
+///
+/// 本文件把 Swift 侧对齐到同一个环境变量，不改镜像（上游同步零冲突）.
+/// 取值顺序与 LCBootstrap.m:281-289 逐条一致:
+///   1. `LC_HOME_PATH`（宿主在启动访客前 setenv，也在 TDHostBoot 前置设置）
+///   2. `HOME`（LCBootstrap 的回落）
+///   3. `Documents/`（最终兜底，与上游默认一致）
+enum LCPathBridge {
+
+    /// 容器根. 与 ObjC 侧 `LCBootstrap` 的 docPath 同源.
+    static let containerRoot: URL = {
+        let env = ProcessInfo.processInfo.environment
+        if let raw = env["LC_HOME_PATH"], !raw.isEmpty {
+            return URL(fileURLWithPath: raw, isDirectory: true)
+        }
+        if let home = env["HOME"], !home.isEmpty {
+            return URL(fileURLWithPath: home, isDirectory: true)
+        }
+        return FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).last!
+    }()
+
+    /// 宿主侧（非访客进程）用的容器根: `Documents/SandboxApps/`.
+    ///
+    /// 宿主 App 自己启动时 `LC_HOME_PATH` 还没设（那是进访客前才设），
+    /// 所以这里显式拼 `SandboxApps`，与 `SandboxContainerStore.root` 完全一致。
+    static var hostContainerRoot: URL {
+        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).last!
+        return docs.appendingPathComponent("SandboxApps", isDirectory: true)
+    }
+
+    static var applications: URL { hostContainerRoot.appendingPathComponent("Applications", isDirectory: true) }
+    static var dataApplication: URL { hostContainerRoot.appendingPathComponent("Data/Application", isDirectory: true) }
+    static var tweaks: URL { hostContainerRoot.appendingPathComponent("Tweaks", isDirectory: true) }
+
+    /// 确保 LC 期望的三层目录存在（上游 LiveContainerSwiftUIApp.init 同款做法）.
+    static func ensureLayout() throws {
+        let fm = FileManager.default
+        for dir in [applications, dataApplication, tweaks] {
+            if !fm.fileExists(atPath: dir.path) {
+                try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+            }
+        }
+    }
+}
