@@ -271,7 +271,14 @@ targets:
       # 内容: DefaultIcon.imageset (LCAltStoreSourcesView.swift:1074 的访客占位) +
       # AccentColor/BadgeColor/JITBadgeColor/AppBannerBG/FontColor/32BitBadgeColor
       # + AppIconGrey.appiconset (访客重签时写进 Info.plist 的 CFBundleIconName) + GitHub/Twitter.
+      # 用 folder reference（`type: folder`）：整个 .xcassets 目录原样拷进 bundle，
+      # **不进 Assets.car 编译** —— 因此不会参与主 App 的 AppIcon 查找（CI 实测:
+      # 少了 AppIcon.appiconset 时 Xcode 报 "None of the input catalogs contained a
+      # matching ... app icon set ... named AppIcon"）。
+      # LC 侧只用 `Image("DefaultIcon")` 等具名图，bundle 内 `LCAssets.xcassets/` 目录
+      # 保留 imageset 结构，`UIImage(named:)` 能按 imageset 名解析.
       - path: Resources/LCAssets.xcassets
+        type: folder
         buildPhase: resources
     settings:
       base:
