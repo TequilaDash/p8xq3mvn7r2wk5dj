@@ -143,3 +143,10 @@ python Resources/Scripts/lc_mirror_guard.py --write   # 重新生成 .upstream-m
 - xcodegen `project.yml` 的 `sources:` 是**显式 path 列表**，`vendor/LiveContainer` 不在其中，不会被编译。
 - 仓库守卫（`swift_ui_copy_guard.py` / `sf_symbol_guard.py` 等）只扫 `TequilaDash/`，镜像在 `vendor/` 下不触发。
 - 这样镜像可以 100% 保持上游原样（含上游自己的中文句号/配色/符号），不会被本仓硬规则误伤。
+
+15. **dylib target 三件套（v0.3.799 真机崩溃教训）**：xcodegen 的 `target:` 依赖默认
+    `link:true`，会把 `library.dynamic` 写进主二进制的 LOAD_DYLIB（`@rpath/...`），
+    同时产物落在 `.app/` 根而非 `Frameworks/` —— 两个条件叠加 = dyld 启动即 abort。
+    上游不链接这两个 dylib（纯 dlopen），所以必须 `link:false` + postBuild 挪位。
+    另：启动前全量重签是本仓历史实现，上游有 `checkCodeSignature` 跳过判断
+    （LCAppInfo.m:369-380），v0.3.799 起对齐。

@@ -1,3 +1,8 @@
+## [0.3.799] - 2026-11-10
+
+- 修复.真机启动即崩 (4 份 .ips 同因): 主二进制被写入 `LOAD_DYLIB @rpath/TweakLoader.dylib`/`@rpath/TestJITLess.dylib`, 但产物被 xcodegen Embed 放到 .app 根且无 dylib 在 Frameworks —— dyld 启动即 abort. 对齐上游: 两个 dylib 纯 dlopen 不参与链接 (`link:false`) + postBuild 挪进 Frameworks/
+- 修复.启动前无条件全量重签: 补上 LC 上游 LCAppInfo.m:369-380 的验签跳过 (`checkCodeSignature`), 签名仍有效则直接放行; 手动「重签包体」保持强制
+- 隧道原理核实 (对照 Gnoix/minimuxer): `TequilaDashTunnel` 回环反射器架构与 LocalDevVPN 同口径, 数据面纯设备内回环, 蜂窝/Wi-Fi 均可用
 ## [0.3.798] - 2026-11-10
 
 - LiveContainer 上游源码**完整搬入** `vendor/LiveContainer/`：281 个文件逐文件 SHA256 与上游一致（含 `.github/`、`screenshots/`、`.gitignore`、`.gitmodules`），镜像 `README.md` 恢复上游原文，本仓适配点清单独立为 `ADAPTERS.md`（14 条）
