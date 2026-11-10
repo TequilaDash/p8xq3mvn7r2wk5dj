@@ -137,16 +137,21 @@ targets:
       # 由调试入口（LiveProcessDebugLauncher）按需拉起验证链路.
       - target: TequilaDashLiveProcess
         embed: true
-      # Tweak 注入装载器 (LC 同款 dynamic library): LCBootstrap.m:618-629 的 dlopen 钩子
-      # 需要 Frameworks/TweakLoader.dylib 真实存在, 否则模块页导入的 .dylib 永远不会被加载.
-      # 源用上游完整镜像 vendor/LiveContainer/TweakLoader (保持原目录名, 相对 include
-      # "../LiveContainer/utils.h" 天然可解), 与主 App 的 LC 适配副本互不干扰.
+      # Tweak 注入装载器 / JIT-less 探针: **只在运行时 dlopen, 绝不参与链接**.
+      #
+      # 为什么必须 embed:false: xcodegen 的 `target:` 依赖默认 `link: true`, 会往主二进制
+      # 写 `LOAD_DYLIB @rpath/TweakLoader.dylib`. 而 dylib target 的
+      # `DYLIB_INSTALL_NAME_BASE: "@rpath"` + 主 App 只有 `@executable_path/Frameworks`
+      # 一条 rpath, dyld 找不到 → 真机启动即 SIGABRT
+      # ("Library not loaded: @rpath/TweakLoader.dylib", 2026-11-10 四个 .ips 同因).
+      # 上游 LC 本来就不链接它们: LCBootstrap.m:637/645 用 dlopen(绝对路径),
+      # 所以这里也必须 embed:false —— 链接是错的, 加载由 dlopen 负责.
       - target: TequilaDashTweakLoader
         embed: true
-      # JIT-less 探针 (LC 同款): LCUtils.m:265-266 按 Frameworks/TestJITLess.dylib 拷进
-      # 临时目录做注入试验; 不嵌入则该诊断路径静默失效.
+        link: false
       - target: TestJITLess
         embed: true
+        link: false
       # LC 模型层 + 多任务整层: framework 形式嵌入, 供本仓 UI 侧调用.
       - target: LiveContainerSwiftUI
         embed: true
@@ -284,6 +289,27 @@ targets:
         outputFiles:
           - "$(DERIVED_FILE_DIR)/SAP/lib/libunicorn.a"
           - "$(DERIVED_FILE_DIR)/SAP/source/include/unicorn/unicorn.h"
+    postBuildScripts:
+      # 把 dylib 挪进 Frameworks/ (上游 dstSubfolderSpec=10 的同款落位).
+      #
+      # 为什么需要: xcodegen 对 `type: library.dynamic` 的 target 依赖走 "Embed Libraries",
+      # 产物落在 .app/ 根; 而 LC 的 dlopen 路径写死 `<bundle>/Frameworks/TweakLoader.dylib`
+      # (LCBootstrap.m:637/645, LCUtils.m:266 的 TestJITLess), 放错位置 = 静默加载不到.
+      # 上游 pbxproj 的 "Embed Frameworks" 阶段 dstSubfolderSpec=10 正是 Frameworks/.
+      # 幂等: 已经在 Frameworks/ 里就不动; 只移动本 target 产物, 不碰其它文件.
+      - name: Relocate LC dylibs into Frameworks
+        basedOnDependencyAnalysis: false
+        script: |
+          set -eu
+          APP_DIR="${TARGET_BUILD_DIR}/${WRAPPER_NAME}"
+          FW_DIR="${APP_DIR}/Frameworks"
+          mkdir -p "${FW_DIR}"
+          for lib in TweakLoader.dylib TestJITLess.dylib; do
+            if [ -f "${APP_DIR}/${lib}" ]; then
+              mv -f "${APP_DIR}/${lib}" "${FW_DIR}/${lib}"
+              echo "relocated ${lib} -> Frameworks/"
+            fi
+          done
 
   # 内置隧道扩展（Phase 2）：一个「回环反射器」Packet Tunnel Provider.
   # 语义与设计见 TequilaDashTunnel/PacketTunnelProvider.swift 头注释，以及简报
