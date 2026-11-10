@@ -31,6 +31,12 @@ public final class TDLCUIHost: NSObject {
             .environmentObject(model)
             .environmentObject(LCAppSortManager.shared)
             .environmentObject(DownloadHelper())
+            // LCTabView 还声明了 `@EnvironmentObject var sceneDelegate: SceneDelegate`
+            // （Views/LCTabView.swift:17），缺它首帧崩。上游由系统 scene 配置
+            // （AppDelegate.swift:39 `configuration.delegateClass = SceneDelegate.self`）注入；
+            // 本仓宿主不接管 scene 配置，所以给一个独立实例 —— 它的 `window` 为 nil 时
+            // `closeDuplicatedWindow()` 会走 else 分支（只置 shouldToggleMainWindowOpen），不崩。
+            .environmentObject(SceneDelegate())
         let controller = UIHostingController(rootView: root)
         controller.title = "沙盒容器"
         return controller
