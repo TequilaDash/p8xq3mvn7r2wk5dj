@@ -156,13 +156,28 @@ struct CertificateView: View {
                     // LCCertificatePassword: 上游 LCSettingsView.swift:577-579 同款写法,
                     // ZSigner 的 checkCert/getTeamId/signMachOPathArr 全部按 p12 解析.
                     // 不写 LCCertificateData 则 LCUtils.certificateData 恒为 nil, 证书校验直接失败.
-                    defaults.set(data, forKey: "LCCertificateData")
-                    defaults.set(p12Password, forKey: "LCCertificatePassword")
-                    defaults.set(Date(), forKey: "LCCertificateUpdateDate")
+                    //
+                    // ⚠️ v0.3.810: 必须**同时写标准 defaults 与 app group suite**.
+                    // LC 的 `LCSharedUtils.certificatePassword` 读
+                    // `NSUserDefaults.lcSharedDefaults`（= initWithSuiteName:appGroupID,
+                    // LCBootstrap.m:41-45），证书节/签名按钮/访客重签全走这条；
+                    // 而本文件原来只写 standard。加了 app group entitlement 后
+                    // lcSharedDefaults 不再回落 standard → 证书读不到 →
+                    // 「模块页签名按钮永不显示」「访客启动找不到证书」。
+                    // 无 app group 时 groupDefaults 为 nil，只有 standard 生效，两边都覆盖。
+                    let groupDefaults = LCSharedDefaultsBridge.groupDefaults()
+                    for store in [defaults, groupDefaults].compactMap({ $0 }) {
+                        store.set(data, forKey: "LCCertificateData")
+                        store.set(p12Password, forKey: "LCCertificatePassword")
+                        store.set(Date(), forKey: "LCCertificateUpdateDate")
+                    }
                 } else {
-                    defaults.removeObject(forKey: "LCCertificateData")
-                    defaults.removeObject(forKey: "LCCertificatePassword")
-                    defaults.removeObject(forKey: "LCCertificateUpdateDate")
+                    let groupDefaults = LCSharedDefaultsBridge.groupDefaults()
+                    for store in [defaults, groupDefaults].compactMap({ $0 }) {
+                        store.removeObject(forKey: "LCCertificateData")
+                        store.removeObject(forKey: "LCCertificatePassword")
+                        store.removeObject(forKey: "LCCertificateUpdateDate")
+                    }
                 }
                 p12Message = result.ok ? "[完成] \(result.message)" : "[失败] \(result.message)"
                 pendingP12Data = nil
@@ -178,9 +193,12 @@ struct CertificateView: View {
                     // LC 侧同源清理: 留着 LCCertificateData/Password 会让证书校验与
                     // JIT-less 测试仍按「有证书」走, 实际已无可用签名材料.
                     let defaults = UserDefaults.standard
-                    defaults.removeObject(forKey: "LCCertificateData")
-                    defaults.removeObject(forKey: "LCCertificatePassword")
-                    defaults.removeObject(forKey: "LCCertificateUpdateDate")
+                    let groupDefaults = LCSharedDefaultsBridge.groupDefaults()
+                    for store in [defaults, groupDefaults].compactMap({ $0 }) {
+                        store.removeObject(forKey: "LCCertificateData")
+                        store.removeObject(forKey: "LCCertificatePassword")
+                        store.removeObject(forKey: "LCCertificateUpdateDate")
+                    }
                 }
                 p12Message = result.ok ? "[完成] \(result.message)" : "[失败] \(result.message)"
             }

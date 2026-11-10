@@ -1,3 +1,13 @@
+## [0.3.811] - 2026-11-10
+
+- 修复.加 app group 后证书读不到（我 0.3.808 引入的回归）: LC 的
+  `LCSharedUtils.certificatePassword` 读 `NSUserDefaults.lcSharedDefaults`
+  （= `initWithSuiteName:appGroupID`，LCBootstrap.m:41-45），而宿主 `CertificateView`
+  只写 `standard`。有 app group 后 `lcSharedDefaults` 不再回落 standard →
+  证书读不到 → 模块页签名按钮永不显示、访客启动找不到证书。
+  新增 `LCSharedDefaultsBridge`（ObjC 运行时反射取 `lcSharedDefaults`，不 import framework），
+  证书导入/删除同时写 standard 与 group suite
+
 ## [0.3.810] - 2026-11-10
 
 - 修复.离屏转发窗口缺 windowScene 导致多任务原生窗口不可用: LC 的
