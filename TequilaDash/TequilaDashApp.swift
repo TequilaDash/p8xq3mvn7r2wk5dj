@@ -6,13 +6,6 @@ import UIKit
 // 没有 = TDHostBoot() 起正常宿主 UI. 所以这里**不再用 @main** (其合成 main 会与
 // HostGuestEntry.m 的 main 重复符号), 宿主 UI 由 TDHostBoot 经 App.main() 拉起.
 struct TequilaDashApp: App {
-    // 照上游 LiveContainerSwiftUIApp.swift:10 的做法挂 AppDelegate:
-    // 上游 AppDelegate 会给每个 scene 设 delegateClass = SceneDelegate.self,
-    // LC 原生 UI (LCTabView) 的 @EnvironmentObject var sceneDelegate 靠这条系统注入取值.
-    // 宿主不能引用 framework 里的 internal AppDelegate, 故用适配层的 public 薄壳
-    // LCUIAppDelegate (空子类, 不含任何上游没有的行为).
-    @UIApplicationDelegateAdaptor(LCUIAppDelegate.self) var lcAppDelegate
-
     init() {
         // 先装崩溃现场记录 —— 越早越好，启动期崩溃也要抓得到.
         // 写 Documents/LoginLogs/crash.log（信号 + 栈帧地址），SSH 可直接 cat.

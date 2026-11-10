@@ -22,9 +22,17 @@ public final class TDLCUIHost: NSObject {
     @objc public static func makeTabViewController() -> UIViewController {
         loadAppsIntoSharedModel()
 
+        // 上游 LCTabView 还声明了 `@EnvironmentObject var sceneDelegate: SceneDelegate`
+        // （Views/LCTabView.swift:17）。上游由系统 scene 配置注入
+        // （App/AppDelegate.swift:36-40 `configuration.delegateClass = SceneDelegate.self`）。
+        // 本仓宿主是 xcodegen 工程、入口在 HostGuestEntry.m，不接管 scene 配置，
+        // 因此在 framework 内直接提供一个实例 —— 该类在 framework 模块内可见，
+        // 且它的 `window` 为 nil 时 `closeDuplicatedWindow()` 走 else 分支（不崩）。
+        let sceneDelegate = SceneDelegate()
         let root = LCTabView()
             .environmentObject(DataManager.shared.model)
             .environmentObject(LCAppSortManager.shared)
+            .environmentObject(sceneDelegate)
         let controller = UIHostingController(rootView: root)
         controller.title = "沙盒容器"
         return controller
