@@ -285,7 +285,11 @@ targets:
       # matching ... app icon set ... named AppIcon"）。
       # LC 侧只用 `Image("DefaultIcon")` 等具名图，bundle 内 `LCAssets.xcassets/` 目录
       # 保留 imageset 结构，`UIImage(named:)` 能按 imageset 名解析.
-      - path: Resources/LCAssets.xcassets
+      # 目录名用 .bundle 而不是 .xcassets：xcodegen 对 `.xcassets` 后缀有硬编码识别，
+      # 即使写 `type: folder` 也会当 asset catalog 编译 → 主 target 找不到名为 AppIcon
+      # 的 app icon set 而报错（CI 42802896914 实测）。
+      # .bundle 是普通目录，原样拷进 bundle，LC 侧 `Image("DefaultIcon")` 仍能解析 imageset。
+      - path: Resources/LCAssets.bundle
         type: folder
         buildPhase: resources
       # LC 直接按 **bundle 根文件名** 读的资源:
