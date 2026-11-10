@@ -27,8 +27,8 @@ settings:
   base:
     PRODUCT_BUNDLE_IDENTIFIER: com.tequila.dash
     PRODUCT_NAME: TequilaDash
-    MARKETING_VERSION: "0.3.807"
-    CURRENT_PROJECT_VERSION: "1096"
+    MARKETING_VERSION: "0.3.808"
+    CURRENT_PROJECT_VERSION: "1097"
     # 注：这里**刻意不写** `SWIFT_VERSION` —— 实测顶层 `settings.base` 的它**不被 xcodegen 采纳**，
     # 真正生效的是下面 target 层那一份（当前 `"6.0"` = Swift 6 语言模式）。
     # 另注：**编译器版本 ≠ 语言模式** —— CI 用 Xcode 27 自带的 Swift 6.4 编译器，
@@ -154,6 +154,11 @@ targets:
         link: false
       # LC 模型层 + 多任务整层: framework 形式嵌入, 供本仓 UI 侧调用.
       - target: LiveContainerSwiftUI
+        embed: true
+      # 系统分享面板扩展（LC 上游同款）：收 URL/文件 → 拉起主 App.
+      # 需要真实 app group（entitlements 里 $(APP_GROUP_SIDESTORE)/$(APP_GROUP_ALTSTORE)），
+      # 侧载时由签名 profile 提供；免费账号签不出 app group 时该扩展装上也不可用.
+      - target: ShareExtension
         embed: true
     sources:
       # 模块原生 UI 源码（生成目录，见 TequilaDash/Modules/README.md）——
@@ -386,8 +391,8 @@ targets:
         # 版本号三处同步（HARD-RULES 22）：主 App 的 settings.base 与 Resources/Info.plist 之外，
         # 扩展 target 是第三处 —— 原先这里停在 0.3.587/881（落后主 App 33 个版本），
         # 会让 .appex 的 CFBundleVersion 与主 App 不一致，iOS 安装/升级可拒或把扩展判过期。
-        MARKETING_VERSION: "0.3.807"
-        CURRENT_PROJECT_VERSION: "1096"
+        MARKETING_VERSION: "0.3.808"
+        CURRENT_PROJECT_VERSION: "1097"
         IPHONEOS_DEPLOYMENT_TARGET: "18.0"
         # 与主 target 同口径的 Swift 6 严格并发（详见主 target 的说明）.
         SWIFT_VERSION: "6.0"
@@ -426,8 +431,8 @@ targets:
         PRODUCT_NAME: TequilaDashLiveProcess
         # 版本号三处同步 (HARD-RULES 22): 与 Tunnel 同款纪律, 缺写则 .appex 的 CFBundleVersion 为空,
         # iOS 会因主 App 与扩展版本不一致拒装/判过期.
-        MARKETING_VERSION: "0.3.807"
-        CURRENT_PROJECT_VERSION: "1096"
+        MARKETING_VERSION: "0.3.808"
+        CURRENT_PROJECT_VERSION: "1097"
         IPHONEOS_DEPLOYMENT_TARGET: "18.0"
         SWIFT_VERSION: "6.0"
         SWIFT_STRICT_CONCURRENCY: complete
@@ -475,8 +480,8 @@ targets:
         DYLIB_CURRENT_VERSION: 1
         DYLIB_INSTALL_NAME_BASE: "@rpath"
         SKIP_INSTALL: "YES"
-        MARKETING_VERSION: "0.3.807"
-        CURRENT_PROJECT_VERSION: "1096"
+        MARKETING_VERSION: "0.3.808"
+        CURRENT_PROJECT_VERSION: "1097"
         IPHONEOS_DEPLOYMENT_TARGET: "18.0"
         CLANG_ENABLE_OBJC_ARC: "YES"
         CLANG_ENABLE_MODULES: "YES"
@@ -515,14 +520,52 @@ targets:
         DYLIB_CURRENT_VERSION: 1
         DYLIB_INSTALL_NAME_BASE: "@rpath"
         SKIP_INSTALL: "YES"
-        MARKETING_VERSION: "0.3.807"
-        CURRENT_PROJECT_VERSION: "1096"
+        MARKETING_VERSION: "0.3.808"
+        CURRENT_PROJECT_VERSION: "1097"
         IPHONEOS_DEPLOYMENT_TARGET: "15.0"
         # 顶层 settings 的 OTHER_LDFLAGS 含 $(DERIVED_FILE_DIR)/SAP/lib/libunicorn.a
         # (主 App 的 SAP 登录底座). 本 target 无 prepare.sap 脚本, 继承该键会在链接期
         # 找不到文件而炸 (CI run 42663291263 实测), 故整段覆盖 (对齐 Tunnel 的写法).
         OTHER_LDFLAGS:
           - "-framework Foundation"
+
+  # ShareExtension.appex (LC 上游同款, LiveContainer.xcodeproj:717 / settings :1671-1753).
+  # 职责: 系统分享面板 → 收 URL/文件 → 列出容器 App → 经 LSApplicationWorkspace 拉起主 App.
+  # 依赖: LCSharedUtils（appGroupID / lcUrlSchemes）—— 由主 App 的 LC 核心提供，
+  #   本 target **不重复编** LC 核心（否则同进程两份 ObjC 类）。
+  # entitlements 里需要真实 app group（见 ShareExtension.entitlements 的
+  #   $(APP_GROUP_SIDESTORE)/$(APP_GROUP_ALTSTORE)）—— 侧载时由签名 profile 提供.
+  ShareExtension:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: vendor/LiveContainer/ShareExtension
+        excludes:
+          # 上游桥接头与主 App 的适配桥接头同名不同义, 本 target 用自己的
+          - "ShareExtension-Bridging-Header.h"
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.tequila.dash.ShareExtension
+        PRODUCT_NAME: ShareExtension
+        # Info.plist 的 NSExtensionPrincipalClass 是 $(PRODUCT_MODULE_NAME).ShareExtensionHandler,
+        # 模块名必须是 ShareExtension, 否则找不到入口类.
+        PRODUCT_MODULE_NAME: ShareExtension
+        INFOPLIST_FILE: vendor/LiveContainer/ShareExtension/Info.plist
+        CODE_SIGN_ENTITLEMENTS: vendor/LiveContainer/ShareExtension/ShareExtension.entitlements
+        MARKETING_VERSION: "0.3.808"
+        CURRENT_PROJECT_VERSION: "1097"
+        IPHONEOS_DEPLOYMENT_TARGET: "16.0"
+        SWIFT_VERSION: "5.0"
+        SWIFT_OBJC_BRIDGING_HEADER: "$(SRCROOT)/vendor/LiveContainer/ShareExtension/ShareExtension-Bridging-Header.h"
+        # 与 LCUI framework 同款: 私有类与 LC 核心符号运行时解析, 不产生编译期链接.
+        OTHER_LDFLAGS:
+          - "-Wl,-undefined,dynamic_lookup"
+        HEADER_SEARCH_PATHS:
+          - "$(SRCROOT)/vendor/LiveContainer"
+          - "$(SRCROOT)/vendor/LiveContainer/LiveContainer"
+          - "$(SRCROOT)/TequilaDashLiveProcess/LC"
+        OTHER_CFLAGS:
+          - "-fcommon"
 
   # LiveContainerSwiftUI.framework (LC 上游同款 framework, LiveContainer.xcodeproj:558-580).
   # 编译源 = 上游镜像 LiveContainerSwiftUI/ 全层 + MultitaskSupport/ 17 文件
@@ -555,8 +598,8 @@ targets:
         PRODUCT_MODULE_NAME: LiveContainerSwiftUI
         PRODUCT_NAME: LiveContainerSwiftUI
         DEFINES_MODULE: "YES"
-        MARKETING_VERSION: "0.3.807"
-        CURRENT_PROJECT_VERSION: "1096"
+        MARKETING_VERSION: "0.3.808"
+        CURRENT_PROJECT_VERSION: "1097"
         IPHONEOS_DEPLOYMENT_TARGET: "18.0"
         # 上游用 SWIFT_VERSION 5.0 (pbxproj:1197/1240); 本仓主 target 是 6.0 complete,
         # framework 单独用 5.0 保持上游源码原样可编 (Swift 6 严格并发会炸上游 Swift 5 代码).

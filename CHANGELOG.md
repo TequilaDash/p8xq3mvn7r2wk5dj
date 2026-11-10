@@ -1,3 +1,12 @@
+## [0.3.808] - 2026-11-10
+
+- 新增.ShareExtension.appex target（LC 上游同款）: 系统分享面板 → 收 URL/文件 → 拉起主 App.
+  模块名 ShareExtension（Info.plist 的 NSExtensionPrincipalClass 依赖它）；
+  `-undefined,dynamic_lookup` 复用主 App 的 LC 核心符号，不重复编
+- 新增.主 App entitlements 补 `com.apple.security.application-groups`（ShareExtension 与
+  主 App 共享容器/证书/URL scheme 的前提）。占位值 `group.com.tequila.dash`，
+  侧载时须与签名 profile 里的 app group 一致，否则扩展不可用（主 App 不受影响）
+
 ## [0.3.807] - 2026-11-10
 
 - 补.LC 剩余资源进 bundle (完整性审计发现的缺口):

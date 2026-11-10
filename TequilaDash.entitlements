@@ -8,5 +8,13 @@
 	<true/>
 	<key>com.apple.wifi.join-any</key>
 	<true/>
+	<!-- ShareExtension 与本 App 共享容器/证书/URL scheme 用.
+	     值必须是签名 profile 里真实注册过的 app group；
+	     侧载工具（SideStore/AltStore）会注入自己的一组，这里留占位由 profile 覆盖.
+	     免费账号无法注册 app group → 该扩展不可用，但主 App 其余功能不受影响. -->
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>group.com.tequila.dash</string>
+	</array>
 </dict>
 </plist>
