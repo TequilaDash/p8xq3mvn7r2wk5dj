@@ -19,9 +19,27 @@ import UIKit
 /// 自己用 `NavigationView`（Views/LCTabView.swift:64）。两层导航叠加会导致
 /// 子页返回按钮层级错乱（真机实测「返回上一级」行为异常）。
 struct SandboxHostView: View {
+    @Environment(\.dismiss) private var dismiss
+
     var body: some View {
-        LCUIHostView()
-            .ignoresSafeArea(edges: .bottom)
+        // 底部叠一个悬浮「关闭」钮：LC 的 LCTabView 是 App 根（上游无返回需求），
+        // 本仓经 fullScreenCover 进入，必须有退出入口，否则用户困在 LC 里.
+        // 用 overlay 叠在 LC 原生 UI 之上，不侵入 LCTabView 内部结构.
+        ZStack(alignment: .topTrailing) {
+            LCUIHostView()
+                .ignoresSafeArea(edges: .top)
+            Button {
+                dismiss()
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 28, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .padding(.trailing, 16)
+                    .padding(.top, 8)
+            }
+            .accessibilityLabel("关闭沙盒容器")
+        }
+        .ignoresSafeArea(edges: .bottom)
     }
 }
 
@@ -59,7 +77,10 @@ private struct LCUIViewControllerView: UIViewControllerRepresentable {
     let controller: UIViewController
 
     func makeUIViewController(context: Context) -> UIViewController {
-        controller
+        // UIHostingController 内部的 LCTabView 自己处理安全区（NavigationView 大标题）.
+        // 若这里再让 SwiftUI 施加安全区，顶部会多出一段空白（真机截图图一/图二实测）.
+        controller.additionalSafeAreaInsets = .zero
+        return controller
     }
 
     func updateUIViewController(_ uiViewController: UIViewController, context: Context) {}

@@ -1,3 +1,13 @@
+## [0.3.803] - 2026-11-10
+
+- 修复.主 App 图标变成 LiveContainer 图标: LC 的 Assets.xcassets 含 AppIcon.appiconset
+  (上游 App 专属 1024 图标), 被 xcodegen 当主 App icon 编译覆盖我们的 Resources/AppIcon*.png.
+  excludes AppIcon.appiconset (只留 DefaultIcon 等访客占位图)
+- 修复.沙盒容器(LC 原生 UI)左上角无退出: LCTabView 是上游 App 根无返回需求, 本仓经
+  fullScreenCover 进入必须给退出入口. ZStack 叠悬浮 xmark 关闭钮, 不侵入 LCTabView
+- 修复.沙盒容器顶部明显空白: UIHostingController 承载 LCTabView 时 SwiftUI 额外施加
+  顶部安全区, 与 NavigationView 大标题重复. ignoresSafeArea(edges:.top)
+
 ## [0.3.802] - 2026-11-10
 
 - 修复.LC 原生 UI 全部显示 "lc.xxx.yyy" 原始键（真机截图实测）：补 `Localizable.xcstrings`
