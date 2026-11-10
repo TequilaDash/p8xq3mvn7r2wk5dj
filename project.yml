@@ -27,8 +27,8 @@ settings:
   base:
     PRODUCT_BUNDLE_IDENTIFIER: com.tequila.dash
     PRODUCT_NAME: TequilaDash
-    MARKETING_VERSION: "0.3.799"
-    CURRENT_PROJECT_VERSION: "1088"
+    MARKETING_VERSION: "0.3.800"
+    CURRENT_PROJECT_VERSION: "1089"
     # 注：这里**刻意不写** `SWIFT_VERSION` —— 实测顶层 `settings.base` 的它**不被 xcodegen 采纳**，
     # 真正生效的是下面 target 层那一份（当前 `"6.0"` = Swift 6 语言模式）。
     # 另注：**编译器版本 ≠ 语言模式** —— CI 用 Xcode 27 自带的 Swift 6.4 编译器，
@@ -275,6 +275,16 @@ targets:
         # 这里改为用 build setting 直接引用现有文件，绕过该限制。
         INFOPLIST_FILE: Resources/Info.plist
         CODE_SIGN_ENTITLEMENTS: TequilaDash.entitlements
+        # v0.3.800 关键 (真机 .ips 114706 实测): Release 默认 GCC_SYMBOLS_PRIVATE_EXTERN=YES
+        # 会把 LC 核心符号标成 N_PEXT (私有外部), 导致 LiveContainerSwiftUI.framework 的
+        # -Wl,-undefined,dynamic_lookup 在 dyld 绑定时报
+        # "symbol not found in flat namespace '_OBJC_CLASS_$_LCSharedUtils'" → 启动即崩.
+        # LCUI 需要主二进制导出的符号 (v799 IPA 实测清单): _OBJC_CLASS_$_LCSharedUtils,
+        # _LCParseMachO/_LCPatchExecSlice/_LCPatchAddRPath/_LCPatchAppBundleFixupARM64eSlice,
+        # _LCIsMachOEncrypted/_LCChangeMachOUUID/_checkCodeSignature.
+        # 上游/Gnoix 不踩这个坑: 它们的 LC 核心在独立 LiveContainerShared.framework 里,
+        # dylib 天然导出符号. 本仓把 LC 核心静态编进主 App, 就必须显式关闭私有化.
+        GCC_SYMBOLS_PRIVATE_EXTERN: NO
         # LC 同款 (LiveContainer.xcodeproj:1910/1952): LC/ 源码编进主 target 后,
         # dyld_bypass_validation.h 的暂定定义同样需要 -fcommon 跨 TU 合并 (run 42478527343 同因).
         OTHER_CFLAGS:
@@ -334,8 +344,8 @@ targets:
         # 版本号三处同步（HARD-RULES 22）：主 App 的 settings.base 与 Resources/Info.plist 之外，
         # 扩展 target 是第三处 —— 原先这里停在 0.3.587/881（落后主 App 33 个版本），
         # 会让 .appex 的 CFBundleVersion 与主 App 不一致，iOS 安装/升级可拒或把扩展判过期。
-        MARKETING_VERSION: "0.3.799"
-        CURRENT_PROJECT_VERSION: "1088"
+        MARKETING_VERSION: "0.3.800"
+        CURRENT_PROJECT_VERSION: "1089"
         IPHONEOS_DEPLOYMENT_TARGET: "18.0"
         # 与主 target 同口径的 Swift 6 严格并发（详见主 target 的说明）.
         SWIFT_VERSION: "6.0"
@@ -374,8 +384,8 @@ targets:
         PRODUCT_NAME: TequilaDashLiveProcess
         # 版本号三处同步 (HARD-RULES 22): 与 Tunnel 同款纪律, 缺写则 .appex 的 CFBundleVersion 为空,
         # iOS 会因主 App 与扩展版本不一致拒装/判过期.
-        MARKETING_VERSION: "0.3.799"
-        CURRENT_PROJECT_VERSION: "1088"
+        MARKETING_VERSION: "0.3.800"
+        CURRENT_PROJECT_VERSION: "1089"
         IPHONEOS_DEPLOYMENT_TARGET: "18.0"
         SWIFT_VERSION: "6.0"
         SWIFT_STRICT_CONCURRENCY: complete
@@ -423,8 +433,8 @@ targets:
         DYLIB_CURRENT_VERSION: 1
         DYLIB_INSTALL_NAME_BASE: "@rpath"
         SKIP_INSTALL: "YES"
-        MARKETING_VERSION: "0.3.799"
-        CURRENT_PROJECT_VERSION: "1088"
+        MARKETING_VERSION: "0.3.800"
+        CURRENT_PROJECT_VERSION: "1089"
         IPHONEOS_DEPLOYMENT_TARGET: "18.0"
         CLANG_ENABLE_OBJC_ARC: "YES"
         CLANG_ENABLE_MODULES: "YES"
@@ -463,8 +473,8 @@ targets:
         DYLIB_CURRENT_VERSION: 1
         DYLIB_INSTALL_NAME_BASE: "@rpath"
         SKIP_INSTALL: "YES"
-        MARKETING_VERSION: "0.3.799"
-        CURRENT_PROJECT_VERSION: "1088"
+        MARKETING_VERSION: "0.3.800"
+        CURRENT_PROJECT_VERSION: "1089"
         IPHONEOS_DEPLOYMENT_TARGET: "15.0"
         # 顶层 settings 的 OTHER_LDFLAGS 含 $(DERIVED_FILE_DIR)/SAP/lib/libunicorn.a
         # (主 App 的 SAP 登录底座). 本 target 无 prepare.sap 脚本, 继承该键会在链接期
@@ -503,8 +513,8 @@ targets:
         PRODUCT_MODULE_NAME: LiveContainerSwiftUI
         PRODUCT_NAME: LiveContainerSwiftUI
         DEFINES_MODULE: "YES"
-        MARKETING_VERSION: "0.3.799"
-        CURRENT_PROJECT_VERSION: "1088"
+        MARKETING_VERSION: "0.3.800"
+        CURRENT_PROJECT_VERSION: "1089"
         IPHONEOS_DEPLOYMENT_TARGET: "18.0"
         # 上游用 SWIFT_VERSION 5.0 (pbxproj:1197/1240); 本仓主 target 是 6.0 complete,
         # framework 单独用 5.0 保持上游源码原样可编 (Swift 6 严格并发会炸上游 Swift 5 代码).

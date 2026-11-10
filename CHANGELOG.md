@@ -1,3 +1,14 @@
+## [0.3.800] - 2026-11-10
+
+- 修复.真机启动即崩第二层 (真机 .ips 114706, v0.3.799): dyld 报
+  "symbol not found in flat namespace '_OBJC_CLASS_$_LCSharedUtils'". 根因: Release 构建
+  GCC_SYMBOLS_PRIVATE_EXTERN 默认 YES, 把 LC 核心 (静态编进主 App) 的符号标成 N_PEXT
+  (私有外部), LiveContainerSwiftUI.framework 的 -Wl,-undefined,dynamic_lookup 在
+  dyld 绑定时全镜像搜不到. 上游/Gnoix 不踩此坑: LC 核心在独立 LiveContainerShared.framework
+  里天然导出. 修复: 主 target 显式 GCC_SYMBOLS_PRIVATE_EXTERN: NO
+  (LCUI 实测需要的符号: _OBJC_CLASS_$_LCSharedUtils, _LCParseMachO, _LCPatchExecSlice,
+  _LCPatchAddRPath, _LCPatchAppBundleFixupARM64eSlice, _LCIsMachOEncrypted,
+  _LCChangeMachOUUID, _checkCodeSignature)
 ## [0.3.799] - 2026-11-10
 
 - 修复.真机启动即崩 (4 份 .ips 同因): 主二进制被写入 `LOAD_DYLIB @rpath/TweakLoader.dylib`/`@rpath/TestJITLess.dylib`, 但产物被 xcodegen Embed 放到 .app 根且无 dylib 在 Frameworks —— dyld 启动即 abort. 对齐上游: 两个 dylib 纯 dlopen 不参与链接 (`link:false`) + postBuild 挪进 Frameworks/
