@@ -1,3 +1,12 @@
+## [0.3.805] - 2026-11-10
+
+- 修复.沙盒容器所有「导入」类功能点了没反应 (真机实测): LC 的 DocModifier
+  (ViewExtensions.swift:105) 与 TextFieldAlertModifier (:155) 都写
+  `sceneDelegate.window?.rootViewController?.present(...)`; 本仓注入的 SceneDelegate
+  是裸实例 (window 恒 nil) → `?.` 短路 → 静默无反应.
+  修法: 给 SceneDelegate 一个离屏转发窗口, rootViewController 是只重写 present 的代理,
+  再转给当前最顶层可见控制器 (避免 fullScreenCover 已 presenting 被系统拒绝)
+
 ## [0.3.804] - 2026-11-10
 
 - 修复.主 App 图标仍是 LiveContainer (v0.3.803 未修好): xcodegen 的 `excludes` 对

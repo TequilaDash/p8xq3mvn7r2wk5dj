@@ -28,7 +28,16 @@ public final class TDLCUIHost: NSObject {
         // 本仓宿主是 xcodegen 工程、入口在 HostGuestEntry.m，不接管 scene 配置，
         // 因此在 framework 内直接提供一个实例 —— 该类在 framework 模块内可见，
         // 且它的 `window` 为 nil 时 `closeDuplicatedWindow()` 走 else 分支（不崩）。
+        // ⚠️ 必须给 sceneDelegate 一个**真实的 window**：
+        // LC 的 DocModifier（Utilities/ViewExtensions.swift:105）与
+        // TextFieldAlertModifier（:155）都写
+        //     sceneDelegate.window?.rootViewController?.present(...)
+        // 裸实例的 window 恒 nil → `?.` 短路 → **所有导入/输入弹窗点了没反应**
+        // （真机实测：沙盒容器里「+ → 从 IPA 安装」完全静默）.
+        // 上游靠系统 scene 配置给这个 window（App/AppDelegate.swift:36-40）；
+        // 本仓在 framework 内注入，就显式指向宿主 key window.
         let sceneDelegate = SceneDelegate()
+        sceneDelegate.window = Self.makePresenterWindow()
         let root = LCTabView()
             .environmentObject(DataManager.shared.model)
             .environmentObject(LCAppSortManager.shared)
@@ -36,6 +45,38 @@ public final class TDLCUIHost: NSObject {
         let controller = UIHostingController(rootView: root)
         controller.title = "沙盒容器"
         return controller
+    }
+
+    /// 供 `SceneDelegate.window` 用的**转发窗口**.
+    ///
+    /// 为什么不能直接用宿主 key window：本页在 `fullScreenCover` 里，
+    /// 宿主 rootViewController 已有 `presentedViewController`，直接 `present` 会被
+    /// 系统拒绝（"Attempt to present ... which is already presenting"）。
+    /// 也不能用裸实例（window = nil 时 `?.` 短路，点了完全没反应）。
+    ///
+    /// 做法：造一个**离屏窗口**，rootViewController 是只重写 `present` 的代理 ——
+    /// LC 的 `sceneDelegate.window?.rootViewController?.present(...)` 会走到代理，
+    /// 代理再转给当前最顶层可见控制器。代理不调用 super，因此不需要真实窗口层级。
+    private static func makePresenterWindow() -> UIWindow {
+        let window = UIWindow(frame: .zero)
+        window.rootViewController = PresenterProxyViewController()
+        return window
+    }
+
+    /// 顶层可 present 的控制器（沿 presentedViewController 链向下走到底）.
+    fileprivate static func topPresenter() -> UIViewController? {
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        var root: UIViewController?
+        for scene in scenes {
+            if let key = scene.windows.first(where: { $0.isKeyWindow })?.rootViewController {
+                root = key
+                break
+            }
+            if root == nil, let any = scene.windows.first?.rootViewController { root = any }
+        }
+        var top = root
+        while let presented = top?.presentedViewController { top = presented }
+        return top
     }
 
     /// 复刻上游 `LiveContainerSwiftUIApp.init()` 的扫描（:19-101）.
@@ -91,5 +132,25 @@ public final class TDLCUIHost: NSObject {
             let full = url.appendingPathComponent(name).path
             return fm.fileExists(atPath: full, isDirectory: &isDir) && isDir.boolValue
         }
+    }
+}
+
+/// 只重写 `present` 的代理控制器：把 LC 的 present 请求转给当前最顶层可见控制器.
+///
+/// LC 的 `DocModifier` / `TextFieldAlertModifier` 都写
+/// `sceneDelegate.window?.rootViewController?.present(...)`；
+/// 本仓把 `window` 指向这个离屏窗口，于是 present 落到这里再转发。
+/// 不调用 `super.present` —— 这个控制器不在任何窗口层级里，自己 present 会失败.
+final class PresenterProxyViewController: UIViewController {
+
+    override func present(_ viewControllerToPresent: UIViewController,
+                          animated flag: Bool,
+                          completion: (() -> Void)? = nil) {
+        guard let target = TDLCUIHost.topPresenter() else {
+            // 没有可用宿主时退到自身（离屏窗口仍能承载，只是不可见）.
+            super.present(viewControllerToPresent, animated: flag, completion: completion)
+            return
+        }
+        target.present(viewControllerToPresent, animated: flag, completion: completion)
     }
 }
