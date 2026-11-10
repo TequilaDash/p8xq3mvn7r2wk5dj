@@ -10,6 +10,17 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 class SearchContext: ObservableObject {
+    /// 本仓适配 (v0.3.809): 共享实例.
+    ///
+    /// 上游两处声明都是 `@ObservedObject var searchContext = SearchContext()`
+    /// （LCAppListView.swift:86 与 LCAltStoreSourcesView.swift:487）。`@ObservedObject`
+    /// 的默认值在**视图重建时会重新求值**，于是拿到一个全新的 SearchContext，
+    /// `query` 回到 "" —— 而 SwiftUI 的 `.searchable` 在取消搜索后若观察到 query 变化，
+    /// 会重新激活搜索框，表现为「取消返回键盘又自动进入搜索状态」（真机实测）。
+    /// 上游作为 App 根时 LCAppListView 不重建所以没暴露；本仓经 UIHostingController +
+    /// TabView 承载会重建，故改为共享实例。
+    static let shared = SearchContext()
+
     @Published var query: String = ""
     @Published var debouncedQuery: String = ""
     @Published var isTyping: Bool = false
@@ -83,7 +94,7 @@ struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
     
     @State private var isViewAppeared = false
     
-    @ObservedObject var searchContext: SearchContext = SearchContext()
+    @ObservedObject var searchContext: SearchContext = .shared
     var sortedApps: [LCAppModel] {
         return sharedAppSortManager.sortedApps
     }

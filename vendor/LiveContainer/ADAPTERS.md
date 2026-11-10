@@ -150,3 +150,12 @@ python Resources/Scripts/lc_mirror_guard.py --write   # 重新生成 .upstream-m
     上游不链接这两个 dylib（纯 dlopen），所以必须 `link:false` + postBuild 挪位。
     另：启动前全量重签是本仓历史实现，上游有 `checkCodeSignature` 跳过判断
     （LCAppInfo.m:369-380），v0.3.799 起对齐。
+
+16. **`SearchContext` 改共享实例（v0.3.809，镜像内改动）**
+    `LiveContainerSwiftUI/Views/AppList/LCAppListView.swift:12` 加 `static let shared`，
+    并把 `:86`（LCAppListView）与 `LCAltStoreSourcesView.swift:487` 的
+    `@ObservedObject var searchContext = SearchContext()` 改成 `= .shared`。
+    原因：`@ObservedObject` 的默认值在视图重建时重新求值 → 新 `SearchContext` →
+    `query` 回到 ""，SwiftUI `.searchable` 观察到变化会重新激活搜索框，
+    表现为「取消搜索后键盘又自动进入搜索态」。上游作为 App 根不重建所以没暴露，
+    本仓经 `UIHostingController` + `TabView` 承载会重建。

@@ -1,3 +1,13 @@
+## [0.3.809] - 2026-11-10
+
+- 修复.搜索栏取消后键盘又自动进入搜索态 (真机实测): 上游 `SearchContext` 用
+  `@ObservedObject var searchContext = SearchContext()` (LCAppListView.swift:86 /
+  LCAltStoreSourcesView.swift:487)，`@ObservedObject` 的默认值在视图重建时重新求值
+  → 新实例 → `query` 回到 ""，SwiftUI `.searchable` 观察到变化会重新激活搜索框。
+  上游作为 App 根不重建所以没暴露；本仓经 UIHostingController + TabView 承载会重建。
+  修法: `SearchContext` 加 `static let shared`，两处默认值改 `.shared`
+  （镜像内改动，已记入 ADAPTERS.md 第 16 条并重生成 manifest）
+
 ## [0.3.808] - 2026-11-10
 
 - 新增.ShareExtension.appex target（LC 上游同款）: 系统分享面板 → 收 URL/文件 → 拉起主 App.
