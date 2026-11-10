@@ -494,6 +494,8 @@ targets:
         CLANG_ENABLE_MODULES: "YES"
         # TweakLoader 的 4 个 .m 引用 "../LiveContainer/utils.h" 及 LCSharedUtils.h /
         # UIKitPrivate.h / FoundationPrivate.h / Localization.h, 全部在上游镜像的 LiveContainer/ 里.
+        # 也指 TequilaDashLiveProcess/LC: 那是本仓的 LC 核心适配副本（含 Localization.h 补充）,
+        # 编译期用它保证与主 App 同源.
         HEADER_SEARCH_PATHS:
           - "$(SRCROOT)/vendor/LiveContainer"
           - "$(SRCROOT)/vendor/LiveContainer/LiveContainer"
@@ -567,10 +569,13 @@ targets:
         # 与 LCUI framework 同款: 私有类与 LC 核心符号运行时解析, 不产生编译期链接.
         OTHER_LDFLAGS:
           - "-Wl,-undefined,dynamic_lookup"
+        # 只指镜像目录: 扩展桥接头用 `#import "../LiveContainer/LCSharedUtils.h"`,
+        # 解析到 vendor/LiveContainer/LiveContainer/. 不要加 TequilaDashLiveProcess/LC ——
+        # 那里有同名头文件 (LCSharedUtils.h/Localization.h/FoundationPrivate.h), 会重复声明.
+        # 实现符号由主 App 的 LC 核心提供 (-Wl,-undefined,dynamic_lookup 运行时解析).
         HEADER_SEARCH_PATHS:
           - "$(SRCROOT)/vendor/LiveContainer"
           - "$(SRCROOT)/vendor/LiveContainer/LiveContainer"
-          - "$(SRCROOT)/TequilaDashLiveProcess/LC"
         OTHER_CFLAGS:
           - "-fcommon"
 
@@ -601,10 +606,13 @@ targets:
         SWIFT_OBJC_BRIDGING_HEADER: "$(SRCROOT)/vendor/LiveContainer/LaunchAppExtension/LaunchAppExtension-Bridging-Header.h"
         OTHER_LDFLAGS:
           - "-Wl,-undefined,dynamic_lookup"
+        # 只指镜像目录: 扩展桥接头用 `#import "../LiveContainer/LCSharedUtils.h"`,
+        # 解析到 vendor/LiveContainer/LiveContainer/. 不要加 TequilaDashLiveProcess/LC ——
+        # 那里有同名头文件 (LCSharedUtils.h/Localization.h/FoundationPrivate.h), 会重复声明.
+        # 实现符号由主 App 的 LC 核心提供 (-Wl,-undefined,dynamic_lookup 运行时解析).
         HEADER_SEARCH_PATHS:
           - "$(SRCROOT)/vendor/LiveContainer"
           - "$(SRCROOT)/vendor/LiveContainer/LiveContainer"
-          - "$(SRCROOT)/TequilaDashLiveProcess/LC"
         OTHER_CFLAGS:
           - "-fcommon"
 
