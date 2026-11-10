@@ -559,7 +559,10 @@ targets:
         # Info.plist 的 NSExtensionPrincipalClass 是 $(PRODUCT_MODULE_NAME).ShareExtensionHandler,
         # 模块名必须是 ShareExtension, 否则找不到入口类.
         PRODUCT_MODULE_NAME: ShareExtension
+        GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_FILE: vendor/LiveContainer/ShareExtension/Info.plist
+        INFOPLIST_KEY_CFBundleDisplayName: ShareExtension
+        SKIP_INSTALL: YES
         CODE_SIGN_ENTITLEMENTS: vendor/LiveContainer/ShareExtension/ShareExtension.entitlements
         MARKETING_VERSION: "0.3.809"
         CURRENT_PROJECT_VERSION: "1098"
@@ -597,7 +600,14 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.tequila.dash.LaunchAppExtension
         PRODUCT_NAME: LaunchAppExtension
         PRODUCT_MODULE_NAME: LaunchAppExtension
+        # 上游 (pbxproj:17CAE623/624) 是 **GENERATE_INFOPLIST_FILE: YES + INFOPLIST_FILE 合并**:
+        # Xcode 会把 Info.plist 与生成的必需键 (CFBundlePackageType=XPC! 等) 合并.
+        # 只给 INFOPLIST_FILE 时缺 CFBundlePackageType, AppIntents 编译期校验失败
+        # ("Unable to parse Info.plist" → AppIntentsSSUTraining nonzero exit, CI 42804531231).
+        GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_FILE: vendor/LiveContainer/LaunchAppExtension/Info.plist
+        INFOPLIST_KEY_CFBundleDisplayName: LaunchAppExtension
+        SKIP_INSTALL: YES
         CODE_SIGN_ENTITLEMENTS: vendor/LiveContainer/LaunchAppExtension/LaunchAppExtension.entitlements
         MARKETING_VERSION: "0.3.809"
         CURRENT_PROJECT_VERSION: "1098"
