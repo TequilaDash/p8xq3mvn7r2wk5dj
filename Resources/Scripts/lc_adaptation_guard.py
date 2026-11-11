@@ -266,6 +266,91 @@ def check_unsigned_entitlements_not_fatal(root):
     return problems
 
 
+
+def check_extensionkit_lands_in_plugins(root):
+    """R-LC-14: extensionkit-extension 必须由 postBuild 挪进 PlugIns/.
+
+    侧载工具（SideStore/isideload）只扫描 PlugIns/ 里的扩展并级联改写 bundle id。
+    xcodegen 会把 extensionkit-extension 放 Extensions/，那里它看不见 →
+    扩展 id 保持编译期值，主 App 被改成 <id>.<TEAMID> → 前缀不匹配 → 安装被拒
+    （IXErrorDomain Code=8，owner 2026-11-11 实测）。
+    """
+    problems = []
+    proj = read(os.path.join(root, "project.yml"))
+    if not proj:
+        return problems
+
+    has_extkit = "type: extensionkit-extension" in proj
+    if not has_extkit:
+        return problems
+
+    # 必须有把 Extensions/ 挪到 PlugIns/ 的 postBuild
+    moved = ("Extensions" in proj and "PlugIns" in proj
+             and ("Relocate extensionkit appex" in proj or "mv \"${appex}\"" in proj))
+    if not moved:
+        problems.append(
+            "R-LC-14 用了 extensionkit-extension 但没有 postBuild 把 Extensions/*.appex "
+            "挪到 PlugIns/ —— 侧载工具看不见，安装会报 "
+            "IXErrorDomain Code=8 'does not match required prefix'")
+    return problems
+
+
+def check_unsigned_entitlements_no_appidentifierprefix(root):
+    """R-LC-15: 未签名 IPA 的 entitlements 不得用 $(AppIdentifierPrefix).
+
+    实测侧载工具会展开 $(DEVELOPMENT_TEAM) 但不展开 $(AppIdentifierPrefix)，
+    产物留字面量 → LCJITLessDiagnoseView 比对 keychain-access-groups 必失败
+    → 免 JIT 前置检查过不去（owner 2026-11-11 真机截图）。
+    """
+    problems = []
+    for rel in ("TD.entitlements",):
+        pass
+    import glob
+    for path in glob.glob(os.path.join(root, "*.entitlements")):
+        if "Tunnel" in os.path.basename(path):
+            continue
+        text = read(path)
+        if not text:
+            continue
+        # 跳过 XML 注释：注释里提到这个变量是为了说明「为什么不能用」
+        import re as _re
+        body = _re.sub(r"<!--.*?-->", "", text, flags=_re.S)
+        if "$(AppIdentifierPrefix)" in body:
+            n = body.count("$(AppIdentifierPrefix)")
+            problems.append(
+                "R-LC-15 %s 用了 %d 处 $(AppIdentifierPrefix)；未签名 IPA 里侧载工具"
+                "不会展开它 → 免 JIT 的 keychain-access-groups 判定恒失败。"
+                "改用 $(DEVELOPMENT_TEAM)." % (os.path.basename(path), n))
+    return problems
+
+
+def check_extension_bundle_id_follows_host(root):
+    """R-LC-14b: 扩展 bundle ID 必须从主 App ID 派生（<host>.<扩展名>）。
+
+    SideStore 安装时把主 App 改成 <id>.<TEAMID>，扩展若写死独立 ID，
+    iOS 报 'does not match required prefix ... for parent'。
+    """
+    problems = []
+    proj = read(os.path.join(root, "project.yml"))
+    if not proj:
+        return problems
+    import re
+    # 找所有 target 级 PRODUCT_BUNDLE_IDENTIFIER 字面量（非 $(...) 开头）
+    for m in re.finditer(r'^\s+PRODUCT_BUNDLE_IDENTIFIER:\s*"?([^"\n]+)"?\s*$', proj, re.M):
+        val = m.group(1).strip()
+        if val.startswith("$(") or val.startswith("${"):
+            continue
+        # 顶层 TD_HOST_BUNDLE_ID / PRODUCT_BUNDLE_IDENTIFIER 那两行是主 App 的，允许
+        line_no = proj[:m.start()].count("\n") + 1
+        if line_no <= 50:
+            continue
+        problems.append(
+            "R-LC-14b project.yml:%d 扩展 bundle ID 写死 '%s'；"
+            "应写成 $(TD_HOST_BUNDLE_ID).<扩展名>，否则 SideStore 改名后前缀不匹配"
+            % (line_no, val))
+    return problems
+
+
 def main():
     root = sys.argv[1] if len(sys.argv) > 1 else "."
     if not os.path.isdir(os.path.join(root, "vendor", "LiveContainer")):
@@ -282,6 +367,9 @@ def main():
         ("R-CI-5 pipefail 下禁止 grep -q", check_pipefail_grep_q),
         ("R-CI-3 entitlements 文件名不得写死", check_entitlements_not_hardcoded),
         ("R-CI-6 未签名轨道不得校验 entitlements", check_unsigned_entitlements_not_fatal),
+        ("R-LC-14 extensionkit 必须落 PlugIns", check_extensionkit_lands_in_plugins),
+        ("R-LC-14b 扩展 bundle ID 必须派生自主 App", check_extension_bundle_id_follows_host),
+        ("R-LC-15 entitlements 禁用 AppIdentifierPrefix", check_unsigned_entitlements_no_appidentifierprefix),
     ]
 
     total = 0
