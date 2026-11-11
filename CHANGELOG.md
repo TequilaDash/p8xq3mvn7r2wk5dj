@@ -1,3 +1,17 @@
+## [0.3.816] - 2026-11-11
+
+- 修复.免 JIT 诊断页报「LiveProcess is not installed.」（真机截图实测）:
+  上游 `LCJITLessDiagnoseView.swift:108` 硬编码
+  `builtInPlugInsURL/LiveProcess.appex/LiveProcess`，而本仓产物名是
+  `TequilaDashLiveProcess.appex/TequilaDashLiveProcess` → 找不到。
+  改 `PRODUCT_NAME: LiveProcess`（target 名仍为 `TequilaDashLiveProcess`，不影响依赖引用），
+  与上游硬编码对齐，**不改镜像**
+- 新增.`vendor/LiveContainer/MIRROR-DELTAS.md` + `Resources/Scripts/lc_mirror_delta_guard.py`:
+  镜像内改动必须显式登记，未登记即 CI 失败。当前仅 1 处（`SearchContext` 改 shared，
+  owner 实测已修好搜索栏）。`lc_mirror_guard.py` 同步改为对登记文件放行，两守卫分工不再打架
+- 回退.`LCAppListView` 清理源 IPA 的 catch 块改动（owner 要求「同步上游、稳定优先，
+  不要做破坏性变更」）
+
 ## [0.3.814] - 2026-11-10
 
 - 修复.杀后台重进沙盒容器 App 列表消失: `LCPathBridge.hostContainerRoot` 还拼着 `SandboxApps`，

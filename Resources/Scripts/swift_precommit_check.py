@@ -81,6 +81,7 @@ CHECKS = [
     ("hex 解析口径防复发", "swift_hex_parse_guard.py", True),
     ("Date 比较符防复发", "swift_date_compare_guard.py", False),
     ("LiveContainer 镜像完整性", "lc_mirror_guard.py", False),
+    ("LiveContainer 镜像改动管控", "lc_mirror_delta_guard.py", False),
 ]
 
 

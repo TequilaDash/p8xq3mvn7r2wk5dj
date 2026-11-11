@@ -442,7 +442,13 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.tequila.dash.liveprocess
-        PRODUCT_NAME: TequilaDashLiveProcess
+        # 产物名必须与上游一致 = LiveProcess.appex / 可执行文件 LiveProcess.
+        # 上游 LCJITLessDiagnoseView.swift:108 硬编码
+        # `builtInPlugInsURL/LiveProcess.appex/LiveProcess`，
+        # 写成 TequilaDashLiveProcess.appex 会让免 JIT 诊断页报
+        # "LiveProcess is not installed."（真机截图实测）。
+        # target 名仍叫 TequilaDashLiveProcess（不影响 project.yml 内部依赖引用）.
+        PRODUCT_NAME: LiveProcess
         # 版本号三处同步 (HARD-RULES 22): 与 Tunnel 同款纪律, 缺写则 .appex 的 CFBundleVersion 为空,
         # iOS 会因主 App 与扩展版本不一致拒装/判过期.
         MARKETING_VERSION: "0.3.814"

@@ -27,7 +27,7 @@ MIRROR = os.path.join(ROOT, "vendor", "LiveContainer")
 MANIFEST = os.path.join(MIRROR, ".upstream-manifest.json")
 
 # 允许存在于镜像目录但不属于上游的东西.
-LOCAL_ONLY = {".upstream-manifest.json", "ADAPTERS.md"}
+LOCAL_ONLY = {".upstream-manifest.json", "ADAPTERS.md", "MIRROR-DELTAS.md"}
 
 # 上游 submodule: 参照树里可能为空, 比对时跳过其内部文件.
 SUBMODULE_DIRS = {"fishhook", "litehook", "OpenSSL"}
@@ -53,12 +53,54 @@ def walk(base, skip_submodule_git=True):
     return out
 
 
+def _registered_delta_files():
+    """从 MIRROR-DELTAS.md 抽出登记过的镜像相对路径（与 delta 守卫同口径）."""
+    deltas = os.path.join(MIRROR, "MIRROR-DELTAS.md")
+    if not os.path.exists(deltas):
+        return set()
+    import re as _re
+    out = set()
+    with open(deltas, "r", encoding="utf-8", errors="replace") as fh:
+        for line in fh:
+            if not line.startswith("|"):
+                continue
+            for m in _re.finditer(r"`([^`]+\.(?:swift|m|mm|h|c|cpp|hpp))`", line):
+                v = m.group(1)
+                if v.startswith("/") or v.startswith(":"):
+                    continue
+                out.add(v)
+    return out
+
+
 def load_manifest():
     with open(MANIFEST, "r", encoding="utf-8") as fh:
         return json.load(fh)
 
 
-def write_manifest():
+def write_manifest(ref_dir=None):
+    """重生成 manifest.
+
+    ref_dir 给了就从**上游参照树**取哈希（记录上游原始值，镜像改动不会污染基线）；
+    否则按镜像当前内容算（仅在上游尚未镜像时使用）。
+    """
+    if ref_dir:
+        entries = {}
+        for rel, full in walk(ref_dir).items():
+            if rel.split("/")[0] in SUBMODULE_DIRS and "/" not in rel:
+                continue
+            entries[rel] = sha16(full)
+        data = {
+            "source": "LiveContainer upstream (ref: %s)" % ref_dir.replace("\\", "/"),
+            "captured": "2026-11-09",
+            "files": len(entries),
+            "sha256_prefix": dict(sorted(entries.items())),
+        }
+        with open(MANIFEST, "w", encoding="utf-8", newline="\n") as fh:
+            json.dump(data, fh, ensure_ascii=False, indent=2)
+            fh.write("\n")
+        print("[lc-mirror] wrote manifest from REF: %d files" % len(entries))
+        return 0
+
     files = walk(MIRROR)
     entries = {}
     for rel, full in files.items():
@@ -90,12 +132,18 @@ def check_against_manifest():
     for rel in sorted(set(recorded) - set(on_disk)):
         print("[lc-mirror] MISSING: %s" % rel)
         problems += 1
+    # MIRROR-DELTAS.md 登记过的改动由 lc_mirror_delta_guard.py 专项管控,
+    # 这里不重复报错（否则两个守卫互相打架: 本脚本要求「零差异」,
+    # 而 delta 守卫要求「只允许登记文件有差异」）.
+    allowed = _registered_delta_files()
     for rel, expected in sorted(recorded.items()):
         full = on_disk.get(rel)
         if not full:
             continue
         actual = sha16(full)
         if actual != expected:
+            if rel in allowed:
+                continue
             print("[lc-mirror] MODIFIED: %s (manifest %s, disk %s)" % (rel, expected, actual))
             problems += 1
 
@@ -146,7 +194,7 @@ def main():
         return 1
 
     if args.write:
-        return write_manifest()
+        return write_manifest(args.ref)
 
     problems = check_against_manifest()
     if args.ref:
