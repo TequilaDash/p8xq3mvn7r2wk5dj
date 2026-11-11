@@ -569,7 +569,17 @@ struct LCSettingsView: View {
         }
         
         guard let _ = LCUtils.getCertTeamId(withKeyData: certificateData, password: certificatePassword) else {
-            errorInfo = "lc.settings.invalidCertError".loc
+            // 本仓适配 (v0.3.832): 把 ZSign 的具体失败原因直接显示在弹窗里,
+            // 而不是笼统的「验证证书失败」. 详见 ZSigner.lastZSignLogs.
+            let detail = (NSClassFromString("ZSigner") as? NSObject.Type)?
+                .perform(NSSelectorFromString("lastZSignLogs"))?
+                .takeUnretainedValue() as? String
+            let base = "lc.settings.invalidCertError".loc
+            if let detail, !detail.isEmpty {
+                errorInfo = base + "\n\n" + detail
+            } else {
+                errorInfo = base
+            }
             errorShow = true
             return
         }

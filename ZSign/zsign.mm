@@ -317,18 +317,27 @@ int checkCert(NSData *key,
     __block ZSignAsset zSignAsset;
     
     if (!zSignAsset.InitSimple(strPKeyFileData, (int)[cert length], nil, 0, strPassword)) {
-        // 本仓适配 (v0.3.831): 导入证书失败诊断。原先把 ZLog::logs 直接 clear 丢弃，
-        // 用户只看到「验证证书失败」而不知 p12 解析/证书配对/OU 提取哪一步挂了
-        // （owner 2026-11-11 真机：导入普通证书报「验证证书失败」，原版 LC 能成功）.
+        // 本仓适配 (v0.3.832): 导入证书失败诊断。把 ZLog::logs 存到静态变量，
+        // 供 Swift 侧 importCertificate() 失败分支取出并显示在弹窗里.
+        NSMutableString* detail = [NSMutableString string];
         for (auto& lg : ZLog::logs) {
+            [detail appendFormat:@"%s\n", lg.c_str()];
             NSLog(@"[getTeamIdWithCert] %s", lg.c_str());
         }
+        gLastZSignLogs = [detail copy];
         ZLog::logs.clear();
         return nil;
     }
     NSString* teamId = [NSString stringWithUTF8String:zSignAsset.m_strTeamId.c_str()];
     NSLog(@"[getTeamIdWithCert] success, teamId=%@", teamId);
     return teamId;
+}
+
+/// 本仓适配 (v0.3.832): 返回最近一次 InitSimple 失败的 ZLog 详情（供 Swift 显示在弹窗）.
+static NSString* gLastZSignLogs = nil;
+
++ (NSString*)lastZSignLogs {
+    return gLastZSignLogs;
 }
 
 + (int)checkCert:(NSData *)cert pass:(NSString *)pass completionHandler:(void(^)(int status, NSDate* expirationDate, NSString* organizationalUnitName, NSString *error))completionHandler {

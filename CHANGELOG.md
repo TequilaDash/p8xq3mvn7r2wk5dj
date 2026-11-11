@@ -1,3 +1,16 @@
+## [0.3.832] - 2026-11-11
+
+### 诊断（导入证书失败弹窗显示具体原因）
+- 此前导入证书报「验证证书失败」但无详情，用户无法定位。
+- 新增 `ZSigner.lastZSignLogs`：InitSimple 失败时把 ZLog::logs 存起来。
+- `importCertificate()` 失败分支（M5）：弹窗里附带具体失败原因
+  （p12 解析 / 证书私钥不配对 / CN 提取 / OU 提取哪一步挂）。
+
+### 澄清（前面几轮的教训）
+- `latestCertificateInvalidErr` / 有效期未知 / keychain 红叉：**都不是故障，不阻断免 JIT**。
+  免 JIT 唯一前置条件是 `certificatePassword != nil`。
+- 判断免 JIT 是否可用的唯一标准：访客能否真启动。
+
 ## [0.3.831] - 2026-11-11
 
 ### 修复（导入普通证书报「验证证书失败」，原版 LC 能成功）
