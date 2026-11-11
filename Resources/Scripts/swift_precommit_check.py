@@ -116,3 +116,7 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
+
+# 注意（R-CI-1）：本脚本只管「提交前」，不管 CI 终态。
+# dispatch 之后必须另跑：python Resources/Scripts/ci_wait.py --repo 1336329101 --branch migrate-xcode
+# 退出码 3 = 未到终态，此时不许收尾。
