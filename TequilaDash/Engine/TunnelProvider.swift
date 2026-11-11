@@ -361,10 +361,14 @@ struct BuiltInTunnel: TunnelProviding {
         return sync
     }
 
-    /// 内置隧道 provider 的 bundle id 约定：主 bundle id + `.tunnel`
+    /// 内置隧道 provider 的 bundle id 约定：主 bundle id + `.Tunnel`
     /// （Network Extension 扩展必须以此为主 App bundle id 的前缀）.
+    ///
+    /// **大小写必须与 project.yml 的 `PRODUCT_BUNDLE_IDENTIFIER` 逐字符一致**
+    /// （`$(TD_HOST_BUNDLE_ID).Tunnel`）。bundle id 大小写敏感：写成 `.tunnel`
+    /// 时 `NETunnelProviderManager` 找不到扩展 → 隧道永远起不来，且不报错。
     static var providerBundleID: String {
-        (Bundle.main.bundleIdentifier ?? "com.tequila.dash") + ".tunnel"
+        (Bundle.main.bundleIdentifier ?? "com.tequila.dash") + ".Tunnel"
     }
 
     func start() async {
