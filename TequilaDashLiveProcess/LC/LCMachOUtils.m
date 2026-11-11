@@ -539,6 +539,10 @@ bool checkCodeSignature(const char* path) {
         siginfo.fs_blob_size  = codeSignatureCommand->datasize;
         int addFileSigsReault = fcntl(fd, F_ADDFILESIGS_RETURN, &siginfo);
         if ( addFileSigsReault == -1 ) {
+            // 本仓适配 (v0.3.831): 验签失败诊断。F_ADDFILESIGS_RETURN 失败 = 签名 blob
+            // 本身无效（CDHash 与 CodeDirectory 不匹配），几乎总是证书/私钥不配对
+            // 或签名后文件被二次改动（owner 2026-11-11 真机「签名仍然无效」排查）.
+            NSLog(@"[checkCodeSignature] F_ADDFILESIGS_RETURN failed errno=%d path=%s", errno, path);
             ans = false;
             return;
         }
@@ -555,6 +559,9 @@ bool checkCodeSignature(const char* path) {
             ans = true;
             return;
         } else {
+            // 本仓适配 (v0.3.831): 验签失败诊断。F_CHECK_LV 失败 = 内核库验证不通过，
+            // messageBuffer 是内核给的具体原因（之前被静默丢弃）.
+            NSLog(@"[checkCodeSignature] F_CHECK_LV failed errno=%d path=%s msg=%s", errno, path, messageBuffer);
             ans = false;
             return;
         }

@@ -2,6 +2,22 @@
 
 ### 修复（蜂窝下卡点弹窗失败一次后不再出现）
 - `CellularGlitchCoordinator.passiveKickedLabels` 只 insert 从不 remove：
+  第一次卡点失败后该 label 永久留存 → 后续 kickPassiveGate 被短路 → 卡点弹窗再不出现，
+  只剩「隧道未就绪」弹窗。owner 2026-11-11 真机复现。
+- 修法：`run(label:action:)` 卡点链结束（成败都算）后移除该 label。
+
+### 诊断（免 JIT 导入证书失败 + 签名验签失败，待真机日志定位）
+- `ZSign/zsign.mm getTeamIdWithCert`：失败时打印 ZLog::logs（此前直接 clear 丢弃），
+  并打印成功时的 teamId。用于定位「验证证书失败」是 p12 解析 / 证书私钥不配对 /
+  CN 提取哪一步挂的。
+- `TDLiveProcess/LC/LCMachOUtils.m checkCodeSignature`：F_ADDFILESIGS_RETURN 与
+  F_CHECK_LV 失败时打印 errno 与内核错误信息（此前静默丢弃）。用于定位
+  「签名仍然无效」的确切原因。
+
+## [0.3.831] - 2026-11-11
+
+### 修复（蜂窝下卡点弹窗失败一次后不再出现）
+- `CellularGlitchCoordinator.passiveKickedLabels` 只 insert 从不 remove：
   第一次卡点失败后，该 label 永久留在集合里，后续 `kickPassiveGate` 被
   `guard !passiveKickedLabels.contains(label)` 短路 → 卡点弹窗再也不出现，
   只剩 `TunnelGate.guardReady()` 的「隧道未就绪」弹窗。
