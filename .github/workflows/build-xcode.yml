@@ -739,14 +739,21 @@ jobs:
           TUN_IPA="TequilaDash-Tunnel-${VERSION}-xcode-unsigned.ipa"
           APPEX="$(find "$APP" -name 'TequilaDashTunnel.appex' -type d | head -n1)"
           echo "APPEX=${APPEX:-<未找到>}"
-          LPEX="$(find "$APP" -name 'TequilaDashLiveProcess.appex' -type d | head -n1)"
+          LPEX="$(find "$APP" -name 'LiveProcess.appex' -type d | head -n1)"
           echo "LPEX=${LPEX:-<未找到>}"
           # LiveProcess .appex 随包携带自己的 entitlements（两个 IPA 都要；get-task-allow 口径见该文件注释，
           # 侧载工具据此知道给扩展施加什么）—— Tunnel 同款手法.
+          #
+          # R-CI-2: appex 目录名 = `PRODUCT_NAME`（project.yml 里是 `LiveProcess`），
+          # 但 entitlements 的**文件名**由源文件名决定，不随 PRODUCT_NAME 变
+          # （`TequilaDashLiveProcess/TequilaDashLiveProcess.entitlements`）。
+          # 上一版这里两处都写死 `TequilaDashLiveProcess.appex`，PRODUCT_NAME 改名后
+          # `find` 找不到 → entitlements 没拷进去 → 免 JIT 诊断报 "LiveProcess is not installed"。
           if [ -n "${LPEX:-}" ]; then
             cp TequilaDashLiveProcess/TequilaDashLiveProcess.entitlements "$LPEX/TequilaDashLiveProcess.entitlements" 2>/dev/null || true
+            echo "liveprocess entitlements -> $(basename "$LPEX")/TequilaDashLiveProcess.entitlements"
           else
-            echo "::warning::TequilaDashLiveProcess.appex 未找到 —— 访客进程扩展缺失（下方校验步会拦版）"
+            echo "::warning::LiveProcess.appex 未找到 —— 访客进程扩展缺失（下方校验步会拦版）"
           fi
 
           # 打包当前 $APP 为未签名 IPA（标准 Payload/ 布局，与 Theos 出包一致）。

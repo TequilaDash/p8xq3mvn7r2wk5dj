@@ -55,5 +55,39 @@ enum LCPathBridge {
                 try fm.createDirectory(at: dir, withIntermediateDirectories: true)
             }
         }
+        ensureTweakLoaderLink()
+    }
+
+    /// `Tweaks/TweakLoader.dylib` 指向 `<主包>/Frameworks/TweakLoader.dylib` 的符号链接.
+    ///
+    /// **为什么必须在宿主侧也建**: 上游只在 `LCBootstrap.m:354-365`（`invokeAppMain` 里）
+    /// 建这条链接，而那段只在**启动访客**时才跑。本仓宿主启动走 `TDHostBoot()`，
+    /// 从不进 `LCBootstrap` —— 于是从没启动过访客的用户打开「模块」页，`LCTweaksView`
+    /// 枚举 `LCPath.tweakPath` 只看到空目录，`TweakLoader.dylib` 根本不出现
+    /// （owner 2026-11-11 实测反馈「模块板块 tweakloader.dylib 根本不存在」）。
+    ///
+    /// 与上游逐条对齐（LCBootstrap.m:355-365）: 路径相同、目标相同、幂等（已存在就跳过）。
+    /// 差异只有一处: 主包路径取 `Bundle.main.bundlePath`，不处理 `PlugIns/xxx.appex`
+    /// 后缀——宿主进程的主包永远是 `.app` 本身。
+    static func ensureTweakLoaderLink() {
+        let fm = FileManager.default
+        let linkPath = tweaks.appendingPathComponent("TweakLoader.dylib")
+        let target = Bundle.main.bundlePath + "/Frameworks/TweakLoader.dylib"
+
+        // 目标不存在时不要建悬空链接：那会让模块页显示一个点不开的条目。
+        guard fm.fileExists(atPath: target) else {
+            NSLog("[LCPathBridge] TweakLoader.dylib 不在主包 Frameworks/，跳过符号链接")
+            return
+        }
+        // 幂等：已存在（链接或真实文件）就不动。
+        if fm.fileExists(atPath: linkPath.path) {
+            return
+        }
+        do {
+            try fm.createSymbolicLink(atPath: linkPath.path, withDestinationPath: target)
+            NSLog("[LCPathBridge] TweakLoader.dylib 符号链接已建 -> %@", target)
+        } catch {
+            NSLog("[LCPathBridge] TweakLoader.dylib 符号链接失败: %@", error.localizedDescription)
+        }
     }
 }

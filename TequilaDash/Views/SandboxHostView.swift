@@ -8,8 +8,8 @@ import UIKit
 // push 进同一条 NavigationStack 时底部仍是主 App 的 TabBar，只有整屏覆盖才盖得住.
 //
 // v0.3.801 用户要求（2026-11-10）：「沙盒容器我说清楚 简直是一坨屎… 我让你移植过来
-// 你不要自己自创了」—— 因此本页**不再渲染自创的 SandboxContainerView**，
-// 改为直接承载 LC 上游原生 UI（LCTabView → LCAppListView / LCSettingsView / LCTweaksView），
+// 你不要自己自创了」—— 自创的沙盒容器 UI 已整体删除（v0.3.825），
+// 本页直接承载 LC 上游原生 UI（LCTabView → LCAppListView / LCSettingsView / LCTweaksView），
 // 容器根已对齐 `Documents/`（与 `LCPath.docPath` 同源），所以 LC 的列表天然看得见访客 App.
 
 /// 沙盒容器整屏宿主：承载 LC 原生 UI.

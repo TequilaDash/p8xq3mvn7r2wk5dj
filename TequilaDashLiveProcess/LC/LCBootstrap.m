@@ -869,7 +869,7 @@ int LiveContainerMain(int argc, char *argv[]) {
         if (appError) {
             NSLog(@"[LCBootstrap][step7] invokeAppMain returned error, guest launch failed: %@", appError);
             // 本仓适配: 失败原因同步落共享 suite ([LCSharedUtils appGroupID]) 的 lastGuestLaunchError,
-            // 宿主 SwiftUI 端 (SandboxContainerView) 回壳首帧读它弹持久 alert; systemUptime 供宿主判陈旧.
+            // 宿主 SwiftUI 端 (RootView) 回壳首帧读它弹持久 alert; systemUptime 供宿主判陈旧.
             [lcSharedDefaults setObject:appError forKey:@"lastGuestLaunchError"];
             [lcSharedDefaults setDouble:[[NSProcessInfo processInfo] systemUptime] forKey:@"lastGuestLaunchErrorUptime"];
             if(isLiveProcess) {

@@ -97,8 +97,8 @@ private struct SandboxRegistry {
         var installedAt: Date?
         /// 锁定状态（缺省 = 未锁定）.
         var isLocked: Bool = false
-        /// 隐藏状态（缺省 = 不隐藏）. 隐藏是锁定的子选项，只能经
-        /// `SandboxContainerStore.setAccess` 写入，由它维持「隐藏 ⇒ 锁定」.
+        /// 隐藏状态（缺省 = 不隐藏）. 隐藏是锁定的子选项，由 LC 原生
+        /// `LCAppSettingsView` 的 `setLocked`/`toggleHidden` 维持「隐藏 ⇒ 锁定」.
         var isHidden: Bool = false
     }
 
@@ -326,7 +326,7 @@ enum SandboxContainerStore {
     /// 当成自己的标识写进 Preferences / 缓存路径，目录名与 bundleId 脱钩后，用户重装同款
     /// App 可以拿到全新元数据目录而不与旧元数据混在一起。
     ///
-    /// 多容器下的语义（启动器 SandboxLauncher 依赖它）：返回**激活**那一份；一份都没有时
+    /// 多容器下的语义：返回**激活**那一份；一份都没有时
     /// 建一份并激活它；登记指向的目录已被删掉时补一个新 UUID 并改激活指针。
     @discardableResult
     static func makeDataHome(for app: SandboxApp) throws -> URL {
@@ -524,25 +524,6 @@ enum SandboxContainerStore {
         entry.displayName = displayName
         entry.installedAt = installedAt
         registry.entries[bundleId] = entry
-        registry.save(to: registryURL)
-    }
-
-    /// 写入锁定 / 隐藏两个用户开关（只动登记，不碰磁盘）。
-    ///
-    /// 隐藏是锁定的**子选项**（LCAppSettingsView:220-235）：`hidden == true` 时强制
-    /// `locked = true`；解锁则连带清掉隐藏（LC 的 `setLocked(false)` 同口径，解锁前先验身，
-    /// 本仓没有生物识别入口，只由界面上的二次确认承担「确实是本人」这一步）。
-    static func setAccess(for app: SandboxApp, locked: Bool, hidden: Bool) {
-        var registry = SandboxRegistry.load(from: registryURL)
-        var entry = registry.entries[app.id] ?? SandboxRegistry.Entry()
-        if hidden {
-            entry.isHidden = true
-            entry.isLocked = true
-        } else {
-            entry.isHidden = false
-            entry.isLocked = locked
-        }
-        registry.entries[app.id] = entry
         registry.save(to: registryURL)
     }
 

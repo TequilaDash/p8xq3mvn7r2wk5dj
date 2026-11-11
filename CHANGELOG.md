@@ -1,3 +1,21 @@
+## [0.3.825] - 2026-11-11
+
+### 删除（owner 要求：彻底移除自创沙盒容器代码）
+- `Views/SandboxContainerView.swift`（538 行）、`Views/SandboxAppSettingsView.swift`（654 行）、
+  `Views/SandboxAppDetailView.swift`（830 行）—— 全部无渲染入口，属死代码
+- 级联死引擎：`Engine/SandboxAccessAuth.swift`、`Engine/SandboxLauncher.swift`、
+  `Engine/SandboxRuntimeStatus.swift`、`Engine/SandboxResigner.swift`
+- `SandboxContainerStore.setAccess`（唯一调用者已删）
+- 共删 2022 行 + 7 个文件；LC 原生 UI 是唯一沙盒容器界面
+
+### 修复
+- **TweakLoader.dylib 不出现**：上游只在 `LCBootstrap.m:354-365`（启动访客时）建符号链接，
+  宿主 `TDHostBoot()` 路径从不执行 → 模块页永远空。`LCPathBridge.ensureTweakLoaderLink()`
+  在宿主侧也建（路径/目标/幂等性逐条对齐上游）
+- **免 JIT 报 `LiveProcess is not installed`**：CI 第 742 行仍写死 `TequilaDashLiveProcess.appex`，
+  而 `PRODUCT_NAME` 已改为 `LiveProcess` → `find` 落空 → entitlements 未随包 → 诊断判定未安装
+  （R-CI-2 第三次复发）
+
 ## [0.3.824] - 2026-11-11
 
 - 修复.版本号被 revert 吃掉（v0.3.819~v0.3.823 的 bump 全部失效，产物一直是 0.3.814）:
