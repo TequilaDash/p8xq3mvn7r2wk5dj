@@ -1,3 +1,28 @@
+## [0.3.830] - 2026-11-11
+
+### 修复（真机崩溃：多任务启动时 addObject:nil）
+- `MultitaskSupport/AppSceneViewController.m:85/90`：`bookmarkDataWithOptions:` 失败返回 nil，
+  直接 `-addObject:` 抛 `__NSArrayM insertObject:atIndex: object cannot be nil` → 整个 App 崩溃。
+  上游只给 `containerBookmark` 判了空，另两处漏了（M4）。
+  崩溃栈实证：`AppSceneViewController initWithBundleId:dataUUID:delegate: + 1032` →
+  `DecoratedAppSceneViewController initWindowName:bundleId:dataUUID:rootVC: + 408` →
+  `LCUtils launchMultitaskGuestApp:completionHandler: block_invoke + 280`。
+
+### 修复（上游笔误：lcSharedDefaults 缓存判错对象）
+- `LCBootstrap.m:41-45`：`if(!lcUserDefaults)` 应为 `if(!lcSharedDefaults)`。
+  上游笔误导致每次调用都重建 suite defaults 对象，写入的证书/开关可能被下一次读取丢弃（M3）。
+
+### 澄清（不修，属预期行为）
+- 免 JIT 诊断页的 `latestCertificateInvalidErr` 与「证书有效期至：未知」**不是故障**：
+  · `checkCodeSignature` 用 `fcntl(F_CHECK_LV)` 让内核验签，要求签名链含 provisioning profile；
+    ZSigner 用 p12 签的临时 dylib 没有 profile → 必失败（见规则 R-LC-9）。
+  · 「有效期未知」是因为 `checkCert` 走 OCSP 联网查询（`zsign.mm:82-118`），网络不通即失败。
+  两者都**不阻断**免 JIT；判断免 JIT 能否用要看访客能否真启动。
+- `keychain-access-groups 正确 = 否` 也不阻断免 JIT：`SecItem.m:138-142` 在该组不可用时
+  只打日志并 `return`（不装钩子），访客照常运行，只是 keychain 不做隔离。
+  根因是 isideload `sideload/application.rs:112-137` 硬编码 `bundle_id == "com.kdt.livecontainer"`
+  才注入 128 组，我们是 `com.tequila.dash` → 永不注入。
+
 ## [0.3.829] - 2026-11-11
 
 ### 修复（用上游同款机制落位，不再靠 CI 后处理）

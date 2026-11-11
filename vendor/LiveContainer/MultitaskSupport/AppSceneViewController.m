@@ -82,12 +82,27 @@
         if (!isSharedApp) {
             NSURL *dataURL = [docURL URLByAppendingPathComponent:[NSString stringWithFormat:@"Data/Application/%@", dataUUID]];
             NSURL *tweaksURL = [docURL URLByAppendingPathComponent:@"Tweaks"];
-            [bookmarks addObject:[bundle.bundleURL bookmarkDataWithOptions:(1<<11) includingResourceValuesForKeys:0 relativeToURL:0 error:0]];
+            // 本仓适配 (v0.3.830): `bookmarkDataWithOptions:` 失败返回 nil，而
+            // `-addObject:` 传 nil 会抛 `__NSArrayM insertObject:atIndex: object cannot be nil`
+            // 并**整个 App 崩溃**（owner 2026-11-11 真机日志实证：
+            //   AppSceneViewController initWithBundleId:dataUUID:delegate: + 1032
+            //   DecoratedAppSceneViewController initWindowName:bundleId:dataUUID:rootVC: + 408
+            //   LCUtils launchMultitaskGuestApp:completionHandler: block_invoke + 280）。
+            // 上游只给 containerBookmark 加了判空，另外两处漏了 —— 本仓补齐。
+            // bookmark 失败通常是容器目录不存在（还没建 Data/Application/<uuid>）或
+            // 主包 bundleURL 不可 bookmark（越界沙盒），两者都不该让 App 崩。
+            NSData* bundleBookmark = [bundle.bundleURL bookmarkDataWithOptions:(1<<11) includingResourceValuesForKeys:0 relativeToURL:0 error:0];
+            if (bundleBookmark) {
+                [bookmarks addObject:bundleBookmark];
+            }
             NSData* containerBookmark = [dataURL bookmarkDataWithOptions:(1<<11) includingResourceValuesForKeys:0 relativeToURL:0 error:0];
             if(containerBookmark) {
                 [bookmarks addObject:containerBookmark];
             }
-            [bookmarks addObject:[tweaksURL bookmarkDataWithOptions:(1<<11) includingResourceValuesForKeys:0 relativeToURL:0 error:0]];
+            NSData* tweaksBookmark = [tweaksURL bookmarkDataWithOptions:(1<<11) includingResourceValuesForKeys:0 relativeToURL:0 error:0];
+            if (tweaksBookmark) {
+                [bookmarks addObject:tweaksBookmark];
+            }
         }
     }
     item.userInfo = userInfo;

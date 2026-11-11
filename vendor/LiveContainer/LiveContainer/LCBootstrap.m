@@ -39,7 +39,11 @@ bool sideStoreExist = false;
     return lcUserDefaults;
 }
 + (instancetype)lcSharedDefaults {
-    if(!lcUserDefaults) {
+    // 本仓适配 (v0.3.830): 上游这里判的是 `lcUserDefaults`（笔误），导致
+    // 每次调用都重新 `initWithSuiteName:` 建一个**新** defaults 对象 ——
+    // 主 App 侧写入的证书/开关立刻被下一次读取丢弃（新对象读的是空 suite）。
+    // 正确判据是 `lcSharedDefaults` 自身。
+    if(!lcSharedDefaults) {
         lcSharedDefaults = [[NSUserDefaults alloc] initWithSuiteName: [LCSharedUtils appGroupID]];
     }
     return lcSharedDefaults;

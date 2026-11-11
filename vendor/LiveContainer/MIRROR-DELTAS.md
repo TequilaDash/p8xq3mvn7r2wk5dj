@@ -6,7 +6,7 @@
 > 校验方式：`python Resources/Scripts/lc_mirror_delta_guard.py`
 > （对比当前镜像与 `.upstream-manifest.json`，只允许本文件登记的文件有差异）
 
-## 当前改动（M1 系列 1 处修复 + M2 1 处新增功能）
+## 当前改动（M1 系列修复 + M2 新增功能 + M3/M4 上游 bug 修补）
 
 | # | 文件 | 上游行号 | 改动 | 原因 | 引入版本 | 真机验证 |
 |---|---|---|---|---|---|---|
@@ -16,6 +16,17 @@
 | M1d | `LiveContainerSwiftUI/Views/AppList/LCAppListView.swift` | `:31-48`（`SearchContext.init` 的 debounce sink） | `value.isEmpty` 时提前 `return`，不置 `isTyping = true` | 点搜索栏 X 取消后，sink 仍置 `isTyping` → 视图重算 → `.searchable` 重新激活搜索框（真机实测：先点键盘「完成」再点 X 不会复现） | v0.3.816 | ⏳ 待真机 |
 
 **M1 / M1b / M1c / M1d 属于同一处修复，必须同时应用。**
+
+## 上游 bug 修补（2 处）
+
+| # | 文件 | 上游行号 | 改动 | 原因 | 引入版本 |
+|---|---|---|---|---|---|
+| M3 | `LiveContainer/LCBootstrap.m` | `:41-45`（`+[NSUserDefaults lcSharedDefaults]`） | `if(!lcUserDefaults)` → `if(!lcSharedDefaults)` | 上游笔误：判的是 `lcUserDefaults`，于是每次调用都重新 `initWithSuiteName:` 建**新** defaults 对象 → 刚写入的证书/开关被下一次读取丢弃。访客路径里 `lcUserDefaults` 恰好在 `:724` 已赋值，所以真实运行时碰巧没暴露；但 `lcSharedDefaults` 早于 `:724` 被调用时（如扩展进程）会返回 nil | v0.3.830 |
+| M4 | `MultitaskSupport/AppSceneViewController.m` | `:85`、`:90` | 给 `bundle.bundleURL` / `tweaksURL` 的 bookmark 加判空再 `addObject:` | 上游只给 `containerBookmark` 判了空，另两处漏了。`bookmarkDataWithOptions:` 失败返回 nil → `-addObject:nil` 抛 `__NSArrayM insertObject:atIndex: object cannot be nil` → **整个 App 崩溃**（owner 2026-11-11 真机日志实证，多任务启动路径） | v0.3.830 |
+
+**M3 / M4 都是上游自身缺陷，同步上游时应先检查上游是否已修：**
+- M3 若上游已改成 `if(!lcSharedDefaults)` → 删除本仓改动。
+- M4 若上游已给三处都加了判空 → 删除本仓改动。
 
 ## 本仓新增功能（2 处）
 
