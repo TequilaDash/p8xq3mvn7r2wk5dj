@@ -2,6 +2,24 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<!-- 上游 entitlements.xml:5-21 同款口径 (owner 2026-11-11 要求「完全对齐上游」).
+	     缺 application-identifier / com.apple.developer.team-identifier 时，
+	     LCJITLessDiagnoseView:148-153 拿不到 teamId 与 correctBundleId，
+	     「团队名」「包名」两行显示灰色、免 JIT 判定必红。 -->
+	<key>application-identifier</key>
+	<string>$(DEVELOPMENT_TEAM).$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>com.apple.developer.team-identifier</key>
+	<string>$(DEVELOPMENT_TEAM)</string>
+	<key>com.apple.developer.healthkit</key>
+	<true/>
+	<key>com.apple.developer.healthkit.access</key>
+	<array>
+		<string>health-records</string>
+	</array>
+	<key>com.apple.developer.healthkit.background-delivery</key>
+	<true/>
+	<key>com.apple.developer.kernel.increased-memory-limit</key>
+	<true/>
 	<key>get-task-allow</key>
 	<true/>
 	<key>com.apple.wifi.manager-access</key>
@@ -18,10 +36,18 @@
 	     （主 App 其余功能不受影响，只是分享面板扩展不可用）。 -->
 	<key>com.apple.security.application-groups</key>
 	<array>
-		<!-- 侧载工具（SideStore/AltStore）按 `group.<bundleId>.<TEAMID>` 生成并注入.
+		<!-- 本仓自有 group: 侧载工具（SideStore/AltStore）按 `group.<bundleId>.<TEAMID>` 生成并注入.
 		     截图实测: 本机可用的是 `group.com.tequila.dash.U82B5LN29B`.
-		     用 $(AppIdentifierPrefix) 让签名时替换成 `<TEAMID>.`，拼出与侧载工具一致的值. -->
+		     用 $(DEVELOPMENT_TEAM) 让签名时替换成 TEAMID，拼出与侧载工具一致的值. -->
 		<string>group.com.tequila.dash.$(DEVELOPMENT_TEAM)</string>
+		<!-- 上游 entitlements.xml:17-19 同款两项 (owner 2026-11-11 要求「完全对齐上游」).
+		     上游用 xcconfig 变量 $(APP_GROUP_SIDESTORE)/$(APP_GROUP_ALTSTORE);
+		     本仓无 xcconfig，直接展开成它们指向的固定值
+		     (vendor/LiveContainer/xcconfigs/Global.xcconfig:14-15).
+		     侧载工具会给应用注入这两个 group；自签/免费账号没有时会报 entitlement 不匹配，
+		     届时删掉这两行即可（本仓自有 group 不受影响）. -->
+		<string>group.com.SideStore.SideStore</string>
+		<string>group.com.rileytestut.AltStore</string>
 	</array>
 	<!-- 访客 App 的 keychain 隔离组（上游 entitlements.xml 同款，128 个）.
 	     LC 的 Tweaks/SecItem.m:120-127 把访客的 SecItem 调用 hook 到
