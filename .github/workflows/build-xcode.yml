@@ -869,8 +869,15 @@ jobs:
             if [ "$LPV" != "$APPCV" ]; then
               echo "::error::$IPA LiveProcess CFBundleVersion=$LPV != 主 App CFBundleVersion=$APPCV（扩展与主 App 版本必须一致）"; exit 1
             fi
-            unzip -l "$IPA" | grep -q "PlugIns/$LP_DIR.appex/$LP_DIR.entitlements" \
-              || { echo "::error::$IPA $LP_DIR.entitlements 未随包携带"; exit 1; }
+            # entitlements 的文件名是**源文件名**（TequilaDashLiveProcess.entitlements），
+            # 不随 PRODUCT_NAME 变。两种都接受，避免再次因改名而误判（v0.3.819 实测）。
+            ENT_OK=0
+            for ENT in "$LP_DIR.entitlements" "TequilaDashLiveProcess.entitlements"; do
+              if unzip -l "$IPA" | grep -q "PlugIns/$LP_DIR.appex/$ENT"; then ENT_OK=1; break; fi
+            done
+            if [ "$ENT_OK" != "1" ]; then
+              echo "::error::$IPA 缺 PlugIns/$LP_DIR.appex/*.entitlements（查了 $LP_DIR 与 TequilaDashLiveProcess）"; exit 1
+            fi
           done
           echo "liveprocess appex OK (both ipas: present + build-version + entitlements)"
 
