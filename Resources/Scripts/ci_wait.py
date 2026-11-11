@@ -54,17 +54,35 @@ def api(path):
     if not tok:
         print("[ci-wait] 找不到 GitHub token", file=sys.stderr)
         sys.exit(2)
-    out = subprocess.run(
-        ["curl", "-s", "--ssl-no-revoke",
-         "-H", "Accept: application/vnd.github+json",
-         "-H", "Authorization: Bearer %s" % tok,
-         "https://api.github.com%s" % path],
-        capture_output=True, text=True, encoding="utf-8", errors="replace")
-    try:
-        return json.loads(out.stdout)
-    except json.JSONDecodeError:
-        print("[ci-wait] API 返回非 JSON: %s" % out.stdout[:200], file=sys.stderr)
-        sys.exit(2)
+    cmd = ["curl", "-s", "--ssl-no-revoke",
+           "-H", "Accept: application/vnd.github+json",
+           "-H", "Authorization: Bearer %s" % tok]
+    # 本机访问 api.github.com 有两种可行方式，按顺序试：
+    #   ① 直连（curl 默认走系统代理 / DevSidecar，成功时最快）
+    #   ② 显式 HTTP 代理（DevSidecar 失效时的兜底）
+    # 环境变量 CI_WAIT_PROXY 可强制指定；设为空字符串则强制直连.
+    # 默认显式指定本机代理：curl 走环境变量时会被系统级拦截层（DevSidecar）
+    # 抢先处理并超时；显式 --proxy 才稳定（实测）。
+    proxy = os.environ.get("CI_WAIT_PROXY", "http://127.0.0.1:31181")
+    if proxy:
+        cmd += ["--proxy", proxy]
+    cmd.append("https://api.github.com%s" % path)
+    out = subprocess.run(cmd, capture_output=True, text=True,
+                         encoding="utf-8", errors="replace")
+    for attempt in (1, 2, 3):
+        try:
+            return json.loads(out.stdout)
+        except json.JSONDecodeError:
+            if attempt == 3:
+                print("[ci-wait] API 连续 3 次返回非 JSON（网络/代理问题）: %s"
+                      % out.stdout[:200], file=sys.stderr)
+                sys.exit(2)
+            print("[ci-wait] 第 %d 次失败，5s 后重试（%s）"
+                  % (attempt, out.stdout[:80].replace("\n", " ")), file=sys.stderr)
+            time.sleep(5)
+            cmd_run = cmd[:-1] + [cmd[-1]]
+            out = subprocess.run(cmd_run, capture_output=True, text=True,
+                                 encoding="utf-8", errors="replace")
 
 
 def latest_run(repo, branch):
