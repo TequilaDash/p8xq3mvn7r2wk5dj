@@ -1,3 +1,9 @@
+## [0.3.824] - 2026-11-11
+
+- 修复.版本号被 revert 吃掉（v0.3.819~v0.3.823 的 bump 全部失效，产物一直是 0.3.814）:
+  `e513bd1`（回退 LCAppListView 的破坏性改动）用 `git revert 84d70b3` 撤销了**该 commit 的全部改动**，
+  其中包括同 commit 里的版本号 bump。重新 bump 到 0.3.824 / build 1113（8 处 + Info.plist）
+
 ## [0.3.823] - 2026-11-11
 
 - 修复.CI 过度校验 LiveProcess entitlements（连续 5 轮失败的真凶，run 42966013181 /
