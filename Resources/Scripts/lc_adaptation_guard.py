@@ -210,6 +210,33 @@ def check_pipefail_grep_q(root):
     return problems
 
 
+def check_entitlements_not_hardcoded(root):
+    """R-CI-3: CI 里校验 .entitlements 存在时，不得锁死具体文件名.
+
+    踩过 3 轮（run 42966013181 / 42970095124 / 42967765114）：
+    entitlements 的名字由**源文件名**决定，也可能被签名工具改名；
+    锁死 `$LP_DIR.entitlements` 或任何具体名都会失败。
+    """
+    problems = []
+    wf = read(os.path.join(root, ".github", "workflows", "build-xcode.yml"))
+    if not wf:
+        return problems
+    for no, line in enumerate(wf.splitlines(), 1):
+        st = line.strip()
+        if st.startswith("#") or "grep" not in st:
+            continue
+        # 命中：grep ... "PlugIns/$X.appex/<具体名>.entitlements"
+        if re.search(r"PlugIns/\$?\w*\.appex/\$?\w+\.entitlements", st):
+            # 允许通配写法 [^/]+\.entitlements
+            if "[^/]+" in st:
+                continue
+            problems.append(
+                "R-CI-3 build-xcode.yml:%d 把 entitlements 文件名写死（%s）"
+                "—— 名字随源文件/签名工具变，应改用通配 `[^/]+` + .entitlements"
+                % (no, st[:70]))
+    return problems
+
+
 def main():
     root = sys.argv[1] if len(sys.argv) > 1 else "."
     if not os.path.isdir(os.path.join(root, "vendor", "LiveContainer")):
@@ -224,6 +251,7 @@ def main():
         ("R-LC-8 容器根一致性", check_container_root_consistency),
         ("R-CI-2 产物名与 CI 硬编码一致", check_product_name_references),
         ("R-CI-5 pipefail 下禁止 grep -q", check_pipefail_grep_q),
+        ("R-CI-3 entitlements 文件名不得写死", check_entitlements_not_hardcoded),
     ]
 
     total = 0
