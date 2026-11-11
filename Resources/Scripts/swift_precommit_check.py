@@ -82,6 +82,10 @@ CHECKS = [
     ("Date 比较符防复发", "swift_date_compare_guard.py", False),
     ("LiveContainer 镜像完整性", "lc_mirror_guard.py", False),
     ("LiveContainer 镜像改动管控", "lc_mirror_delta_guard.py", False),
+    # 报告 LC 核心适配副本（<prefix>LiveProcess/LC）与上游 LiveContainer/ 的差异。
+    # 这份副本没有逐字节守卫（它本来就该与上游不同），但必须让漂移**可见** ——
+    # 否则同步上游时没人知道该重放哪几个文件。strict=True: 有未登记的漂移即失败。
+    ("LC 核心适配副本漂移报告", "lc_core_drift_guard.py", False),
     ("LC 适配规则防复发", "lc_adaptation_guard.py", False),
 ]
 
