@@ -284,14 +284,19 @@ def check_extensionkit_lands_in_plugins(root):
     if not has_extkit:
         return problems
 
-    # 必须有把 Extensions/ 挪到 PlugIns/ 的 postBuild
-    moved = ("Extensions" in proj and "PlugIns" in proj
-             and ("Relocate extensionkit appex" in proj or "mv \"${appex}\"" in proj))
+    # 必须有把 Extensions/ 挪到 PlugIns/ 的步骤 —— 在 postBuild 或 CI 打包步都算。
+    # **不能在 postBuild 挪**：Xcode 随后还要跑 ValidateEmbeddedBinary，
+    # 那时 Extensions/*.appex 已不在，会报
+    #   "error: Couldn't load Info dictionary for .../Extensions/xxx.appex"
+    # （run 42995072992 step 26 实证）。正确位置是「Package unsigned IPA」步骤。
+    wf = read(os.path.join(root, ".github", "workflows", "build-xcode.yml")) or ""
+    moved = (("Extensions" in wf and "PlugIns" in wf and "relocated" in wf)
+             or ("Relocate extensionkit appex" in proj))
     if not moved:
         problems.append(
-            "R-LC-14 用了 extensionkit-extension 但没有 postBuild 把 Extensions/*.appex "
-            "挪到 PlugIns/ —— 侧载工具看不见，安装会报 "
-            "IXErrorDomain Code=8 'does not match required prefix'")
+            "R-LC-14 用了 extensionkit-extension 但没有把 Extensions/*.appex 挪到 PlugIns/ "
+            "（应在 CI 的 Package unsigned IPA 步骤做，不要在 postBuild 做——Xcode 随后"
+            "还要 ValidateEmbeddedBinary，会报 Couldn't load Info dictionary）")
     return problems
 
 

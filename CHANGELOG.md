@@ -1,3 +1,13 @@
+## [0.3.828] - 2026-11-11
+
+### 修复（0.3.827 的落位修复位置错了，CI 编译失败）
+- 0.3.827 把「Extensions/ -> PlugIns/」放在主 App 的 postBuild，导致
+  `error: Couldn't load Info dictionary for .../Extensions/LaunchAppExtension.appex`
+  （run 42995072992 step 26 实证）——postBuild 跑完 Xcode 还要执行
+  `ValidateEmbeddedBinary`，那时目录已被移走。
+- 改为在 CI 的「Package unsigned IPA」步骤移动（Xcode 已结束，安全）。
+- 守卫 R-LC-14 同步更新：识别 CI 打包步的移动，并说明不能在 postBuild 做。
+
 ## [0.3.827] - 2026-11-11
 
 ### 修复（安装失败的真根因：扩展落位）
