@@ -614,7 +614,11 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
         dlopenBlock();
     }
 
-    if(getenv("TD_NET_BLOCK")) {
+    // 联网管理 (本仓功能, LC 没有). 判据必须是**值**为 "1"，不能只看变量存在:
+    // HostGuestEntry.m 每次启动访客都 `setenv("TD_NET_BLOCK", "0"|"1", 1)`，
+    // 变量恒存在 —— 只判 `getenv(...)` 非空会让**所有**访客的网络都被拦成 EPERM.
+    const char *netBlockEnvAfter = getenv("TD_NET_BLOCK");
+    if(netBlockEnvAfter && netBlockEnvAfter[0] == '1') {
         NetBlockApplyAfterGuestLoad();
     }
     appExecutableHandle = appHandle;

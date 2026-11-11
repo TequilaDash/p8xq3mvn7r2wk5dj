@@ -6,7 +6,7 @@
 > 校验方式：`python Resources/Scripts/lc_mirror_delta_guard.py`
 > （对比当前镜像与 `.upstream-manifest.json`，只允许本文件登记的文件有差异）
 
-## 当前改动（1 处）
+## 当前改动（M1 系列 1 处修复 + M2 1 处新增功能）
 
 | # | 文件 | 上游行号 | 改动 | 原因 | 引入版本 | 真机验证 |
 |---|---|---|---|---|---|---|
@@ -16,6 +16,20 @@
 | M1d | `LiveContainerSwiftUI/Views/AppList/LCAppListView.swift` | `:31-48`（`SearchContext.init` 的 debounce sink） | `value.isEmpty` 时提前 `return`，不置 `isTyping = true` | 点搜索栏 X 取消后，sink 仍置 `isTyping` → 视图重算 → `.searchable` 重新激活搜索框（真机实测：先点键盘「完成」再点 X 不会复现） | v0.3.816 | ⏳ 待真机 |
 
 **M1 / M1b / M1c / M1d 属于同一处修复，必须同时应用。**
+
+## 本仓新增功能（2 处）
+
+| # | 文件 | 改动 | 原因 | 引入版本 | 真机验证 |
+|---|---|---|---|---|---|
+| M2 | `LiveContainerSwiftUI/Views/AppList/AppSettings/LCAppSettingsView.swift` | ① `@State netBlockEnabled`（:40-42）② `init` 里读 TDNetBlock-&lt;relativeBundlePath&gt;（:50-55）③ 锁定/隐藏节之后加「禁止联网」Section + `onChange` 写回（:249-264） | **LC 上游没有此功能**。owner 2026-11-08 需求：按 App 禁用联网。链路：UI 写 `UserDefaults["TDNetBlock-<selected>"]` → HostGuestEntry.m:43-46 读并 `setenv("TD_NET_BLOCK","1")` → 访客进程 LCBootstrap.m:550 调 `NetBlockGuestHooksInit()`、`:617-623` 调 `NetBlockApplyAfterGuestLoad()` → NetworkBlock.m 拦 BSD `connect`（EPERM） | v0.3.825 | ⏳ 待真机 |
+
+**M2 的键必须与 `HostGuestEntry.m:43-45` 完全一致**：那边先拼 TDNetBlock-&lt;selected&gt;，再用 TDLastGuestBundleId 覆盖——而 TDLastGuestBundleId 全仓无人写入，故实际生效的永远是 TDNetBlock-&lt;selected&gt;，其中 `selected` 由 LCAppModel.swift:324-329 写成 `appInfo.relativeBundlePath`。
+
+## 上游同步时怎么处理（M2）
+
+1. 上游若自己加了「联网禁用」→ **删除本仓 M2**，用上游版本，并从本表移除。
+2. 上游若仍未加 → 按上表三处重放（`LCAppSettingsView` 的行号会变，按 `lc.appSettings.lockApp` 这个 Toggle 定位插入点）。
+3. 重放后跑 `lc_mirror_guard.py --write` + `lc_mirror_delta_guard.py` 确认只剩 M1*/M2。
 
 ## 上游同步时怎么处理
 
