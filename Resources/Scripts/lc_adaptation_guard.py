@@ -237,6 +237,35 @@ def check_entitlements_not_hardcoded(root):
     return problems
 
 
+def check_unsigned_entitlements_not_fatal(root):
+    """R-CI-6: 未签名轨道（CODE_SIGNING_ALLOWED=NO）不得把 entitlements 缺失当错误."""
+    problems = []
+    wf = read(os.path.join(root, ".github", "workflows", "build-xcode.yml"))
+    if not wf:
+        return problems
+
+    unsigned = "CODE_SIGNING_ALLOWED=NO" in wf or "CODE_SIGNING_ALLOWED: NO" in wf
+    if not unsigned:
+        return problems
+
+    # 例外：隧道版（Tunnel.appex）的 entitlements 由源目录当资源拷进包，实测确实存在
+    # （run 42973296579 日志 "tunnel entitlements OK"），故它的 NE 校验保留为致命错误。
+    # 只针对 LiveProcess —— 它的 entitlements 未随包携带（同一 run 实测）。
+    for no, line in enumerate(wf.splitlines(), 1):
+        st = line.strip()
+        if st.startswith("#"):
+            continue
+        if "entitlements" not in st or "exit 1" not in st:
+            continue
+        if "Tunnel" in st or "隧道版" in st:
+            continue  # 白名单：隧道版 entitlements 确实随包携带
+        problems.append(
+            "R-CI-6 build-xcode.yml:%d 在未签名轨道里把 entitlements 缺失当致命错误"
+            "（CODE_SIGN_ENTITLEMENTS 只在签名时写进产物，侧载工具会自己施加）: %s"
+            % (no, st[:70]))
+    return problems
+
+
 def main():
     root = sys.argv[1] if len(sys.argv) > 1 else "."
     if not os.path.isdir(os.path.join(root, "vendor", "LiveContainer")):
@@ -252,6 +281,7 @@ def main():
         ("R-CI-2 产物名与 CI 硬编码一致", check_product_name_references),
         ("R-CI-5 pipefail 下禁止 grep -q", check_pipefail_grep_q),
         ("R-CI-3 entitlements 文件名不得写死", check_entitlements_not_hardcoded),
+        ("R-CI-6 未签名轨道不得校验 entitlements", check_unsigned_entitlements_not_fatal),
     ]
 
     total = 0
