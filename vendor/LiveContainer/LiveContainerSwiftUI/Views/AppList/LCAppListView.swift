@@ -954,12 +954,8 @@ struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
                     try fm.removeItem(at: installUrl)
                 }
             } catch {
-                // 本仓适配 (v0.3.815): **清理源 IPA 失败不该弹错误**.
-                // 真机实测: 侧载环境下 Inbox 里的 IPA 常被系统或第三方（分享面板/文件 App）
-                // 持有 security-scoped 引用，removeItem 报 "未能移除 XXX.ipa"。
-                // 这是「清理临时文件」失败，安装本身已成功 —— 弹窗只会误导用户以为装失败。
-                // 上游在 App Store 分发环境下不易触发，侧载必然暴露。
-                print("[LC] 清理源 IPA 失败（忽略）: \(error.localizedDescription)")
+                errorInfo = error.localizedDescription
+                errorShow = true
             }
             return
         }

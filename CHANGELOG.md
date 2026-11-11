@@ -1,10 +1,3 @@
-## [0.3.815] - 2026-11-11
-
-- 修复.终止安装后弹「未能移除 "XXX.ipa"」: LC 安装成功后清理 `Documents/Inbox/<x>.ipa` 失败时
-  弹错误。侧载环境下该 IPA 常被系统/第三方持有 security-scoped 引用 → removeItem 失败。
-  这是清理临时文件失败，安装本身已成功，弹窗误导用户以为装失败。
-  改为只 print 不弹窗（镜像内改动，ADAPTERS #20）
-
 ## [0.3.814] - 2026-11-10
 
 - 修复.杀后台重进沙盒容器 App 列表消失: `LCPathBridge.hostContainerRoot` 还拼着 `SandboxApps`，
