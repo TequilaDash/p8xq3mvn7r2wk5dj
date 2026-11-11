@@ -1,3 +1,11 @@
+## [0.3.820] - 2026-11-11
+
+- 修复.CI 校验步静默 exit 1（run 42967765114，日志有 "liveprocess dir: LiveProcess.appex"
+  却在下一行直接失败、无 ::error:: 消息）:
+  `set -euo pipefail` + `unzip -l "$IPA" | grep -q ...` —— grep 命中即退出，
+  unzip 收到 SIGPIPE 返回非零，pipefail 让整个管道失败。
+  改为先 `unzip -l > /tmp/list` 再 grep。同类坑一并修 `SAPAssets` 校验（那里会误报「缺失」）
+
 ## [0.3.819] - 2026-11-11
 
 - 修复.CI 校验步拦死 BUILD SUCCEEDED（run 42959972028 / 42962604815）:

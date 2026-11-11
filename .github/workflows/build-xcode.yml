@@ -829,8 +829,12 @@ jobs:
           ls -la TequilaDash-*.ipa
           for IPA in TequilaDash-*.ipa; do
             echo "=== verify $IPA ==="
-            unzip -l "$IPA" | grep -E "SAPAssets/(CommerceKit|CoreFP)" || {
+            # 先落盘再 grep：`unzip -l | grep` 在 set -o pipefail 下会因 SIGPIPE
+            # 让管道返回非零，误报「SAPAssets 缺失」（同类坑见下方 LiveProcess 段注释）。
+            unzip -l "$IPA" > "/tmp/sap_list_$$.txt"
+            grep -E "SAPAssets/(CommerceKit|CoreFP)" "/tmp/sap_list_$$.txt" || {
               echo "::error::SAPAssets 缺失于 $IPA —— Apple ID 登录会失败"; exit 1; }
+            rm -f "/tmp/sap_list_$$.txt"
           done
           # 隧道版必须真的带上含 NE 权限的 entitlements（主 App + 扩展各一份）
           if [ -f "${IPA_TUNNEL:-}" ]; then
@@ -853,9 +857,15 @@ jobs:
             # （对齐上游 LCJITLessDiagnoseView.swift:108 的硬编码
             #   `builtInPlugInsURL/LiveProcess.appex/LiveProcess`），
             # 旧版本仍是 TequilaDashLiveProcess。两种名都要能通过校验。
+            # ⚠️ 不能写 `unzip -l "$IPA" | grep -q ...`：
+            # grep -q 命中即退出，unzip 收到 SIGPIPE 返回非零，`set -o pipefail`
+            # 让整个管道失败 → if 判 false（run 42967765118 实测：日志有
+            # "liveprocess dir: LiveProcess.appex" 却在下一行直接 exit 1，无 ::error::）。
+            # 先落盘再 grep，避免管道语义。
+            unzip -l "$IPA" > /tmp/ipa_list.txt
             LP_DIR=""
             for CAND in LiveProcess TequilaDashLiveProcess; do
-              if unzip -l "$IPA" | grep -q "PlugIns/$CAND.appex/Info.plist"; then
+              if grep -q "PlugIns/$CAND.appex/Info.plist" /tmp/ipa_list.txt; then
                 LP_DIR="$CAND"; break
               fi
             done
@@ -873,7 +883,7 @@ jobs:
             # 不随 PRODUCT_NAME 变。两种都接受，避免再次因改名而误判（v0.3.819 实测）。
             ENT_OK=0
             for ENT in "$LP_DIR.entitlements" "TequilaDashLiveProcess.entitlements"; do
-              if unzip -l "$IPA" | grep -q "PlugIns/$LP_DIR.appex/$ENT"; then ENT_OK=1; break; fi
+              if grep -q "PlugIns/$LP_DIR.appex/$ENT" /tmp/ipa_list.txt; then ENT_OK=1; break; fi
             done
             if [ "$ENT_OK" != "1" ]; then
               echo "::error::$IPA 缺 PlugIns/$LP_DIR.appex/*.entitlements（查了 $LP_DIR 与 TequilaDashLiveProcess）"; exit 1
