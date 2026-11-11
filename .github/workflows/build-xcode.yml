@@ -879,14 +879,14 @@ jobs:
             if [ "$LPV" != "$APPCV" ]; then
               echo "::error::$IPA LiveProcess CFBundleVersion=$LPV != 主 App CFBundleVersion=$APPCV（扩展与主 App 版本必须一致）"; exit 1
             fi
-            # entitlements 的文件名是**源文件名**（TequilaDashLiveProcess.entitlements），
-            # 不随 PRODUCT_NAME 变。两种都接受，避免再次因改名而误判（v0.3.819 实测）。
-            ENT_OK=0
-            for ENT in "$LP_DIR.entitlements" "TequilaDashLiveProcess.entitlements"; do
-              if grep -q "PlugIns/$LP_DIR.appex/$ENT" /tmp/ipa_list.txt; then ENT_OK=1; break; fi
-            done
-            if [ "$ENT_OK" != "1" ]; then
-              echo "::error::$IPA 缺 PlugIns/$LP_DIR.appex/*.entitlements（查了 $LP_DIR 与 TequilaDashLiveProcess）"; exit 1
+            # entitlements 的文件名由**源文件名**决定（当前是 TequilaDashLiveProcess.entitlements），
+            # 不随 PRODUCT_NAME 变，也可能被签名工具改名。这里只要求
+            # `PlugIns/<实际appex目录>/*.entitlements` 存在，不锁死文件名 ——
+            # 前几轮就是因为锁死具体名字而连续失败（run 42966013181 / 42970095124）。
+            if ! grep -qE "PlugIns/$LP_DIR\.appex/[^/]+\.entitlements" /tmp/ipa_list.txt; then
+              echo "::error::$IPA 缺 PlugIns/$LP_DIR.appex/*.entitlements"; 
+              grep -E "PlugIns/$LP_DIR\.appex/" /tmp/ipa_list.txt | head -5 || true
+              exit 1
             fi
           done
           echo "liveprocess appex OK (both ipas: present + build-version + entitlements)"
