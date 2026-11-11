@@ -354,8 +354,12 @@ jobs:
             rust/idevice-ffi/target
             openssl-build/libcrypto.a
             openssl-build/include
-          key: ${{ runner.os }}-cargo-${{ hashFiles('rust/idevice-ffi/Cargo.lock') }}
+          # v2 (2026-11-11): 附带缓存的 openssl-build/libcrypto.a 从「无 no-module」
+          # 换成「有 no-module」（legacy provider 内置）。旧缓存里的 libcrypto.a 没有
+          # legacy 内置 → PKCS12 老格式解析失败。改 key 让缓存失效重建。
+          key: ${{ runner.os }}-cargo-v2-${{ hashFiles('rust/idevice-ffi/Cargo.lock') }}
           restore-keys: |
+            ${{ runner.os }}-cargo-v2-
             ${{ runner.os }}-cargo-
           scope: tequiladash-build-cache
 
@@ -533,7 +537,12 @@ jobs:
           export CROSS_TOP="$(dirname "$(dirname "$(xcrun -sdk iphoneos -show-sdk-path)")")"
           export CROSS_SDK="$(basename "$(xcrun -sdk iphoneos -show-sdk-path)")"
           export CROSS_COMPILE=""
-          ./Configure iphoneos-cross no-asm no-shared no-tests no-docs -DL_ENDIAN
+          # no-module：把 legacy/default 等 provider **内置**进 libcrypto（静态库）。
+          # 不加它时 OSSL_PROVIDER_load(NULL,"legacy") 找不到模块 → PKCS12 老格式
+          # （d2i_PKCS12_bio / PKCS12_parse）解析失败 → 导入普通证书报「验证证书失败」
+          # 而原版 LC 用动态 OpenSSL.xcframework 能成功（owner 2026-11-11 真机对比）。
+          # 这是 OpenSSL 3.x 静态链接已知问题（issue #16455 / #24944）。
+          ./Configure iphoneos-cross no-asm no-shared no-tests no-docs no-module -DL_ENDIAN
           make -j"$(sysctl -n hw.ncpu)" build_libs
           cp libcrypto.a ../libcrypto.a
           mkdir -p ../include

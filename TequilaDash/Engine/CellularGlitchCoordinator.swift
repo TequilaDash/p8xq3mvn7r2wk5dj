@@ -111,9 +111,9 @@ final class CellularGlitchCoordinator: ObservableObject, @unchecked Sendable {
                 // 后续 kickPassiveGate 被 `contains` 短路，卡点弹窗再也不出现，
                 // 只剩 TunnelGate.guardReady() 的「隧道未就绪」弹窗
                 // （owner 2026-11-11 真机复现：「蜂窝下失败一次后不再弹卡点」）.
-                self.passiveKickedLock.lock()
+                self.passiveKickLock.lock()
                 self.passiveKickedLabels.remove(label)
-                self.passiveKickedLock.unlock()
+                self.passiveKickLock.unlock()
             }
         }
     }

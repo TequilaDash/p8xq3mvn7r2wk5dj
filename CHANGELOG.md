@@ -1,5 +1,26 @@
 ## [0.3.831] - 2026-11-11
 
+### 修复（导入普通证书报「验证证书失败」，原版 LC 能成功）
+- 根因：OpenSSL 3.x 静态库。本仓 CI 用 `no-shared` 编 libcrypto.a，此时 legacy provider
+  仍是**独立模块**（legacy.so），但 CI 只 `cp libcrypto.a` 没带模块 → App 里没有 legacy
+  模块文件 → `OSSL_PROVIDER_load(NULL,"legacy")` 找不到 → PKCS12 老格式解析
+  （d2i_PKCS12_bio / PKCS12_parse）失败。上游用动态 OpenSSL.xcframework（legacy 独立 .so
+  动态加载成功）。
+- 修法：Configure 加 `no-module`，把 legacy/default provider **内置**进 libcrypto.a，
+  `OSSL_PROVIDER_load` 从内置注册表找到。缓存 key 加 `-v2` 让旧缓存失效重建。
+- 这是 OpenSSL 3.x 静态链接已知问题（issue #16455 / #24944）。
+
+### 修复（蜂窝卡点弹窗失败一次后不再出现）
+- `CellularGlitchCoordinator.passiveKickedLabels` 只 insert 从不 remove，第一次卡点失败后
+  label 永久留存 → 后续 kickPassiveGate 被短路 → 卡点弹窗再不出现。
+- 修法：`run(label:action:)` 卡点链结束（成败都算）后移除该 label。
+
+### 诊断（签名验签失败打印内核原因）
+- `TDLiveProcess/LC/LCMachOUtils.m checkCodeSignature`：F_ADDFILESIGS_RETURN /
+  F_CHECK_LV 失败时打印 errno + 内核 messageBuffer（此前静默丢弃）。
+
+## [0.3.831] - 2026-11-11
+
 ### 修复（蜂窝下卡点弹窗失败一次后不再出现）
 - `CellularGlitchCoordinator.passiveKickedLabels` 只 insert 从不 remove：
   第一次卡点失败后该 label 永久留存 → 后续 kickPassiveGate 被短路 → 卡点弹窗再不出现，
