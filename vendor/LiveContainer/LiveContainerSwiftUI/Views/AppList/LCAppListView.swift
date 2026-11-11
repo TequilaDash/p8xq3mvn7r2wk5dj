@@ -31,6 +31,17 @@ class SearchContext: ObservableObject {
         $query
             .debounce(for: .seconds(0.2), scheduler: DispatchQueue.main)
             .sink { [weak self] value in
+                // 本仓适配 (v0.3.816): 清空 query（点搜索栏的 X 取消）时**不走 isTyping 副作用**。
+                //
+                // 真机实测：直接点 X 会重新载入列表；先点键盘「完成」再点 X 不会。
+                // 原因：`.searchable` 把 query 置 "" 后，本 sink 仍置 `isTyping = true`
+                // → 视图重算 → SwiftUI 观察到搜索状态变化 → 重新激活搜索框。
+                // 清空是「取消」的终态，不该再产生任何「正在输入」信号。
+                guard !value.isEmpty else {
+                    self?.isTyping = false
+                    self?.debouncedQuery = ""
+                    return
+                }
                 self?.isTyping = true
                 self?.debouncedQuery = value
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {

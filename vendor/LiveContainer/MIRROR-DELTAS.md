@@ -13,8 +13,9 @@
 | M1 | `LiveContainerSwiftUI/Views/AppList/LCAppListView.swift` | `:12`（`class SearchContext`） | 加 `static let shared` | `@ObservedObject` 的默认值在视图重建时重新求值 → 新 `SearchContext` → `query` 归零 → SwiftUI `.searchable` 重新激活搜索框 | v0.3.809 | ✅ 2026-11-11 owner 实测「修复好了」 |
 | M1b | 同上 | `:86`（`LCAppListView.searchContext`） | `= SearchContext()` → `= .shared` | 同上 | v0.3.809 | ✅ 同上 |
 | M1c | `LiveContainerSwiftUI/Views/LCAltStoreSourcesView.swift` | `:487` | `= SearchContext()` → `= .shared` | 同上 | v0.3.809 | ✅ 同上 |
+| M1d | `LiveContainerSwiftUI/Views/AppList/LCAppListView.swift` | `:31-48`（`SearchContext.init` 的 debounce sink） | `value.isEmpty` 时提前 `return`，不置 `isTyping = true` | 点搜索栏 X 取消后，sink 仍置 `isTyping` → 视图重算 → `.searchable` 重新激活搜索框（真机实测：先点键盘「完成」再点 X 不会复现） | v0.3.816 | ⏳ 待真机 |
 
-**三行改动属于同一处修复（M1），必须同时应用，否则共享实例不生效。**
+**M1 / M1b / M1c / M1d 属于同一处修复，必须同时应用。**
 
 ## 上游同步时怎么处理
 

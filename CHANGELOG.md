@@ -1,3 +1,11 @@
+## [0.3.817] - 2026-11-11
+
+- 修复.点搜索栏的 X 取消后列表重新载入（真机实测：先点键盘「完成」再点 X 不复现）:
+  `SearchContext.init` 的 debounce sink 在 `query` 被置空时仍置 `isTyping = true`
+  → 视图重算 → SwiftUI `.searchable` 观察到自己被改 → 重新激活搜索框。
+  清空是「取消」的终态，不该再产生「正在输入」信号 → `value.isEmpty` 时提前 return。
+  登记为 MIRROR-DELTAS M1d（与 M1/M1b/M1c 同一处修复）
+
 ## [0.3.816] - 2026-11-11
 
 - 修复.免 JIT 诊断页报「LiveProcess is not installed.」（真机截图实测）:
