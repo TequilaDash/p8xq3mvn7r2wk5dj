@@ -284,19 +284,22 @@ def check_extensionkit_lands_in_plugins(root):
     if not has_extkit:
         return problems
 
-    # 必须有把 Extensions/ 挪到 PlugIns/ 的步骤 —— 在 postBuild 或 CI 打包步都算。
-    # **不能在 postBuild 挪**：Xcode 随后还要跑 ValidateEmbeddedBinary，
-    # 那时 Extensions/*.appex 已不在，会报
-    #   "error: Couldn't load Info dictionary for .../Extensions/xxx.appex"
-    # （run 42995072992 step 26 实证）。正确位置是「Package unsigned IPA」步骤。
-    wf = read(os.path.join(root, ".github", "workflows", "build-xcode.yml")) or ""
-    moved = (("Extensions" in wf and "PlugIns" in wf and "relocated" in wf)
-             or ("Relocate extensionkit appex" in proj))
-    if not moved:
+    # 正确做法：在**主 App 的 dependencies** 里给该扩展加 `copy: { destination: plugins }`。
+    # xcodegen 源码 PBXProjGenerator.swift:772-774 对 extensionkit-extension 一律走
+    # "Embed ExtensionKit Extensions"（落 Extensions/），:767 的 `dependency.copyPhase`
+    # 是唯一覆盖手段；没有它就只能靠 CI 后处理，而 postBuild 移动会被
+    # ValidateEmbeddedBinary 拦住（run 42995072992 step 26 实证）。
+    # 只认 YAML 实际配置行，跳过注释（注释里也写着这个串，会误判）
+    has_copy_plugins = any(
+        line.strip() == "destination: plugins"
+        for line in proj.splitlines()
+        if not line.strip().startswith("#"))
+    if not has_copy_plugins:
         problems.append(
-            "R-LC-14 用了 extensionkit-extension 但没有把 Extensions/*.appex 挪到 PlugIns/ "
-            "（应在 CI 的 Package unsigned IPA 步骤做，不要在 postBuild 做——Xcode 随后"
-            "还要 ValidateEmbeddedBinary，会报 Couldn't load Info dictionary）")
+            "R-LC-14 用了 extensionkit-extension 但主 App dependencies 里没有 "
+            "`copy: { destination: plugins }` —— xcodegen 会把它放进 Extensions/，"
+            "而 isideload/SideStore 只扫 PlugIns/（sideload/bundle.rs:48-64），"
+            "扩展 ID 不会被改写 → 安装报 IXErrorDomain Code=8")
     return problems
 
 

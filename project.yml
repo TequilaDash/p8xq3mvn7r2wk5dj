@@ -43,8 +43,8 @@ settings:
     TD_HOST_BUNDLE_ID: com.tequila.dash
     PRODUCT_BUNDLE_IDENTIFIER: com.tequila.dash
     PRODUCT_NAME: TequilaDash
-    MARKETING_VERSION: "0.3.828"
-    CURRENT_PROJECT_VERSION: "1117"
+    MARKETING_VERSION: "0.3.829"
+    CURRENT_PROJECT_VERSION: "1118"
     # 注：这里**刻意不写** `SWIFT_VERSION` —— 实测顶层 `settings.base` 的它**不被 xcodegen 采纳**，
     # 真正生效的是下面 target 层那一份（当前 `"6.0"` = Swift 6 语言模式）。
     # 另注：**编译器版本 ≠ 语言模式** —— CI 用 Xcode 27 自带的 Swift 6.4 编译器，
@@ -177,8 +177,30 @@ targets:
       - target: ShareExtension
         embed: true
       # 快捷指令「Launch App」扩展（LC 上游同款）: 依赖 ShareExtension 已装 + 同一 app group.
+      #
+      # ⚠️ 必须显式指定 `copy.destination: plugins`（= PlugIns/），不能靠 target 类型自动落位。
+      #
+      # 原因（xcodegen 源码实证 PBXProjGenerator.swift:772-774 + :1245）:
+      #   `if dependencyTarget.type == .extensionKitExtension { extensionKitExtensions.append(...) }`
+      #   → 该类型一律走 "Embed ExtensionKit Extensions" 阶段，落 `$(EXTENSIONS_FOLDER_PATH)` = Extensions/
+      #   xcodegen 没有开关能改这个默认，`copy` 是唯一覆盖手段（:767 `if let copyPhase = dependency.copyPhase`
+      #   —— custom copy takes precedence）。
+      #
+      # 为什么必须在 PlugIns/（isideload 源码实证 sideload/bundle.rs:48-64）:
+      #   `let plug_ins_dir = bundle_path.join("PlugIns"); let app_extensions = if metadata(&plug_ins_dir).is_ok() { read_dir(...) } else { Vec::new() };`
+      #   → 它**只**扫 PlugIns/，Extensions/ 完全不看。
+      #   于是 update_bundle_id（application.rs:162-186）遍历不到该扩展 → 不改写它的 ID
+      #   → iOS 安装报 IXErrorDomain Code=8:
+      #     "bundle ID com.tequila.dash.LaunchAppExtension does not match required prefix
+      #      of com.tequila.dash.<TEAMID>. for parent"
+      #   （owner 2026-11-11 真机实证，SideStore 与 isideload 均失败）
+      #
+      # 上游 LC 能放进 PlugIns/ 是因为它**手写 pbxproj**，把该 .appex 挂到
+      # "Embed Foundation Extensions" 阶段（dstSubfolderSpec=13）；xcodegen 无此手工控制。
       - target: LaunchAppExtension
         embed: true
+        copy:
+          destination: plugins
     sources:
       # 模块原生 UI 源码（生成目录，见 TequilaDash/Modules/README.md）——
       # 由 Resources/Scripts/sync_bundled_modules.py 在 xcodegen **之前**从
@@ -414,8 +436,8 @@ targets:
         # 版本号三处同步（HARD-RULES 22）：主 App 的 settings.base 与 Resources/Info.plist 之外，
         # 扩展 target 是第三处 —— 原先这里停在 0.3.587/881（落后主 App 33 个版本），
         # 会让 .appex 的 CFBundleVersion 与主 App 不一致，iOS 安装/升级可拒或把扩展判过期。
-        MARKETING_VERSION: "0.3.828"
-        CURRENT_PROJECT_VERSION: "1117"
+        MARKETING_VERSION: "0.3.829"
+        CURRENT_PROJECT_VERSION: "1118"
         IPHONEOS_DEPLOYMENT_TARGET: "18.0"
         # 与主 target 同口径的 Swift 6 严格并发（详见主 target 的说明）.
         SWIFT_VERSION: "6.0"
@@ -460,8 +482,8 @@ targets:
         PRODUCT_NAME: LiveProcess
         # 版本号三处同步 (HARD-RULES 22): 与 Tunnel 同款纪律, 缺写则 .appex 的 CFBundleVersion 为空,
         # iOS 会因主 App 与扩展版本不一致拒装/判过期.
-        MARKETING_VERSION: "0.3.828"
-        CURRENT_PROJECT_VERSION: "1117"
+        MARKETING_VERSION: "0.3.829"
+        CURRENT_PROJECT_VERSION: "1118"
         IPHONEOS_DEPLOYMENT_TARGET: "18.0"
         SWIFT_VERSION: "6.0"
         SWIFT_STRICT_CONCURRENCY: complete
@@ -509,8 +531,8 @@ targets:
         DYLIB_CURRENT_VERSION: 1
         DYLIB_INSTALL_NAME_BASE: "@rpath"
         SKIP_INSTALL: "YES"
-        MARKETING_VERSION: "0.3.828"
-        CURRENT_PROJECT_VERSION: "1117"
+        MARKETING_VERSION: "0.3.829"
+        CURRENT_PROJECT_VERSION: "1118"
         IPHONEOS_DEPLOYMENT_TARGET: "18.0"
         CLANG_ENABLE_OBJC_ARC: "YES"
         CLANG_ENABLE_MODULES: "YES"
@@ -551,8 +573,8 @@ targets:
         DYLIB_CURRENT_VERSION: 1
         DYLIB_INSTALL_NAME_BASE: "@rpath"
         SKIP_INSTALL: "YES"
-        MARKETING_VERSION: "0.3.828"
-        CURRENT_PROJECT_VERSION: "1117"
+        MARKETING_VERSION: "0.3.829"
+        CURRENT_PROJECT_VERSION: "1118"
         IPHONEOS_DEPLOYMENT_TARGET: "15.0"
         # 顶层 settings 的 OTHER_LDFLAGS 含 $(DERIVED_FILE_DIR)/SAP/lib/libunicorn.a
         # (主 App 的 SAP 登录底座). 本 target 无 prepare.sap 脚本, 继承该键会在链接期
@@ -596,8 +618,8 @@ targets:
         
         SKIP_INSTALL: YES
         CODE_SIGN_ENTITLEMENTS: vendor/LiveContainer/ShareExtension/ShareExtension.entitlements
-        MARKETING_VERSION: "0.3.828"
-        CURRENT_PROJECT_VERSION: "1117"
+        MARKETING_VERSION: "0.3.829"
+        CURRENT_PROJECT_VERSION: "1118"
         IPHONEOS_DEPLOYMENT_TARGET: "16.0"
         SWIFT_VERSION: "5.0"
         SWIFT_OBJC_BRIDGING_HEADER: "$(SRCROOT)/vendor/LiveContainer/ShareExtension/ShareExtension-Bridging-Header.h"
@@ -658,8 +680,8 @@ targets:
         INFOPLIST_KEY_CFBundleDisplayName: LaunchAppExtension
         SKIP_INSTALL: YES
         CODE_SIGN_ENTITLEMENTS: vendor/LiveContainer/LaunchAppExtension/LaunchAppExtension.entitlements
-        MARKETING_VERSION: "0.3.828"
-        CURRENT_PROJECT_VERSION: "1117"
+        MARKETING_VERSION: "0.3.829"
+        CURRENT_PROJECT_VERSION: "1118"
         IPHONEOS_DEPLOYMENT_TARGET: "16.0"
         SWIFT_VERSION: "5.0"
         SWIFT_OBJC_BRIDGING_HEADER: "$(SRCROOT)/vendor/LiveContainer/LaunchAppExtension/LaunchAppExtension-Bridging-Header.h"
@@ -707,8 +729,8 @@ targets:
         PRODUCT_MODULE_NAME: LiveContainerSwiftUI
         PRODUCT_NAME: LiveContainerSwiftUI
         DEFINES_MODULE: "YES"
-        MARKETING_VERSION: "0.3.828"
-        CURRENT_PROJECT_VERSION: "1117"
+        MARKETING_VERSION: "0.3.829"
+        CURRENT_PROJECT_VERSION: "1118"
         IPHONEOS_DEPLOYMENT_TARGET: "18.0"
         # 上游用 SWIFT_VERSION 5.0 (pbxproj:1197/1240); 本仓主 target 是 6.0 complete,
         # framework 单独用 5.0 保持上游源码原样可编 (Swift 6 严格并发会炸上游 Swift 5 代码).

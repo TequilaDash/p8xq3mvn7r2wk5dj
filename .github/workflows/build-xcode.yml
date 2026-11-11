@@ -737,29 +737,14 @@ jobs:
           VERSION="$(grep -m1 '^[[:space:]]*MARKETING_VERSION:' project.yml | sed -E 's/.*"([0-9.]+)".*/\1/')"
           STD_IPA="TequilaDash-${VERSION}-xcode-unsigned.ipa"
           TUN_IPA="TequilaDash-Tunnel-${VERSION}-xcode-unsigned.ipa"
-          # ── extensionkit 扩展落位: Extensions/ -> PlugIns/ ──
-          # 侧载工具（SideStore/isideload）只扫描 PlugIns/ 里的扩展并级联改写 bundle id。
-          # xcodegen 把 extensionkit-extension 放 Extensions/，那里它看不见 →
-          # 扩展 id 保持编译期值，主 App 被改成 <id>.<TEAMID> → 前缀不匹配 → 安装被拒
-          # （IXErrorDomain Code=8，owner 2026-11-11 实测；上游官方 IPA 实测在 PlugIns/）。
-          #
-          # 必须在**这里**挪、不能在 postBuild 挪: postBuild 跑完 Xcode 还要执行
-          # ValidateEmbeddedBinary，那时找不到 Extensions/*.appex 会报
-          #   "error: Couldn't load Info dictionary for .../Extensions/LaunchAppExtension.appex"
-          # （run 42995072992 step 26 实证）。打包阶段 Xcode 已结束，安全。
+          # extensionkit 扩展的落位由 project.yml 的
+          # `copy: { destination: plugins }` 保证（xcodegen 官方的 Copy Files Phase 覆盖），
+          # 产物直接进 PlugIns/。这里只做校验，不做移动 —— 移动必须在 Xcode 侧完成，
+          # 否则 ValidateEmbeddedBinary 会报 Couldn't load Info dictionary.
           if [ -d "$APP/Extensions" ]; then
-            mkdir -p "$APP/PlugIns"
-            for appex in "$APP/Extensions"/*.appex; do
-              [ -d "$appex" ] || continue
-              name="$(basename "$appex")"
-              rm -rf "$APP/PlugIns/$name"
-              mv "$appex" "$APP/PlugIns/$name"
-              echo "relocated ${name} -> PlugIns/"
-            done
-            rmdir "$APP/Extensions" 2>/dev/null || true
-            echo "Extensions/ 已清空并删除"
-          else
-            echo "无 Extensions/ 目录（扩展都已在 PlugIns/）"
+            echo "::error::$APP 仍有 Extensions/ 目录 —— project.yml 的 copy.destination 未生效"
+            ls -la "$APP/Extensions"
+            exit 1
           fi
           echo "=== PlugIns 内容 ==="
           ls -1 "$APP/PlugIns" 2>/dev/null || echo "(空)"

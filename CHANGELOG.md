@@ -1,3 +1,17 @@
+## [0.3.829] - 2026-11-11
+
+### 修复（用上游同款机制落位，不再靠 CI 后处理）
+- 从 isideload 源码确证：`sideload/bundle.rs:48-64` **只扫描 `PlugIns/`**，
+  `Extensions/` 完全不看 → 该扩展的 bundle ID 不会被改写 → 安装报
+  `IXErrorDomain Code=8 "does not match required prefix ... for parent"`。
+- 从 xcodegen 源码确证：`PBXProjGenerator.swift:772-774` 对 `extensionkit-extension`
+  一律落 `Extensions/`，无开关；但 `:767` 的 `dependency.copyPhase` 可覆盖。
+- 修法：主 App 的 `LaunchAppExtension` 依赖加 `copy: { destination: plugins }`
+  —— xcodegen 官方的 Copy Files Phase 覆盖，产物直接进 `PlugIns/`。
+  上游 LC 能放进 PlugIns/ 是因为手写 pbxproj 挂到「Embed Foundation Extensions」阶段。
+- CI 的「Package unsigned IPA」步骤相应从「移动」改为「校验」：
+  若仍有 `Extensions/` 目录直接报错，说明 copy.destination 未生效。
+
 ## [0.3.828] - 2026-11-11
 
 ### 修复（0.3.827 的落位修复位置错了，CI 编译失败）
