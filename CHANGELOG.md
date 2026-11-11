@@ -1,3 +1,15 @@
+## [0.3.831] - 2026-11-11
+
+### 修复（蜂窝下卡点弹窗失败一次后不再出现）
+- `CellularGlitchCoordinator.passiveKickedLabels` 只 insert 从不 remove：
+  第一次卡点失败后，该 label 永久留在集合里，后续 `kickPassiveGate` 被
+  `guard !passiveKickedLabels.contains(label)` 短路 → 卡点弹窗再也不出现，
+  只剩 `TunnelGate.guardReady()` 的「隧道未就绪」弹窗。
+  owner 2026-11-11 真机复现：「蜂窝网络下如果失败一次，好像后续都不会弹出卡点弹窗」。
+- 修法：`run(label:action:)` 的卡点链结束（成败都算）后，从 `passiveKickedLabels`
+  移除该 label，让下一次能重新触发卡点。
+- 不破坏「同页反复重绘不叠加」：`run` 里 `guard runTask == nil` 已防叠加。
+
 ## [0.3.830] - 2026-11-11
 
 ### 修复（真机崩溃：多任务启动时 addObject:nil）

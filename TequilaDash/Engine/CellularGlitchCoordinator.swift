@@ -104,7 +104,17 @@ final class CellularGlitchCoordinator: ObservableObject, @unchecked Sendable {
             guard let self else { return }
             do { _ = try await self.glitchFlow(label: label, epoch: myEpoch, action: action) }
             catch { /* 弹窗已呈现，fire-and-forget 不再外抛 */ }
-            await MainActor.run { self.runTask = nil }
+            await MainActor.run {
+                self.runTask = nil
+                // 卡点链结束（成败都算）即释放该 label 的「已踢」标记 ——
+                // 否则第一次失败后，passiveKickedLabels 永久记住它，
+                // 后续 kickPassiveGate 被 `contains` 短路，卡点弹窗再也不出现，
+                // 只剩 TunnelGate.guardReady() 的「隧道未就绪」弹窗
+                // （owner 2026-11-11 真机复现：「蜂窝下失败一次后不再弹卡点」）.
+                self.passiveKickedLock.lock()
+                self.passiveKickedLabels.remove(label)
+                self.passiveKickedLock.unlock()
+            }
         }
     }
 
