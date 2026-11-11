@@ -1,3 +1,11 @@
+## [0.3.819] - 2026-11-11
+
+- 修复.CI 校验步拦死 BUILD SUCCEEDED（run 42959972028 / 42962604815）:
+  `build-xcode.yml:852` 硬编码 `PlugIns/TequilaDashLiveProcess.appex`，
+  而 v0.3.816 把 `PRODUCT_NAME` 改成 `LiveProcess`（对齐上游硬编码）→ 找不到 → step 32 失败。
+  改为两种产物名都接受（`for CAND in LiveProcess TequilaDashLiveProcess`），
+  并同步 entitlements 路径
+
 ## [0.3.818] - 2026-11-11
 
 - 修复.杀后台后蜂窝下彻底不可用、连卡点弹窗都不出现（真机实测）:

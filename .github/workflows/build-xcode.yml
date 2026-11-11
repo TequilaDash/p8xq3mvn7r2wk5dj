@@ -849,14 +849,28 @@ jobs:
           APP="$(find build -name 'TequilaDash.app' -type d | head -n1)"
           APPCV="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP/Info.plist" 2>/dev/null || echo '')"
           for IPA in TequilaDash-*.ipa; do
-            unzip -p "$IPA" 'Payload/TequilaDash.app/PlugIns/TequilaDashLiveProcess.appex/Info.plist' > /tmp/lp_info.plist 2>/dev/null \
-              || { echo "::error::$IPA 缺 PlugIns/TequilaDashLiveProcess.appex"; exit 1; }
+            # 产物名两种都接受：v0.3.818 起 PRODUCT_NAME 改成 `LiveProcess`
+            # （对齐上游 LCJITLessDiagnoseView.swift:108 的硬编码
+            #   `builtInPlugInsURL/LiveProcess.appex/LiveProcess`），
+            # 旧版本仍是 TequilaDashLiveProcess。两种名都要能通过校验。
+            LP_DIR=""
+            for CAND in LiveProcess TequilaDashLiveProcess; do
+              if unzip -l "$IPA" | grep -q "PlugIns/$CAND.appex/Info.plist"; then
+                LP_DIR="$CAND"; break
+              fi
+            done
+            if [ -z "$LP_DIR" ]; then
+              echo "::error::$IPA 缺 PlugIns/{LiveProcess,TequilaDashLiveProcess}.appex"; exit 1
+            fi
+            echo "  liveprocess dir: $LP_DIR.appex"
+            unzip -p "$IPA" "Payload/TequilaDash.app/PlugIns/$LP_DIR.appex/Info.plist" > /tmp/lp_info.plist 2>/dev/null \
+              || { echo "::error::$IPA 读不到 $LP_DIR.appex/Info.plist"; exit 1; }
             LPV="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' /tmp/lp_info.plist 2>/dev/null || echo '')"
             if [ "$LPV" != "$APPCV" ]; then
               echo "::error::$IPA LiveProcess CFBundleVersion=$LPV != 主 App CFBundleVersion=$APPCV（扩展与主 App 版本必须一致）"; exit 1
             fi
-            unzip -l "$IPA" | grep -q 'PlugIns/TequilaDashLiveProcess.appex/TequilaDashLiveProcess.entitlements' \
-              || { echo "::error::$IPA LiveProcess entitlements 未随包携带"; exit 1; }
+            unzip -l "$IPA" | grep -q "PlugIns/$LP_DIR.appex/$LP_DIR.entitlements" \
+              || { echo "::error::$IPA $LP_DIR.entitlements 未随包携带"; exit 1; }
           done
           echo "liveprocess appex OK (both ipas: present + build-version + entitlements)"
 
