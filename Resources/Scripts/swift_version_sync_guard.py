@@ -61,6 +61,25 @@ def parse_plist_versions(plist_text):
     return grab("CFBundleShortVersionString"), grab("CFBundleVersion")
 
 
+def check_changelog_matches(root, project_version):
+    """CHANGELOG 顶部版本必须与 project.yml 一致（R-GIT-1 的机器检查）."""
+    import re as _re
+    path = os.path.join(root, "CHANGELOG.md")
+    if not os.path.exists(path):
+        return []
+    with open(path, "r", encoding="utf-8", errors="replace") as fh:
+        for line in fh:
+            m = _re.match(r"##\s*\[([0-9.]+)\]", line)
+            if not m:
+                continue
+            top = m.group(1)
+            if top != project_version:
+                return ["CHANGELOG 顶部版本 %s != project.yml %s（revert 可能吃掉了 bump）"
+                        % (top, project_version)]
+            return []
+    return []
+
+
 def main():
     root = sys.argv[1] if len(sys.argv) > 1 else "."
     proj = os.path.join(root, "project.yml")
@@ -98,6 +117,11 @@ def main():
     if top_build and plist_build and top_build != plist_build:
         hits.append("构建号不一致：project.yml 顶层 CURRENT_PROJECT_VERSION=%s / Info.plist CFBundleVersion=%s"
                     % (top_build, plist_build))
+
+    # ---- V4：CHANGELOG 顶部版本（R-GIT-1）----
+    if top_marketing:
+        for msg in check_changelog_matches(root, top_marketing):
+            hits.append("V4 " + msg)
 
     # ---- V3：每个 target 自己那份 ----
     # project.yml 用 'targets:' 下一层的两空格缩进 target 名，其下 'settings:\n      base:' 里写版本。
