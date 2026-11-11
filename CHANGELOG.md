@@ -1,3 +1,24 @@
+## [0.3.826] - 2026-11-11
+
+### 修复（owner 真机报错：SideStore/isideload 均安装失败）
+- **扩展 bundle ID 前缀不匹配** → iOS 拒绝安装：
+  `IXErrorDomain Code=8 "Attempted to set app extension placeholder promise with bundle ID
+  com.tequila.dash.LaunchAppExtension that does not match required prefix of
+  com.tequila.dash.U82B5LN29B. for parent"`
+  根因：主 App `Info.plist` 写死 `com.tequila.dash`，扩展写死 `com.tequila.dash.LaunchAppExtension`；
+  而 SideStore 安装时把主 App 改成 `com.tequila.dash.<TEAMID>`，扩展没跟着变。
+  修法（对齐上游官方 IPA 实证 `com.kdt.livecontainer.LaunchAppExtension` 的命名规律）：
+  ① 主 App `CFBundleIdentifier` 改为 `$(PRODUCT_BUNDLE_IDENTIFIER)`
+  ② 项目级新增 `TD_HOST_BUNDLE_ID: com.tequila.dash` 作单一事实来源
+  ③ 所有扩展的 ID 改为 `$(TD_HOST_BUNDLE_ID).<扩展名>`（与上游同名同大小写）
+
+### 修复（owner 真机报错：keychain-access-groups 正确 = 否）
+- entitlements 里 128 项 keychain 组原本用 `$(AppIdentifierPrefix)`，
+  但本仓出未签名 IPA，由侧载工具在安装时施加 —— 实测侧载工具**展开**
+  `$(DEVELOPMENT_TEAM)`（截图「包名」「团队名」正确）却**不展开** `$(AppIdentifierPrefix)`
+  → 产物留字面量 → `LCJITLessDiagnoseView:134-145` 比对必失败 → 免 JIT 前置检查过不去。
+  修法：`$(AppIdentifierPrefix)` → `$(DEVELOPMENT_TEAM).`（主 App 128 处 + LiveProcess 128 处）
+
 ## [0.3.825] - 2026-11-11
 
 ### 删除（owner 要求：彻底移除自创沙盒容器代码）

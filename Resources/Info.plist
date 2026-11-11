@@ -129,8 +129,13 @@
 			</array>
 		</dict>
 	</array>
+	<!-- 必须用变量，不能写死：SideStore/AltStore 安装时会把主 App 改成
+	     `com.tequila.dash.<TEAMID>`，所有扩展的 bundle ID 必须与它同前缀
+	     （`<父ID>.LaunchAppExtension` 等），否则 iOS 报 IXErrorDomain Code=8
+	     "does not match required prefix of ... for parent"（owner 2026-11-11 实测）。
+	     上游 project.pbxproj:1619 同款写法：`$(PRODUCT_BUNDLE_IDENTIFIER)`。 -->
 	<key>CFBundleIdentifier</key>
-	<string>com.tequila.dash</string>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundlePackageType</key>
@@ -142,9 +147,9 @@
 		<string>iPhoneOS</string>
 	</array>
 	<key>CFBundleShortVersionString</key>
-	<string>0.3.825</string>
+	<string>0.3.826</string>
 	<key>CFBundleVersion</key>
-	<string>1114</string>
+	<string>1115</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>ITSAppUsesNonExemptEncryption</key>
