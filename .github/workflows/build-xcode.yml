@@ -884,8 +884,13 @@ jobs:
             # `PlugIns/<实际appex目录>/*.entitlements` 存在，不锁死文件名 ——
             # 前几轮就是因为锁死具体名字而连续失败（run 42966013181 / 42970095124）。
             if ! grep -qE "PlugIns/$LP_DIR\.appex/[^/]+\.entitlements" /tmp/ipa_list.txt; then
-              echo "::error::$IPA 缺 PlugIns/$LP_DIR.appex/*.entitlements"; 
-              grep -E "PlugIns/$LP_DIR\.appex/" /tmp/ipa_list.txt | head -5 || true
+              echo "::error::$IPA 缺 PlugIns/$LP_DIR.appex/*.entitlements"
+              echo "--- 该 appex 目录下实际内容（前 10 行）---"
+              grep -E "PlugIns/$LP_DIR\.appex/" /tmp/ipa_list.txt > /tmp/lp_actual.txt || true
+              sed -n '1,10p' /tmp/lp_actual.txt
+              echo "--- 整个 PlugIns 目录（前 20 行）---"
+              grep "PlugIns/" /tmp/ipa_list.txt > /tmp/plugins_all.txt || true
+              sed -n '1,20p' /tmp/plugins_all.txt
               exit 1
             fi
           done
