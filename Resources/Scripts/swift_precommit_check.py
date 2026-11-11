@@ -82,6 +82,7 @@ CHECKS = [
     ("Date 比较符防复发", "swift_date_compare_guard.py", False),
     ("LiveContainer 镜像完整性", "lc_mirror_guard.py", False),
     ("LiveContainer 镜像改动管控", "lc_mirror_delta_guard.py", False),
+    ("LC 适配规则防复发", "lc_adaptation_guard.py", False),
 ]
 
 
