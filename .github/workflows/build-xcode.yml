@@ -354,6 +354,7 @@ jobs:
             rust/idevice-ffi/target
             openssl-build/libcrypto.a
             openssl-build/include
+            openssl-build/.nomodule
           # v2 (2026-11-11): 附带缓存的 openssl-build/libcrypto.a 从「无 no-module」
           # 换成「有 no-module」（legacy provider 内置）。旧缓存里的 libcrypto.a 没有
           # legacy 内置 → PKCS12 老格式解析失败。改 key 让缓存失效重建。
@@ -527,9 +528,14 @@ jobs:
         # v0.3.101：ZSign ad-hoc 重签名依赖 libcrypto。iphoneos-cross 无 asm 静态库。
         run: |
           set -euo pipefail
-          if [ -f openssl-build/libcrypto.a ]; then
-            echo "OpenSSL cache hit"; exit 0
+          # 缓存命中判定必须同时检查「是否含 no-module」标记 —— 旧缓存里的
+          # libcrypto.a 是「无 no-module」的（legacy provider 未内置），直接复用会
+          # 让 PKCS12 老格式解析继续失败（导入普通证书报「验证证书失败」）。
+          # 用标记文件 openssl-build/.nomodule 记录构建特征，缺失即强制重建。
+          if [ -f openssl-build/libcrypto.a ] && [ -f openssl-build/.nomodule ]; then
+            echo "OpenSSL cache hit (with no-module)"; exit 0
           fi
+          rm -rf openssl-build
           mkdir -p openssl-build && cd openssl-build
           curl -fsSLO https://www.openssl.org/source/openssl-3.3.2.tar.gz
           tar xf openssl-3.3.2.tar.gz
@@ -550,7 +556,10 @@ jobs:
           cd ..
           rm -rf openssl-3.3.2 openssl-3.3.2.tar.gz
           ls -la libcrypto.a
-          echo "=== OpenSSL built ==="
+          # 标记文件：记录本产物「含 no-module」。缓存命中判定据此判断能否复用，
+          # 避免旧缓存（无 no-module）被误复用。
+          touch .nomodule
+          echo "=== OpenSSL built (no-module) ==="
 
       - name: Restore AirliftFFI product (artifact, cross-run)
         # AirLift（AirTraffic 沙盒逃逸）的 Rust 库**不能** vendor 预编译产物：
