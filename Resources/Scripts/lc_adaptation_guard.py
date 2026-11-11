@@ -172,6 +172,44 @@ def check_product_name_references(root):
     return problems
 
 
+def check_pipefail_grep_q(root):
+    """R-CI-5: `set -o pipefail` 的 step 里禁止 `cmd | grep -q`（SIGPIPE 静默失败）."""
+    problems = []
+    wf_path = os.path.join(root, ".github", "workflows", "build-xcode.yml")
+    wf = read(wf_path)
+    if not wf:
+        return problems
+
+    lines = wf.splitlines()
+    in_pipefail = False
+    for no, line in enumerate(lines, 1):
+        if "pipefail" in line:
+            in_pipefail = True
+        # step 边界（`- name:` 或 `run: |`）重置判断
+        if line.strip().startswith("- name:"):
+            in_pipefail = "pipefail" in line
+        if not in_pipefail:
+            continue
+        stripped = line.strip()
+        # 只报**真正危险**的形态：`| grep -q` 直接作为 `if`/`while` 的条件。
+        # 不报：
+        #   · `find ... | head -n1`  —— head 正常读完即退出，不产生 SIGPIPE 误判
+        #   · `... | grep -q X || { echo ...; exit 1; }` —— 有 || 兜底，失败会走兜底
+        #   · 注释行
+        if stripped.startswith("#"):
+            continue
+        if not re.search(r"\|\s*grep\s+-[a-zA-Z]*q", stripped):
+            continue
+        # 危险：出现在 if / while 条件里（没有 || 兜底）
+        is_condition = bool(re.match(r"^(if|while|elif)\b", stripped))
+        has_fallback = "||" in stripped
+        if is_condition and not has_fallback:
+            problems.append(
+                "R-CI-5 build-xcode.yml:%d 在 pipefail 下把 `| grep -q` 用作 if 条件"
+                "（SIGPIPE 会让条件误判 false，且无 ::error:: 输出）: %s" % (no, stripped[:70]))
+    return problems
+
+
 def main():
     root = sys.argv[1] if len(sys.argv) > 1 else "."
     if not os.path.isdir(os.path.join(root, "vendor", "LiveContainer")):
@@ -185,6 +223,7 @@ def main():
         ("R-LC-7 xcassets 不得直打包 vendor", check_xcassets_from_vendor),
         ("R-LC-8 容器根一致性", check_container_root_consistency),
         ("R-CI-2 产物名与 CI 硬编码一致", check_product_name_references),
+        ("R-CI-5 pipefail 下禁止 grep -q", check_pipefail_grep_q),
     ]
 
     total = 0
