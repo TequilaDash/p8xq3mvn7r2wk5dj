@@ -124,6 +124,54 @@ def check_container_root_consistency(root):
     return problems
 
 
+def check_product_name_references(root):
+    """R-CI-2: 产物名与 CI/脚本里的硬编码引用必须一致（或显式兼容两种）."""
+    problems = []
+    yml = read(os.path.join(root, "project.yml"))
+
+    # 收集各 app-extension target 的 PRODUCT_NAME
+    product_names = {}
+    for m in re.finditer(
+            r"^  ([A-Za-z][\w-]*):\n(.*?)(?=^  [A-Za-z][\w-]*:\n|\Z)", yml, re.S | re.M):
+        target, block = m.group(1), m.group(2)
+        if "type: app-extension" not in block and "type: extensionkit-extension" not in block:
+            continue
+        pm = re.search(r"PRODUCT_NAME:\s*([\w.-]+)", block)
+        if pm:
+            product_names[target] = pm.group(1)
+
+    # 检查 CI workflow 里对 appex 路径的硬编码
+    wf = read(os.path.join(root, ".github", "workflows", "build-xcode.yml"))
+    if not wf:
+        return problems
+
+    # 反向检查：workflow 里硬编码的每个 `<X>.appex` 字面量，
+    # 必须能在某个 target 的 PRODUCT_NAME 里找到，或属于本仓显式兼容的历史名。
+    known = set(product_names.values())
+    # 本仓主 App 的两个扩展：LiveProcess 在 v0.3.818 改成上游名，旧名保留兼容；
+    # Tunnel 是隧道扩展，不参与本轮命名对齐。两者都算合法引用。
+    legacy_ok = {"LiveProcess", "TequilaDashLiveProcess", "TequilaDashTunnel",
+                 "ShareExtension", "LaunchAppExtension"}
+
+    # ① 字面量 `<X>.appex`
+    refs = set(re.findall(r"(?<![$\w{])([A-Za-z][\w]*)\.appex", wf))
+    # ② `for CAND in A B; do` 这种「候选名单」——本仓实际写法，
+    #    名字不带 .appex，最容易漏检（v0.3.816 的 bug 就藏在这里）。
+    for m in re.finditer(r"for\s+\w+\s+in\s+([^;\n]+);", wf):
+        for tok in m.group(1).split():
+            tok = tok.strip('"\'')
+            if re.fullmatch(r"[A-Za-z][\w]*", tok):
+                refs.add(tok)
+
+    for ref in sorted(refs):
+        if ref in known or ref in legacy_ok:
+            continue
+        problems.append(
+            "R-CI-2 build-xcode.yml 引用了 `%s`（.appex 字面量或候选名单成员），"
+            "但没有任何 target 的 PRODUCT_NAME 是它（过期引用，校验步会找不到产物）" % ref)
+    return problems
+
+
 def main():
     root = sys.argv[1] if len(sys.argv) > 1 else "."
     if not os.path.isdir(os.path.join(root, "vendor", "LiveContainer")):
@@ -136,6 +184,7 @@ def main():
         ("R-LC-6 证书 suite 成对", check_certificate_suite_pairing),
         ("R-LC-7 xcassets 不得直打包 vendor", check_xcassets_from_vendor),
         ("R-LC-8 容器根一致性", check_container_root_consistency),
+        ("R-CI-2 产物名与 CI 硬编码一致", check_product_name_references),
     ]
 
     total = 0
