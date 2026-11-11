@@ -1,3 +1,15 @@
+## [0.3.827] - 2026-11-11
+
+### 修复（安装失败的真根因：扩展落位）
+- `LaunchAppExtension` 是 `extensionkit-extension`，xcodegen 自动放
+  `TD.app/Extensions/LaunchAppExtension.appex`（CI 日志实证），
+  而上游官方 IPA 在 `PlugIns/LaunchAppExtension.appex`。
+  侧载工具（SideStore/isideload）**只扫描 PlugIns/** 并级联改写扩展 bundle id，
+  `Extensions/` 里的它看不见 → 扩展 id 保持 `com.tequila.dash.LaunchAppExtension`，
+  主 App 被改成 `com.tequila.dash.<TEAMID>` → 前缀不匹配 → 安装被拒。
+- 修法：主 App postBuild 新增「Relocate extensionkit appex into PlugIns」，
+  把 `Extensions/*.appex` 移到 `PlugIns/` 并删掉空的 `Extensions/`（幂等）。
+
 ## [0.3.826] - 2026-11-11
 
 ### 修复（owner 真机报错：SideStore/isideload 均安装失败）
