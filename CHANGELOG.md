@@ -1,3 +1,15 @@
+## [0.3.818] - 2026-11-11
+
+- 修复.杀后台后蜂窝下彻底不可用、连卡点弹窗都不出现（真机实测）:
+  ① `RemotePairingPort.cachedPort` 是纯内存缓存 —— 杀后台归零后只剩 fallback(49152)，
+     而蜂窝下 mDNS 发现不到本机 RSD 服务 → 永远拿不到真实端口。
+     `record()` 早已把成功端口写进 `rppairing.resolvedPort`，改为 `current` 内存空时读回该持久化值。
+     这解释了「同时开 WiFi+蜂窝+LocalDevVPN 能用（mDNS 在 WiFi 上发现成功，关 WiFi 后
+     60s TTL 内仍可用），杀后台就废」。
+  ② `beginLoopbackGate` 因 `isNetworkConnectedNow` 初值 false 早退（`connectedBox` 只有
+     NWPath 首次回调才置真）→ 冷启动后操作早于回调 → 门没走 `gateOutcome` → 不弹卡点。
+     判据改为接口快照：只要不是明确「完全无网络」就继续走门
+
 ## [0.3.817] - 2026-11-11
 
 - 修复.点搜索栏的 X 取消后列表重新载入（真机实测：先点键盘「完成」再点 X 不复现）:

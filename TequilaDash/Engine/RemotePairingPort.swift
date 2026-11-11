@@ -91,7 +91,21 @@ enum RemotePairingPort {
         let age = cachedAt.map { Date().timeIntervalSince($0) } ?? .greatestFiniteMagnitude
         stateLock.unlock()
         if age > cacheTTL { kickResolveIfIdle() }
-        return port ?? fallback
+        if let port { return port }
+        // v0.3.818: 内存缓存空时读**上次成功解析的持久化端口**。
+        //
+        // 真机实测: 同时开 WiFi+蜂窝+LocalDevVPN 时能用（mDNS 在 WiFi 上发现成功，
+        // cachedPort 有真实值，关 WiFi 后 60s TTL 内仍可用）；**杀后台后 cachedPort 归零**
+        // → 只剩 fallback(49152) → 蜂窝下 mDNS 发现不到（本机 RSD 服务休眠）→ 永远不通，
+        // 连卡点弹窗也不再出现（因为端口本身是错的，门判定失败后走不到 gateOutcome）。
+        //
+        // record() 早已把成功端口写进 rppairing.resolvedPort（:236），这里读回来即可。
+        // 端口是设备的 RSD 监听端口，跨进程重启稳定；拿到旧值远好于盲用 49152。
+        let persisted = UserDefaults.standard.integer(forKey: resolvedDefaultsKey)
+        if persisted > 0, persisted <= Int(UInt16.max) {
+            return UInt16(persisted)
+        }
+        return fallback
     }
 
     /// 诊断用：当前端口从哪来.

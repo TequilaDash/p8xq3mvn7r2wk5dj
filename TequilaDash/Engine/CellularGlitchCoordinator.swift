@@ -198,7 +198,17 @@ final class CellularGlitchCoordinator: ObservableObject, @unchecked Sendable {
             TunnelGate.setReady(false)
             TunnelDiagnostics.note("蜂窝通路", "就绪凭证超龄重验失败，已清凭证并转入卡点流程（" + label + "）")
         }
-        if !checker.isNetworkConnectedNow { return false }
+        // v0.3.818: 不再因「NWPath 首次回调还没到」就早退。
+        //
+        // 真机实测: 杀后台冷启动后立刻点 JIT，卡点弹窗不出现、直接报「隧道未就绪」。
+        // 根因: `connectedBox` 初值 false，只有 pathUpdateHandler 首次回调才置真；
+        // 冷启动后操作早于回调 → 这里 return false → 门根本没走 gateOutcome（不弹卡）。
+        // 判据改为「接口快照」：只要不是明确的「完全无网络」就继续走门，
+        // 让 gateOutcome 自己用 getifaddrs 快照 + 等待逻辑判定。
+        let snapshot = CellularNetworkChecker.captureInterfaceSnapshot()
+        if !checker.isNetworkConnectedNow && !snapshot.wifi && !snapshot.cellular {
+            return false
+        }
         gateLock.lock()
         if gateBusy || runTask != nil { gateLock.unlock(); return false }
         gateBusy = true
