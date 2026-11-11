@@ -180,3 +180,10 @@ python Resources/Scripts/lc_mirror_guard.py --write   # 重新生成 .upstream-m
     `group.com.SideStore.SideStore` + `group.com.rileytestut.AltStore`
     （Release 时 `DEVELOPMENT_TEAM_SUFFIX` 为空）。侧载工具会注入这两个 group；
     自签/免费账号没有 → 删掉这两项即可（主 App 其余功能不受影响）。
+
+20. **`LCAppListView` 清理源 IPA 失败改为忽略（v0.3.815，镜像内改动）**
+    `Views/AppList/LCAppListView.swift` 安装成功后删 `Documents/Inbox/<x>.ipa` 的 catch 块，
+    从 `errorInfo = error.localizedDescription; errorShow = true` 改为只 `print`。
+    原因：侧载环境下 Inbox 的 IPA 常被系统/第三方持有 security-scoped 引用，
+    `removeItem` 报「未能移除 XXX.ipa」；这是清理临时文件失败，安装本身已成功，
+    弹窗只会误导用户以为装失败。上游在 App Store 分发环境不易触发，侧载必然暴露。
