@@ -1,3 +1,14 @@
+## [0.3.823] - 2026-11-11
+
+- 修复.CI 过度校验 LiveProcess entitlements（连续 5 轮失败的真凶，run 42966013181 /
+  42967765114 / 42970095124 / 42971724232 / 42973296579）:
+  `CODE_SIGN_ENTITLEMENTS` 只在 `CODE_SIGNING_ALLOWED=YES` 时写进产物；
+  本轨道固定 `CODE_SIGNING_ALLOWED=NO`，未签名 IPA 里 entitlements **可有可无**
+  （侧载工具会自己施加）。实测新包 `LiveProcess.appex/` 里只有可执行 + Info.plist。
+  改为**信息性输出**，不再是错误
+- 修复.隧道版 entitlements 校验的 pipefail 隐患（`unzip -p | grep -q` 命中即 SIGPIPE，
+  靠 `||` 兜底误判）→ 先落盘再 grep
+
 ## [0.3.820] - 2026-11-11
 
 - 修复.CI 校验步静默 exit 1（run 42967765114，日志有 "liveprocess dir: LiveProcess.appex"
