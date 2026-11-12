@@ -279,8 +279,8 @@ class AppInfoProvider {
         let scene = UIApplication.shared.connectedScenes.first(where: {
             $0.activationState == .foregroundActive
         }) as? UIWindowScene
-        return scene?.windows.first(where: { $0.isKeyWindow })
-            ?? scene?.windows.first(where: { $0.isMainWindow })
+        return scene?.keyWindow
+            ?? scene?.windows.first(where: { $0.isKeyWindow })
             ?? scene?.windows.first
     }
 
