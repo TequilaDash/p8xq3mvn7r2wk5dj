@@ -21,8 +21,37 @@
 extern int LiveContainerMain(int argc, char *argv[]);
 extern void TDHostBoot(void);
 
+// LC 的 C 全局（LCBootstrap.m:23-26 定义）—— TDInitLCGlobals 要赋值它们
+extern NSUserDefaults *lcUserDefaults;
+extern NSUserDefaults *lcSharedDefaults;
+extern NSString *lcAppUrlScheme;
+extern NSString *lcAppGroupPath;
+extern NSBundle *lcMainBundle;
+extern bool isLiveProcess;
+
+// 本仓适配 (v0.3.834): 初始化 LC 的 C 全局 —— 上游在 LiveContainerMain 开头赋值
+// （LCBootstrap.m:670-677），但独立宿主走 TDHostBoot 不经过它，导致
+// lcAppUrlScheme/lcMainBundle/lcUserDefaults/lcSharedDefaults/lcAppGroupPath 全为 nil：
+//   · 多任务启动：AppSceneViewController 字典 @{hostUrlScheme:nil} 崩溃（M6）
+//   · 全屏启动：launchToGuestApp 用 lcMainBundle(nil) 崩溃（M7）
+//   · 免 JIT 总根因：appGroupID 兜底失败 -> 访客进程读不到证书 -> certificatePassword nil
+// 上游 LC 本身就是 guest 启动器（main.c -> LiveContainerMain）所以无此问题 ——
+// 这才是「对齐上游」缺的一块（R-LC-19）.
+void TDInitLCGlobals(void) {
+    lcMainBundle = [NSBundle mainBundle];
+    lcUserDefaults = NSUserDefaults.standardUserDefaults;
+    lcSharedDefaults = [[NSUserDefaults alloc] initWithSuiteName: [LCSharedUtils appGroupID]];
+    lcAppUrlScheme = NSBundle.mainBundle.infoDictionary[@"CFBundleURLTypes"][0][@"CFBundleURLSchemes"][0];
+    lcAppGroupPath = [[NSFileManager.defaultManager containerURLForSecurityApplicationGroupIdentifier:[NSClassFromString(@"LCSharedUtils") appGroupID]] path];
+    isLiveProcess = NO;
+}
+
 int main(int argc, char *argv[]) {
     @autoreleasepool {
+        // 本仓适配 (v0.3.834): 所有路径（宿主/访客/失败回落）都需要 LC 全局初始化.
+        // 访客路径 LiveContainerMain 里会再赋一遍（幂等），这里先保证宿主路径非 nil.
+        TDInitLCGlobals();
+
         NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
         NSString *selected = [defaults stringForKey:@"selected"];
 

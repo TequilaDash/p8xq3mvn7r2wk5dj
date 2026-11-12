@@ -29,6 +29,10 @@
 
 **M8 同步上游时**：若上游也改成「App 内容可能在 cover/presentation 上」的架构 → 采用上游写法。
 
+| M9 | `LiveContainerSwiftUI/Utilities/LCUtilsExtensions.swift` | `:57-64`（`signTweaks` 的预校验） | 移除 tweak 的 `checkCodeSignature` 预校验，直接全部交 ZSign 签名 | iOS 19+ 上 dyld_bypass 的 fcntl hook 已禁用（dyld_bypass_validation.m:111），checkCodeSignature 的 mmap 触发内核对未签名 dylib 页的真实校验 → `SIGKILL - CODESIGNING Invalid Page` 整个进程被杀（owner 2026-11-12 .ips 实证：注入任意 dylib 点启动即闪退）。原版在 iOS 27.2 上同样存在（代码已 diff 验证逐字节一致） | v0.3.835 | ⏳ 待真机 |
+
+**M9 同步上游时**：上游若修了 checkCodeSignature 的 mmap 致命校验（或恢复 iOS 19+ bypass）→ 删除本仓改动。
+
 | M7 | `LiveContainer/LCSharedUtils.m` | `:159-170`（`launchToGuestAppWithClassicMode`） | `NSUserDefaults.lcMainBundle` 为 nil 时兜底 `NSBundle.mainBundle` | 同上，`lcMainBundle` 只在 LiveContainerMain 赋值，宿主进程为 nil → `openApplicationWithBundleIdentifier:nil` 使系统内部 `initWithContentsOfFile:` 抛异常崩溃（owner 2026-11-12 .ips 实证，非多任务启动也崩，且要手动点桌面才进容器） | v0.3.833 | ⏳ 待真机 |
 
 **M7 同步上游时**：上游若已给 `lcMainBundle` 做兜底 → 删除本仓改动。

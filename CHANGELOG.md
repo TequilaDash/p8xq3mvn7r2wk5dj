@@ -1,3 +1,18 @@
+## [0.3.836] - 2026-11-12
+
+### 修复（对齐上游缺的一块：宿主进程 LC 全局未初始化）
+- 这是免 JIT 一直失败、多任务崩溃、全屏启动崩溃的**总根因**（R-LC-19）。
+- 上游 LC 的 main.c → LiveContainerMain 开头初始化全部 C 全局
+  （lcMainBundle / lcUserDefaults / lcSharedDefaults / lcAppUrlScheme / lcAppGroupPath）。
+  独立宿主走 TDHostBoot 不经过 LiveContainerMain → 全局全 nil：
+  · 多任务：AppSceneViewController 字典崩溃（M6）
+  · 全屏：launchToGuestApp 用 lcMainBundle(nil) 崩溃（M7）
+  · 免 JIT：appGroupID 兜底失败 → 访客进程读不到证书 → certificatePassword nil
+- 修法：HostGuestEntry.m 新增 `TDInitLCGlobals()`（照搬 LiveContainerMain:670-677
+  的初始化段），main() 三条路径（宿主/访客/失败回落）统一先调用。
+- 顺带（M9）：signTweaks 移除 checkCodeSignature 预校验（iOS 19+ bypass 已禁用，
+  mmap 未签名 dylib 触发内核校验 → SIGKILL - CODESIGNING，注入 dylib 必崩）。
+
 ## [0.3.835] - 2026-11-12
 
 ### 修复（多任务窗口被沙盒容器整屏盖住，返回 TD 主页才可见）

@@ -54,10 +54,15 @@ extension LCUtils {
                 continue
             }
 
-            if !force, checkCodeSignature((fileURL.path as NSString).utf8String) {
-                continue;
-            }
-            
+            // 本仓适配 (v0.3.835): iOS 19+ 上 checkCodeSignature 的 mmap 会触发内核对
+            // 未签名 dylib 页面的真实签名校验 → SIGKILL - CODESIGNING "Invalid Page"
+            // → 整个进程被杀（owner 2026-11-12 .ips 实证：注入任意 dylib 点启动即闪退）.
+            // 原因：dyld_bypass_validation 的 fcntl hook 在 iOS 19+ 已禁用
+            // （LCBootstrap 依赖的 dyld_bypass_validation.m:111 @available(iOS 19.0) return），
+            // 内核对 mmap 的未签名页执行真实校验.
+            // 修复：跳过对 tweak 的预校验，直接全部交给 ZSign 签名（幂等，已签的会被覆盖）.
+            // 代价：每次启动都会重签 tweak（几秒），换来不崩.
+            // 上游在 iOS 27.2 上同样存在此缺陷（代码逐字节一致，已 diff 验证）.
             filesToSign.append(fileURL)
         }
         
