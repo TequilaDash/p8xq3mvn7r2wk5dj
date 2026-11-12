@@ -138,6 +138,13 @@ class AppInfoProvider {
 
     @objc public var windowHostingView = VirtualWindowsHostView()
     internal var hostingController: UIHostingController<AnyView>?
+    // 本仓适配 (v0.3.838/M12): 永久独立窗口.
+    // 根因：windowHostingView 在 manager 首次引用时一次性挂到「当时的 keyWindow」，
+    // 该 window 可能是 fullScreenCover 的 presentation window——SwiftUI 页面切换时
+    // 被销毁 -> 多任务窗口（dock + 访客窗口容器）跟着消失
+    // （owner 2026-11-12 实测：返回上一级再进沙盒容器，多任务直接消失）.
+    // 上游 LC 的 root window 永远存活所以没这问题；本仓必须用独立 UIWindow.
+    private var persistentWindow: UIWindow?
 
     public struct Constants {
         // MARK: - Layout & Sizing
@@ -297,12 +304,23 @@ class AppInfoProvider {
     
     override init() {
         super.init()
-        // 本仓适配 (v0.3.834): 原上游挂到 rootVC.view.subviews.first。
-        // 但本仓沙盒容器是 fullScreenCover 整屏覆盖（SandboxHostView），
-        // presentation 层级在 root 之上 -> 多任务窗口被盖住。
-        // owner 2026-11-12 实测「只能返回到 TD 主页（非沙盒容器页）才能看到多任务窗口」。
-        // 挂到 keyWindow 本身（在所有 presentation 之上），任何页面都可见。
-        keyWindow!.addSubview(self.windowHostingView)
+        // 本仓适配 (v0.3.838/M12): 挂到**永久独立 UIWindow**。
+        // 历史：上游挂 rootVC.view.subviews.first（上游 root 永远存活，成立）；
+        // v0.3.834 改挂 keyWindow——但 keyWindow 会随 fullScreenCover 关闭被销毁，
+        // 返回再进沙盒容器时多任务窗口消失（owner 2026-11-12 实测）.
+        // 独立 window：windowLevel 高于一切 presentation，永不销毁，任何页面可见.
+        if let scene = UIApplication.shared.connectedScenes.first(where: {
+            $0.activationState == .foregroundActive || $0.activationState == .foregroundInactive
+        }) as? UIWindowScene {
+            let win = UIWindow(windowScene: scene)
+            win.windowLevel = .alert + 100
+            win.backgroundColor = .clear
+            win.isHidden = false
+            win.addSubview(self.windowHostingView)
+            self.windowHostingView.frame = win.bounds
+            self.windowHostingView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+            self.persistentWindow = win
+        }
         setupDockView()
         NotificationCenter.default.addObserver(
             self,
@@ -477,7 +495,8 @@ class AppInfoProvider {
             
             // If not already in view hierarchy, add it
             if hostingController.view.superview == nil {
-                keyWindow.addSubview(hostingController.view)
+                // 本仓适配 (v0.3.838/M12): dock 也挂到持久窗口（永不销毁）
+                (self.persistentWindow ?? keyWindow).addSubview(hostingController.view)
                 hostingController.view.frame = CGRect(
                     x: screenBounds.width - currentDockWidth,
                     y: (screenBounds.height - initialHeight) / 2,

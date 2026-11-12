@@ -41,6 +41,10 @@
 
 **M11 同步上游时**：上游若也支持多 window 架构 → 采用上游写法。
 
+| M12 | `MultitaskSupport/MultitaskDockView.swift` | `:137-142`（persistentWindow 属性）、`:294-315`（init 挂载）、`:497-500`（showDock） | windowHostingView 与 dock 改挂**永久独立 UIWindow**（windowLevel .alert+100，永不销毁） | M11 只修了「选 keyWindow」，但 keyWindow 会随 fullScreenCover 关闭被销毁——manager init 时一次性挂载，页面切换后 windowHostingView 连同多任务窗口一起消失（owner 2026-11-12 实测 v0.3.837 仍未解决）。上游 LC root window 永远存活所以无此问题；独立宿主必须用独立 window | v0.3.838 | ⏳ 待真机 |
+
+**M12 同步上游时**：若上游改用独立 window 或支持 presentation 生命周期 → 采用上游写法。
+
 | M7 | `LiveContainer/LCSharedUtils.m` | `:159-170`（`launchToGuestAppWithClassicMode`） | `NSUserDefaults.lcMainBundle` 为 nil 时兜底 `NSBundle.mainBundle` | 同上，`lcMainBundle` 只在 LiveContainerMain 赋值，宿主进程为 nil → `openApplicationWithBundleIdentifier:nil` 使系统内部 `initWithContentsOfFile:` 抛异常崩溃（owner 2026-11-12 .ips 实证，非多任务启动也崩，且要手动点桌面才进容器） | v0.3.833 | ⏳ 待真机 |
 
 **M7 同步上游时**：上游若已给 `lcMainBundle` 做兜底 → 删除本仓改动。

@@ -1,3 +1,19 @@
+## [0.3.838] - 2026-11-12
+
+### 修复（多任务窗口消失的真根因：挂载 window 被销毁）
+- M11 只修了「选 keyWindow」，但 keyWindow 会随 fullScreenCover 关闭被销毁。
+  MultitaskDockManager init 时把 windowHostingView 一次性挂到「当时的 keyWindow」，
+  页面切换后该 window 销毁 → dock + 多任务窗口容器全部消失
+  （owner 2026-11-12 实测 v0.3.837 仍未解决）。
+- 修法（M12）：新建**永久独立 UIWindow**（windowLevel .alert+100，永不销毁），
+  windowHostingView 与 dock 都挂它。上游 LC root window 永远存活所以无此问题。
+
+### 上游版本核查（回应「上游更新了」）
+- 上游 main HEAD = 9d6ea09b05（11-08），pushed_at 11-08，此后 main 无新 commit。
+  nightly release 也是 11-08 构建。我们快照就是 main 最新。
+  上游其他分支（jitless/multitask-experimental 等）均为旧实验分支。
+  多任务问题不在「没同步上游」，在独立宿主架构差异 + iOS 27.2 beta 私有 API。
+
 ## [0.3.837] - 2026-11-12
 
 ### 修复（多任务窗口白屏：presentationView 未挂载）
