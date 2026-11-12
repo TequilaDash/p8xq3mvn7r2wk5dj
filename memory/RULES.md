@@ -80,3 +80,9 @@
 - 动作：目标路径写完整（`<repo>/TDLiveProcess/LC/xxx.m`），不用 `../`；复制后立即 `ls` 目标目录 + `git status --porcelain` 检查新增项
 - 验证：新增文件清单与预期一一对应；CI 编译无「file not found in target X」类错误
 - 违反记录：MEM-011
+
+## R-020 资源有两份，合入上游必须同步「打包用的那一份」
+- 条件：合入上游 Resources/ 下任何资源（Localizable.xcstrings / LCAssets.bundle / lproj 等）
+- 动作：①覆盖 vendor 侧；②把差异合并进宿主打包路径（`Resources/Localizable.xcstrings`、`Resources/LCAssets.bundle`）；③跑 `lc_i18n_guard.py .` 与 `bash Resources/Scripts/` 相关校验
+- 验证：lc_i18n_guard 输出「缺失 0 | 无 en 0」；真机上设置页不出现任何 `lc.` 开头的键名
+- 违反记录：MEM-012

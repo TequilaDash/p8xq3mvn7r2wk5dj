@@ -91,3 +91,12 @@
 - 正确做法：cp 到确切文件路径（不带 `..`）；cp 后 `ls` 目标目录确认；再用 `git status` 看新增文件是否符合预期
 - 检测方法：`git status --porcelain | grep '^??'` 无意外新增；xcodegen 的 target sources 列表不含新文件
 - 关联规范：R-009
+
+## MEM-012 合入上游后 i18n 键只更新了 vendor 侧（2026-11-13）
+
+- 现象：设置页显示原始变量名 `lc.appSettings.helperProcessesSupport` / `.fixBackgroundTaskIdentifiers`
+- 我的错误动作：合入时只把 vendor 的 Localizable.xcstrings 覆盖进来，没同步宿主实际打包的 `Resources/Localizable.xcstrings`
+- 根因：资源有两份（vendor 的 + 宿主打包用的），我一直只同步前者；且没有「代码引用键 vs 打包资源」的校验
+- 正确做法：合入后把新键从 vendor xcstrings 合并进宿主 xcstrings（en+zh-Hans+zh-Hant）；用 lc_i18n_guard.py 校验
+- 检测方法：`python Resources/Scripts/lc_i18n_guard.py .` 输出「缺失 0」
+- 关联规范：R-020
