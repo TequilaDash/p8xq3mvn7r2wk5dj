@@ -55,6 +55,20 @@ def collect_code_keys(root):
     return keys
 
 
+
+def _is_translated(unit):
+    """单条本地化是否可直接用于构建：state == translated（含 plural 变体逐项检查）。"""
+    su = unit.get("stringUnit")
+    if su:
+        return su.get("state") == "translated" and bool(su.get("value"))
+    variations = unit.get("variations") or {}
+    for kind in variations.values():
+        for case in kind.values():
+            inner = case.get("stringUnit") or {}
+            if inner.get("state") != "translated" or not inner.get("value"):
+                return False
+    return bool(variations)
+
 def main():
     root = sys.argv[1] if len(sys.argv) > 1 and not sys.argv[1].startswith("-") else "."
     list_only = "--list" in sys.argv
@@ -76,7 +90,15 @@ def main():
             missing.append((k, src))
             continue
         locs = (strings[k].get("localizations") or {})
-        absent = [lg for lg in REQUIRED if lg not in locs]
+        absent = []
+        for lg in REQUIRED:
+            if lg not in locs:
+                absent.append(lg)
+                continue
+            # `needs_review` / `new` 状态在构建时**不会被采用**（回退源语言），
+            # 等于没翻译。变体（plural）要逐个检查内部 stringUnit。
+            if not _is_translated(locs[lg]):
+                absent.append(lg + "(未确认)")
         if absent:
             no_loc.append((k, src, ",".join(absent)))
 
