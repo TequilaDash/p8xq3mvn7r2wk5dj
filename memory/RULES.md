@@ -18,8 +18,8 @@
 ## R-009 合入上游后必须全量重放登记补丁并过三守卫
 - 条件：对 vendor/ 做任何「覆盖/合入」操作之后
 - 动作：①按 MIRROR-DELTAS 表逐条重放；②manifest 重建（lc_sync_upstream --check 或手动 sha256）；③三守卫全绿：`lc_mirror_guard.py`、`lc_mirror_delta_guard.py`、`lc_core_drift_guard.py`；④`swift_precommit_check.py` rc=0
-- 验证：四条命令输出贴在回复里；cp 覆盖过的文件逐个 grep 本仓补丁标记（如 NetBlock、TD_NET_BLOCK、v0.3.8xx）确认未丢失
-- 违反记录：v0.3.840 编译失败（C7 声明被 cp 覆盖丢失）
+- 验证：四条命令输出贴在回复里；cp 覆盖过的文件逐个 grep 本仓补丁标记（如 NetBlock、TD_NET_BLOCK、v0.3.8xx）确认未丢失；**Swift 补丁必须验证「声明存在 + 括号结构正确」**——grep 到补丁文本不等于编译通过，Section 级补丁必须确认插入点在正确的作用域（曾把 Section 插进 footer 内部导致 type-check 超时）
+- 违反记录：v0.3.840 编译失败（C7 声明被 cp 覆盖丢失）；v0.3.841 编译失败（M2 State 漏插 + Section 插进 footer）
 
 ## R-010 移植副本文档里的路径不得含反引号文件名（防 guard 误判）
 - 条件：在 ADAPTERS.md / 登记表里写「补丁已落 vendor」类说明时

@@ -46,6 +46,11 @@ struct LCAppSettingsView: View {
     init(model: LCAppModel) {
         self.appInfo = model.appInfo
         self._model = ObservedObject(wrappedValue: model)
+
+        // 本仓新增 (M2, 重放于 9d6ea09b05 合入): 初值取 defaults.
+        // 键口径与 HostGuestEntry.m 一致: TDNetBlock-<relativeBundlePath>.
+        let netBlockKey = "TDNetBlock-" + (model.appInfo.relativeBundlePath ?? "")
+        _netBlockEnabled = State(initialValue: UserDefaults.standard.bool(forKey: netBlockKey))
     }
     
     var body: some View {
