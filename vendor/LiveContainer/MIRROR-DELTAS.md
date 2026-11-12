@@ -39,6 +39,7 @@
 | # | 文件 | 改动 | 原因 | 引入版本 | 真机验证 |
 |---|---|---|---|---|---|
 | M7 | `LiveContainer/LCSharedUtils.m` | `launchToGuestAppWithClassicMode` 内 | `lcMainBundle` 为 nil 时兜底 `NSBundle.mainBundle`（宿主进程 TDHostBoot 不经过 LiveContainerMain） | v0.3.833 | ✅ 已重放至 9d6ea09b05 合入版 |
+| C7 | `LiveContainer/Tweaks/Tweaks.h` | 末尾加 NetBlock 两函数声明 | 联网禁用钩子声明（NetworkBlock.m 的接口） | ✅ 已重放 |
 | M9 | `LiveContainerSwiftUI/Utilities/LCUtilsExtensions.swift` | `signTweaks` 内 | 移除 checkCodeSignature 预校验（iOS 19+ mmap 未签名 dylib → SIGKILL CODESIGNING），直接全量重签 | v0.3.835 | ✅ 已重放至 9d6ea09b05 合入版 |
 | M5 | `LiveContainerSwiftUI/Views/Settings/LCSettingsView.swift` | `importCertificate` 失败分支 | 弹窗附带 ZSigner.lastZSignLogs 具体原因 | v0.3.832 | ✅ 已重放 |
 | M2 | `LiveContainerSwiftUI/Views/AppList/AppSettings/LCAppSettingsView.swift` | netBlockEnabled + Section | 联网禁用开关（LC 无此功能），写 TDNetBlock-<relativeBundlePath> | v0.3.825 | ✅ 已重放 |

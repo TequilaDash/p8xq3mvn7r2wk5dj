@@ -36,3 +36,6 @@ void* dlopen_nolock(const char *path, int mode);
 void bypass_seg_count_check(void (^block)(void));
 
 static void hook_do_nothing(void) {}
+// 本仓功能 (C7, 重放于 9d6ea09b05 合入): 联网禁用钩子声明
+void NetBlockGuestHooksInit(void);
+void NetBlockApplyAfterGuestLoad(void);

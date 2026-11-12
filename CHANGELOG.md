@@ -1,3 +1,12 @@
+## [0.3.841] - 2026-11-12
+
+### 修复（0.3.840 编译失败：C7 声明被覆盖）
+- 合入时 cp 覆盖 Tweaks.h 丢掉了 NetBlock 两函数声明（C7）→
+  LCBootstrap.m:597/667 implicit function declaration 编译失败。
+- 修法：Tweaks.h（vendor+副本）加回声明；manifest 重建；C7 登记。
+- ADAPTERS C 表修正：C1/C4 的补丁已落 vendor 侧（副本随 vendor 同步），
+  登记表述去掉文件名反引号避免 drift guard 误判。
+
 ## [0.3.840] - 2026-11-12
 
 ### 全量合入上游 main 最新（9d6ea09b05「built-in jit enablers, ram donors, helper process」）
