@@ -33,6 +33,14 @@
 
 **M9 同步上游时**：上游若修了 checkCodeSignature 的 mmap 致命校验（或恢复 iOS 19+ bypass）→ 删除本仓改动。
 
+| M10 | `MultitaskSupport/AppSceneViewController.m` | `:228-241`（iOS27 分支加 presentationView 挂载） | 显式把 `presenter.presentationView` 挂进 contentView + 0.5s 延迟兜底 | iOS 27.2 beta 上场景连接异步，`sceneViewController.view` 层级里 presentationView 可能未挂 → 多任务窗口内容白屏（v0.3.835 M8 修层级后窗口可见但内容仍白，owner 2026-11-12 实测）。与 iOS<18 分支对齐（那边显式 addSubview presentationView） | v0.3.836 | ⏳ 待真机 |
+
+**M10 同步上游时**：上游若已显式挂 presentationView 或修复场景连接时序 → 删除本仓改动。
+
+| M11 | `MultitaskSupport/MultitaskDockView.swift` | `:272-276`（keyWindow getter） | `windows.first` → 显式 `isKeyWindow` 优先 | 本仓 TD 的 SwiftUI App 存在多 window（主 + fullScreenCover presentation），`windows.first` 不一定是 keyWindow → 挂错 window 后返回上一级再进来多任务窗口随旧 window 销毁消失（owner 2026-11-12 实测「返回再进沙盒容器多任务不见了」）。上游 LC root 单窗口稳定，`windows.first` 恰好成立 | v0.3.836 | ⏳ 待真机 |
+
+**M11 同步上游时**：上游若也支持多 window 架构 → 采用上游写法。
+
 | M7 | `LiveContainer/LCSharedUtils.m` | `:159-170`（`launchToGuestAppWithClassicMode`） | `NSUserDefaults.lcMainBundle` 为 nil 时兜底 `NSBundle.mainBundle` | 同上，`lcMainBundle` 只在 LiveContainerMain 赋值，宿主进程为 nil → `openApplicationWithBundleIdentifier:nil` 使系统内部 `initWithContentsOfFile:` 抛异常崩溃（owner 2026-11-12 .ips 实证，非多任务启动也崩，且要手动点桌面才进容器） | v0.3.833 | ⏳ 待真机 |
 
 **M7 同步上游时**：上游若已给 `lcMainBundle` 做兜底 → 删除本仓改动。

@@ -270,7 +270,18 @@ class AppInfoProvider {
     }
 
     public var keyWindow: UIWindow? {
-        (UIApplication.shared.connectedScenes.first as? UIWindowScene)?.windows.first
+        // 本仓适配 (v0.3.836): 原上游 `windows.first` 在上游成立（LC root 单窗口稳定）。
+        // 本仓是 TD 的 SwiftUI App，存在多个 window（主 window + fullScreenCover 的
+        // presentation window），`windows.first` 不一定是 keyWindow —— 挂错 window 后，
+        // 返回上一级再回来时多任务窗口随旧 window 销毁而消失
+        // （owner 2026-11-12 实测：返回再进沙盒容器，多任务窗口不见了）。
+        // 改为显式取 isKeyWindow；找不到时回落 foregroundActive 的第一个 window.
+        let scene = UIApplication.shared.connectedScenes.first(where: {
+            $0.activationState == .foregroundActive
+        }) as? UIWindowScene
+        return scene?.windows.first(where: { $0.isKeyWindow })
+            ?? scene?.windows.first(where: { $0.isMainWindow })
+            ?? scene?.windows.first
     }
 
     public var safeAreaInsets: UIEdgeInsets {

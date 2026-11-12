@@ -227,13 +227,37 @@
         
         // Now it's time to get the initial settings from decorated VC
         [self.delegate appSceneVCWillActivateScene:self];
-        // 本仓适配 (v0.3.833): 白屏诊断 —— 2 秒后回看 contentView 尺寸/层级.
+        // 本仓适配 (v0.3.834/M10): iOS 27.2 多任务白屏的确定性修复.
+        // iOS 18+ 分支 contentView = sceneViewController.view，依赖 _UISceneHostingController
+        // 内部挂 presentationView；iOS 27.2 beta 上场景连接异步完成，view 层级里
+        // presentationView 可能尚未挂上 -> 窗口有标题栏但内容全白
+        // （owner 2026-11-12 真机实测，v0.3.835 M8 修层级后窗口可见但内容仍白）.
+        // 与 iOS<18 分支对齐：显式把 presenter.presentationView 挂到 contentView，
+        // 并延迟 0.5s 再挂一次兜底（场景连接完成后再保证层级），幂等（同一对象只会移到顶层）.
+        UIView *presentationView = self.presenter.presentationView;
+        if (presentationView && presentationView.superview != self.contentView) {
+            [self.contentView addSubview:presentationView];
+            presentationView.frame = self.contentView.bounds;
+            presentationView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+        }
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            UIView *pv = self.presenter.presentationView;
+            if (pv && pv.superview == nil) {
+                [self.contentView addSubview:pv];
+                pv.frame = self.contentView.bounds;
+                pv.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+                NSLog(@"[AppSceneVC] M10: presentationView 延迟挂载完成（场景异步连接后）");
+            }
+        });
+        // 本仓适配 (v0.3.833/M6b): 白屏诊断 —— 2 秒后回看 contentView 尺寸/层级.
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
             UIView *cv = self.contentView;
             UIView *av = self.view;
-            NSLog(@"[AppSceneVC] 2s后白屏诊断: cv.frame=%@ av.frame=%@ cv.subviews=%lu av.subviews=%lu cv.window=%@ cv.hidden=%d",
+            UIView *pv = self.presenter.presentationView;
+            NSLog(@"[AppSceneVC] 2s后白屏诊断: cv.frame=%@ av.frame=%@ cv.subviews=%lu pv.superview=%@ pv.frame=%@ cv.window=%@ cv.hidden=%d",
                   NSStringFromCGRect(cv.frame), NSStringFromCGRect(av.frame),
-                  (unsigned long)cv.subviews.count, (unsigned long)av.subviews.count,
+                  (unsigned long)cv.subviews.count,
+                  pv.superview, NSStringFromCGRect(pv.frame),
                   cv.window, cv.hidden);
         });
         [self addChildViewController:self.hostingController.sceneViewController];

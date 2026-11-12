@@ -1,3 +1,24 @@
+## [0.3.837] - 2026-11-12
+
+### 修复（多任务窗口白屏：presentationView 未挂载）
+- iOS 18+ 分支的 contentView = `sceneViewController.view`，依赖 `_UISceneHostingController`
+  内部挂 presentationView。iOS 27.2 beta 上场景连接异步完成，层级里 presentationView
+  可能未挂 → 窗口有标题栏但内容全白（v0.3.835 M8 修层级后窗口可见但内容仍白）。
+- 修法（M10）：与 iOS<18 分支对齐——显式 `addSubview:presenter.presentationView`，
+  外加 0.5s 延迟兜底挂载（幂等）。M6b 诊断日志升级为含 pv 状态。
+
+### 修复（返回上一级再进沙盒容器，多任务窗口消失）
+- `keyWindow` 取 `windows.first` 在多 window 架构下（TD 主 window + cover 的
+  presentation window）不一定是 keyWindow → windowHostingView 挂错 window，
+  返回时旧 window 销毁连带多任务窗口消失。
+- 修法（M11）：显式取 `isKeyWindow`，回落 `isMainWindow`。
+
+### 上游版本确认
+- 镜像 = 上游 nightly commit 9d6ea09b05（2026-11-08，最新；11-08 后上游无新 commit）。
+  不需要切换——已在 nightly。多任务/白屏问题不是「没跟上上游」，而是
+  独立宿主（TDHostBoot）与上游自启动的架构差异（R-LC-19）+ iOS 27.2 beta 私有
+  API 时序问题（上游只测了正式版）。
+
 ## [0.3.836] - 2026-11-12
 
 ### 修复（对齐上游缺的一块：宿主进程 LC 全局未初始化）
