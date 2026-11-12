@@ -62,3 +62,15 @@
 - 动作：用 `@Environment(\.dismiss)` 或绑定 isPresented 置 false；禁止空闭包 `{}`
 - 验证：`grep -rn 'Button("好") {}'` 全仓应为 0
 - 违反记录：MEM-009（照抄上游空闭包，本仓层叠下失效）
+
+## R-017 「对齐上游」必须同时对齐**启动时序与环境变量语义**，不只文件内容
+- 条件：每次全量合入上游 / 移植新入口之后
+- 动作：逐项核对 `LC_HOME_PATH` / `HOME` / `TMPDIR` / `CFFIXED_USER_HOME` 的赋值点，读上游**消费点**（grep 后看拼接），不要凭名字推断；并核对 `LiveContainerMain` 里那段全局初始化，独立宿主必须在 `TDInitLCGlobals()` 里复刻
+- 验证：回复里贴出上游消费点行号 + 本仓拼出的完整路径示例（如 `<HOME>/Documents/Applications/x.app` 在真机上存在）
+- 违反记录：MEM-007（LC_HOME_PATH 误传 Documents → 全屏启动 App bundle not found）
+
+## R-018 崩溃路径必须有可观测留痕
+- 条件：写/改任何异常处理、扩展失败回调、进程退出路径
+- 动作：所有失败分支都必须写一个宿主可读的持久标记（`lcUserDefaults["error"]` + `lcSharedDefaults["lastGuestLaunchError"]` + uptime），不得只走 NSExtensionContext / exit
+- 验证：`grep -A12 'static void exceptionHandler' 上游文件` 确认双写；真机崩溃后重启 App 必须看到弹窗
+- 违反记录：MEM-010（isLiveProcess 分支不写 error → 弹窗时有时无）
