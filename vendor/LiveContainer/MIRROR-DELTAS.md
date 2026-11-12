@@ -17,6 +17,10 @@
 
 **M1 / M1b / M1c / M1d 属于同一处修复，必须同时应用。**
 
+| M6 | `MultitaskSupport/AppSceneViewController.m` | `:58-77`（`initWithBundleId` 的 userInfo 字典） | `NSUserDefaults.lcAppUrlScheme` 为 nil 时兜底取主 App 的 `CFBundleURLTypes[0][0]` | 上游 `lcAppUrlScheme` 只在 `LiveContainerMain` 赋值，独立宿主走 `TDHostBoot` 不经过 → 多任务启动时 nil → 字典字面量 `@{...:nil}` 抛 `insert nil object` 崩溃（owner 2026-11-12 .ips 实证） | v0.3.833 | ⏳ 待真机 |
+
+**M6 同步上游时**：上游若已给 `lcAppUrlScheme` 做兜底或宿主路径初始化 → 删除本仓改动。
+
 | M5 | `LiveContainerSwiftUI/Views/Settings/LCSettingsView.swift` | `:571-585`（`importCertificate` 失败分支） | 失败弹窗里附带 ZSign 的具体失败原因（`ZSigner.lastZSignLogs`），不再笼统显示「验证证书失败」 | owner 2026-11-11 真机：导入普通证书报「验证证书失败」但不知根因，需要直接看到原因而不是去翻日志 | v0.3.832 | ⏳ 待真机 |
 
 **M5 是诊断增强，不改变导入逻辑。同步上游时：**

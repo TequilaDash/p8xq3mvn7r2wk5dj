@@ -1,3 +1,15 @@
+## [0.3.833] - 2026-11-12
+
+### 修复（多任务启动闪退：hostUrlScheme 为 nil 导致字典崩溃）
+- `MultitaskSupport/AppSceneViewController.m` 的 userInfo 字典：
+  `NSUserDefaults.lcAppUrlScheme` 在多任务启动时为 nil（它只在 LiveContainerMain 赋值，
+  独立宿主走 TDHostBoot 不经过）→ 字典字面量 `@{...:nil}` 抛
+  `NSInvalidArgumentException: insert nil object` → 整个 App 崩溃闪退.
+  owner 2026-11-12 .ips 实证：
+    -[__NSPlaceholderDictionary initWithObjects:forKeys:count:] attempt to insert nil object
+    -[AppSceneViewController initWithBundleId:dataUUID:delegate:] + 580
+- 修法（M6）：nil 时兜底取主 App CFBundleURLTypes[0] 第一个 scheme。
+
 ## [0.3.832] - 2026-11-11
 
 ### 诊断（导入证书失败弹窗显示具体原因）

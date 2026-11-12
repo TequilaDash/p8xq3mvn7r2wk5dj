@@ -57,8 +57,19 @@
     
     NSExtensionItem *item = [NSExtensionItem new];
     NSMutableArray* bookmarks = [NSMutableArray array];
+    // 本仓适配 (v0.3.833): `NSUserDefaults.lcAppUrlScheme` 在多任务启动时为 nil ——
+    // 它只在 `LiveContainerMain`（LCBootstrap.m:674/731）里赋值，而本仓独立宿主走
+    // `TDHostBoot` 不经过 `LiveContainerMain`。字典字面量 `@{...: nil}` 会抛
+    // `NSInvalidArgumentException: insert nil object` 导致整个 App 崩溃
+    // （owner 2026-11-12 真机 .ips 实证，多任务启动闪退）.
+    // 兜底：nil 时取主 App 的 CFBundleURLTypes[0] 第一个 scheme。
+    NSString *hostScheme = NSUserDefaults.lcAppUrlScheme;
+    if (!hostScheme) {
+        NSArray *schemes = NSBundle.mainBundle.infoDictionary[@"CFBundleURLTypes"][0][@"CFBundleURLSchemes"];
+        hostScheme = schemes.firstObject;
+    }
     NSMutableDictionary *userInfo = @{
-        @"hostUrlScheme": NSUserDefaults.lcAppUrlScheme,
+        @"hostUrlScheme": hostScheme,
         @"selected": _bundleId,
         @"selectedContainer": _dataUUID,
         @"bookmarks": bookmarks,
