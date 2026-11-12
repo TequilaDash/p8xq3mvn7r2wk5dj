@@ -45,6 +45,14 @@
 
 **M12 同步上游时**：若上游改用独立 window 或支持 presentation 生命周期 → 采用上游写法。
 
+**M12 已回滚（owner 2026-11-12 实测：独立 window 全屏挡住一切触摸，任意界面点不了）**。
+VirtualWindowsHostView 的 hitTest 穿透在 UIKit + SwiftUI presentation 混合下不生效，
+独立 window 参与事件分发与系统假设冲突。**不要恢复 M12。**
+
+| M12b | `MultitaskSupport/MultitaskDockView.swift` | init/attachHostingViewToKeyWindow/deinit | 回滚 M12 独立 window；windowHostingView 挂 keyWindow，并监听 `UIWindow.didBecomeKeyNotification` 在 keyWindow 变化时自动重挂 | 解决 v0.3.837「返回再进多任务消失」：fullScreenCover 开/关导致 keyWindow 切换，重挂保证始终在当前 keyWindow 上，窗口不再随旧 window 销毁 | v0.3.839 | ⏳ 待真机 |
+
+**M12b 同步上游时**：上游若原生支持 window 切换重挂 → 删除本仓改动。
+
 | M7 | `LiveContainer/LCSharedUtils.m` | `:159-170`（`launchToGuestAppWithClassicMode`） | `NSUserDefaults.lcMainBundle` 为 nil 时兜底 `NSBundle.mainBundle` | 同上，`lcMainBundle` 只在 LiveContainerMain 赋值，宿主进程为 nil → `openApplicationWithBundleIdentifier:nil` 使系统内部 `initWithContentsOfFile:` 抛异常崩溃（owner 2026-11-12 .ips 实证，非多任务启动也崩，且要手动点桌面才进容器） | v0.3.833 | ⏳ 待真机 |
 
 **M7 同步上游时**：上游若已给 `lcMainBundle` 做兜底 → 删除本仓改动。

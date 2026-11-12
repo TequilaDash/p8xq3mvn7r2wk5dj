@@ -144,7 +144,8 @@ class AppInfoProvider {
     // 被销毁 -> 多任务窗口（dock + 访客窗口容器）跟着消失
     // （owner 2026-11-12 实测：返回上一级再进沙盒容器，多任务直接消失）.
     // 上游 LC 的 root window 永远存活所以没这问题；本仓必须用独立 UIWindow.
-    private var persistentWindow: UIWindow?
+    // 本仓适配 (v0.3.839/M12b): keyWindow 变化（fullScreenCover 开/关）时重挂.
+    private var windowObservers: [NSObjectProtocol] = []
 
     public struct Constants {
         // MARK: - Layout & Sizing
@@ -304,24 +305,19 @@ class AppInfoProvider {
     
     override init() {
         super.init()
-        // 本仓适配 (v0.3.838/M12): 挂到**永久独立 UIWindow**。
-        // 历史：上游挂 rootVC.view.subviews.first（上游 root 永远存活，成立）；
-        // v0.3.834 改挂 keyWindow——但 keyWindow 会随 fullScreenCover 关闭被销毁，
-        // 返回再进沙盒容器时多任务窗口消失（owner 2026-11-12 实测）.
-        // 独立 window：windowLevel 高于一切 presentation，永不销毁，任何页面可见.
-        if let scene = UIApplication.shared.connectedScenes.first(where: {
-            $0.activationState == .foregroundActive || $0.activationState == .foregroundInactive
-        }) as? UIWindowScene {
-            let win = UIWindow(windowScene: scene)
-            win.windowLevel = .alert + 100
-            win.backgroundColor = .clear
-            win.isHidden = false
-            win.addSubview(self.windowHostingView)
-            self.windowHostingView.frame = win.bounds
-            self.windowHostingView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-            self.persistentWindow = win
-        }
+        // 本仓适配 (v0.3.839/M12b): 回滚 M12 的独立 UIWindow——它 windowLevel 高于
+        // 一切且整屏覆盖，命中测试虽有穿透逻辑但 SwiftUI presentation 体系下
+        // owner 实测「多任务窗口打开后除多任务外任意界面都点不了」——独立 window
+        // 参与键盘/触摸事件分发与 UIKit 假设冲突，无法安全使用，回滚.
+        // 改回挂 keyWindow（v0.3.834 行为，窗口可见可点），窗口消失问题改用
+        // 「keyWindow 变化时重新挂载」解决（见 windowDidBecomeKey 监听）.
+        attachHostingViewToKeyWindow()
         setupDockView()
+        windowObservers.append(NotificationCenter.default.addObserver(
+            forName: UIWindow.didBecomeKeyNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.attachHostingViewToKeyWindow()
+        })
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(userDefaultsDidChange),
@@ -337,6 +333,7 @@ class AppInfoProvider {
     }
     
     deinit {
+        windowObservers.forEach(NotificationCenter.default.removeObserver)
         NotificationCenter.default.removeObserver(self)
         NotificationCenter.default.removeObserver(self, name: UIDevice.orientationDidChangeNotification, object: nil)
     }
@@ -358,6 +355,21 @@ class AppInfoProvider {
         }
     }
     
+    /// 本仓适配 (v0.3.839/M12b): 把 windowHostingView 挂到当前 keyWindow.
+    /// 页面切换（fullScreenCover 开/关）导致 keyWindow 变化时重新挂载，
+    /// 解决 v0.3.837「返回再进多任务消失」——不引入独立 window（M12 失败回滚）.
+    private func attachHostingViewToKeyWindow() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let keyWindow = self.keyWindow else { return }
+            if self.windowHostingView.superview !== keyWindow {
+                self.windowHostingView.removeFromSuperview()
+                keyWindow.addSubview(self.windowHostingView)
+                self.windowHostingView.frame = keyWindow.bounds
+                self.windowHostingView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+            }
+        }
+    }
+
     private func setupDockView() {
         DispatchQueue.main.async {
             let dockView = AnyView(MultitaskDockSwiftView()
@@ -495,8 +507,7 @@ class AppInfoProvider {
             
             // If not already in view hierarchy, add it
             if hostingController.view.superview == nil {
-                // 本仓适配 (v0.3.838/M12): dock 也挂到持久窗口（永不销毁）
-                (self.persistentWindow ?? keyWindow).addSubview(hostingController.view)
+                keyWindow.addSubview(hostingController.view)
                 hostingController.view.frame = CGRect(
                     x: screenBounds.width - currentDockWidth,
                     y: (screenBounds.height - initialHeight) / 2,

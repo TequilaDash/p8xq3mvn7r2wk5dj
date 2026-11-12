@@ -1,3 +1,16 @@
+## [0.3.839] - 2026-11-12
+
+### 回滚 M12（紧急：独立 window 挡住全部触摸）
+- owner 实测：多任务窗口打开后，除多任务外任意界面都点不了。
+  M12 的独立 UIWindow（windowLevel .alert+100）整屏覆盖，hitTest 穿透在
+  UIKit + SwiftUI presentation 混合下不生效，事件分发冲突。**M12 已回滚。**
+
+### M12b（替代方案）
+- windowHostingView 挂 keyWindow（恢复 v0.3.834 行为，可点）
+- 监听 `UIWindow.didBecomeKeyNotification`：keyWindow 变化（cover 开/关）时
+  自动重挂 windowHostingView 到新 keyWindow → 解决「返回再进多任务消失」，
+  不再引入独立 window。
+
 ## [0.3.838] - 2026-11-12
 
 ### 修复（多任务窗口消失的真根因：挂载 window 被销毁）
