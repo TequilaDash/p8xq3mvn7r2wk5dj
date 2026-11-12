@@ -1,3 +1,16 @@
+## [0.3.845] - 2026-11-13
+
+### 补全（i18n 全部代码引用键都有中文）
+- 本仓只打包 en / zh-Hans / zh-Hant；此前有 3 个键只有 en（`32-bit emulator` /
+  `Default 32-bit emulator` / `classicModeDesc`），28 个键有 zh-Hans 但缺 zh-Hant
+  → 繁体用户看到英文。上游本身也缺这些，属真实缺口。
+- 补全：31 个键的中文（简体 + 繁体），并对齐术语（快取 / 儲存空間 / 暫存檔案 / App 本體）。
+- 顺手修 `lc.appSettings.fixBackgroundTaskIdentifiers` 的 zh-Hant 混入简体「后台」→「後台」。
+
+### 守卫加强
+- `lc_i18n_guard.py` 从「只查 en」升级为「en + zh-Hans + zh-Hant 三者必须齐全」
+  （宿主只打包这三种）。当前 305 代码键：缺失 0 / 缺本地化 0。
+
 ## [0.3.844] - 2026-11-13
 
 ### 修复（合入上游后 UI 显示原始变量名）

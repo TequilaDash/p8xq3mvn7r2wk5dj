@@ -66,26 +66,30 @@ def main():
     strings = json.load(open(cat, encoding="utf-8")).get("strings", {})
     code_keys = collect_code_keys(root)
 
+    # 宿主只打包 en / zh-Hans / zh-Hant 三种本地化（其余语种在构建时被剥离），
+    # 所以这三者缺任一 → 该语言用户看到英文甚至原始键名，都算缺陷。
+    REQUIRED = ("en", "zh-Hans", "zh-Hant")
     missing = []
-    no_en = []
+    no_loc = []
     for k, src in sorted(code_keys.items()):
         if k not in strings:
             missing.append((k, src))
             continue
         locs = (strings[k].get("localizations") or {})
-        if "en" not in locs:
-            no_en.append((k, src))
+        absent = [lg for lg in REQUIRED if lg not in locs]
+        if absent:
+            no_loc.append((k, src, ",".join(absent)))
 
-    print("[i18n] 代码引用键 %d | xcstrings 键 %d | 缺失 %d | 无 en %d"
-          % (len(code_keys), len(strings), len(missing), len(no_en)))
+    print("[i18n] 代码引用键 %d | xcstrings 键 %d | 缺失 %d | 缺本地化 %d"
+          % (len(code_keys), len(strings), len(missing), len(no_loc)))
     for k, src in missing:
         print("  MISSING %s   (引用于 %s)" % (k, src))
-    for k, src in no_en:
-        print("  NO-EN   %s   (引用于 %s)" % (k, src))
+    for k, src, absent in no_loc:
+        print("  NO-LOC  %s   (缺 %s, 引用于 %s)" % (k, absent, src))
 
     if list_only:
         return 0
-    if missing or no_en:
+    if missing or no_loc:
         print("[i18n] 请把上游 Localizable.xcstrings 里对应键合并进 Resources/Localizable.xcstrings")
         return 1
     return 0
