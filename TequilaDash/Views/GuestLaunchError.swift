@@ -74,6 +74,10 @@ enum GuestLaunchError {
 /// 免 LC 的 `#available(iOS 16)` 分支 (LC :75-86 的 Button 分支是给 iOS 15 的).
 struct GuestLaunchErrorSheet: View {
     let text: String
+    // 本仓适配 (2026-11-12): 上游 LC 的「好」按钮是空闭包 `Button("好") {}`，
+    // 依赖 .sheet 的下滑手势关闭；本仓 sheet 被更上层 presentation 干扰时手势失效，
+    // owner 实测「点了没反应」。显式 dismiss。
+    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         NavigationView {
@@ -95,7 +99,7 @@ struct GuestLaunchErrorSheet: View {
                     }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("好") {}
+                    Button("好") { dismiss() }
                 }
             }
             .navigationTitle("错误")

@@ -57,10 +57,20 @@
     
     NSExtensionItem *item = [NSExtensionItem new];
     NSMutableArray* bookmarks = [NSMutableArray array];
+    // 本仓适配 (M6 重放, 合入 9d6ea09b05 后): 字典字面量任一值为 nil 即抛
+    // `insert nil object` 崩溃。宿主进程 TDHostBoot 不经过 LiveContainerMain 时
+    // lcAppUrlScheme 为 nil（owner 2026-11-12 .ips 实证），_bundleId/_dataUUID 亦可能 nil.
+    NSString *hostScheme = NSUserDefaults.lcAppUrlScheme;
+    if (!hostScheme) {
+        NSArray *schemes = NSBundle.mainBundle.infoDictionary[@"CFBundleURLTypes"][0][@"CFBundleURLSchemes"];
+        hostScheme = schemes.firstObject ?: @"livecontainer";
+    }
+    NSString *selBundleId = _bundleId ?: @"";
+    NSString *selContainer = _dataUUID ?: @"";
     NSMutableDictionary *userInfo = @{
-        @"hostUrlScheme": NSUserDefaults.lcAppUrlScheme,
-        @"selected": _bundleId,
-        @"selectedContainer": _dataUUID,
+        @"hostUrlScheme": hostScheme,
+        @"selected": selBundleId,
+        @"selectedContainer": selContainer,
         @"bookmarks": bookmarks,
         @"lcHomePath": NSHomeDirectory(),
     }.mutableCopy;

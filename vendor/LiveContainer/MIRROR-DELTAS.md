@@ -38,6 +38,7 @@
 
 | # | 文件 | 改动 | 原因 | 引入版本 | 真机验证 |
 |---|---|---|---|---|---|
+| M6r | `MultitaskSupport/AppSceneViewController.m` | :64-83 userInfo 字典 | hostUrlScheme/_bundleId/_dataUUID 全部 nil 兜底 | 上游原文 `@{@"hostUrlScheme": lcAppUrlScheme, ...}` 任一 nil 即 insert-nil 崩溃；宿主 TDHostBoot 不经过 LiveContainerMain 时 lcAppUrlScheme=nil（owner 2026-11-12 .ips 实证，多任务闪退） | v0.3.843 | ⏳ 待真机 |
 | M7 | `LiveContainer/LCSharedUtils.m` | `launchToGuestAppWithClassicMode` 内 | `lcMainBundle` 为 nil 时兜底 `NSBundle.mainBundle`（宿主进程 TDHostBoot 不经过 LiveContainerMain） | v0.3.833 | ✅ 已重放至 9d6ea09b05 合入版 |
 | C7 | `LiveContainer/Tweaks/Tweaks.h` | 末尾加 NetBlock 两函数声明 | 联网禁用钩子声明（NetworkBlock.m 的接口） | ✅ 已重放 |
 | M9 | `LiveContainerSwiftUI/Utilities/LCUtilsExtensions.swift` | `signTweaks` 内 | 移除 checkCodeSignature 预校验（iOS 19+ mmap 未签名 dylib → SIGKILL CODESIGNING），直接全量重签 | v0.3.835 | ✅ 已重放至 9d6ea09b05 合入版 |

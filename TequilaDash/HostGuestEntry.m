@@ -82,10 +82,13 @@ int main(int argc, char *argv[]) {
             setenv("TD_NET_BLOCK",
                    [defaults boolForKey:netBlockKey] ? "1" : "0", 1);
 
-            // LC_HOME_PATH = 容器根. v0.3.801 起与 LC 上游 `LCPath.docPath` 对齐为
-            // `Documents/`（原先多一层 SandboxApps/, 导致 LC 原生 UI 与访客看不同目录）.
-            // 其下 Applications/<name>.app + Data/Application/<UUID> 与 LC 惯例逐层一致.
-            NSString *root = [NSHomeDirectory() stringByAppendingPathComponent:@"Documents"];
+            // LC_HOME_PATH = **HOME（容器根）**，不是 Documents！
+            // 上游 LCBootstrap.m:341 自己拼 `[NSString stringWithFormat:@"%s/Documents",
+            // getenv("LC_HOME_PATH")]`；:744 更是直接 `setenv("LC_HOME_PATH", getenv("HOME"), 0)`。
+            // 本仓 v0.3.801~0.3.842 误传 Documents -> 拼出 Documents/Documents/Applications
+            // -> 全屏启动报 "App bundle not found! Unable to read LCAppInfo.plist"
+            // （owner 2026-11-12 真机实证，合入 9d6ea09b05 后暴露）。
+            NSString *root = NSHomeDirectory();
             setenv("LC_HOME_PATH", root.UTF8String, 1);
 
             int ret = LiveContainerMain(argc, argv);

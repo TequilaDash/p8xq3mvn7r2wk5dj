@@ -1,3 +1,18 @@
+## [0.3.843] - 2026-11-13
+
+### 修复（0.3.842 三处）
+1. **全屏启动「App bundle not found! Unable to read LCAppInfo.plist」**
+   根因：`LC_HOME_PATH` 语义是 **HOME（容器根）**，上游 LCBootstrap.m:341 自己拼
+   `<LC_HOME_PATH>/Documents`，:744 更是 `setenv("LC_HOME_PATH", getenv("HOME"), 0)`。
+   本仓自 v0.3.801 起误传 `Documents` → 拼出 `Documents/Documents/Applications` → 找不到。
+   修法：`LC_HOME_PATH = NSHomeDirectory()`。
+2. **多任务闪退**（insert nil object in AppSceneViewController）
+   合入 9d6ea09b05 时把 M6 的 nil 兜底当作旧架构补丁删掉了，但上游原文这个崩溃点仍在
+   （:64-69 字典字面量三处可能 nil）。重放 M6r：hostUrlScheme/_bundleId/_dataUUID 全兜底。
+3. **错误弹窗「好」按钮点了没反应**
+   上游 LC 的 `Button("好") {}` 是空闭包，靠 sheet 下滑手势关闭；本仓 sheet 被上层
+   presentation 干扰时手势失效。改为 `@Environment(\.dismiss) { dismiss() }`。
+
 ## [0.3.842] - 2026-11-12
 
 ### 修复（0.3.841 编译失败两处）
