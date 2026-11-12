@@ -660,10 +660,15 @@ jobs:
       - name: Cache DerivedData (incremental Swift build)
         # v0.3.81 引入：Swift 源码未变时直接复用 build/，编译从全量变增量。
         # key 只由「源码内容 + 工程结构（去版本号）」决定，发版改号不会击穿缓存。
+        # v3 (2026-11-12): 仓库改名后 runner 工作目录变了
+        # （/8lep7tcs4cj24d7m/ -> /p8xq3mvn7r2wk5dj/），这里缓存的 CMakeCache.txt /
+        # xcbuild 记录里全是旧绝对路径 -> SAP 的 cmake 报
+        # "CMakeCache.txt directory is different than ... where created" 直接失败。
+        # 改 key 强制失效一次（Intermediates.noindex 含 SAP 的 DerivedSources）.
         uses: actions/cache@v4
         with:
           path: build/Build/Intermediates.noindex
-          key: macos-deriveddata-${{ steps.src_hash.outputs.hash }}
+          key: v3-macos-deriveddata-${{ steps.src_hash.outputs.hash }}
 
       - name: Build (compile/link, no Apple signing)
         # 验证「当前源码能在 Xcode 原生工程下编过」并产出未签名 .app。
