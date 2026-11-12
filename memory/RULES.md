@@ -44,3 +44,21 @@
 - 动作：写 `@interface ClassName : NSObject` + 方法声明，不 import LC 头文件（会拉进 extern 变量链导致顺序脆弱）
 - 验证：CI 编译无 "use of undeclared identifier"
 - 违反记录：v0.3.840 编译失败（LCSharedUtils 未声明）
+
+## R-014 环境变量的「语义」必须从上游消费点反推，不得从变量名/相似概念推断
+- 条件：设置任何传给上游代码的环境变量（LC_HOME_PATH / HOME / TMPDIR 等）
+- 动作：先 `grep -n '<VAR>' 上游源码`，读每一处消费点的拼接逻辑；若上游自己也 setenv 该变量，以那次赋值为准
+- 验证：在回复里贴出上游消费点行号 + 拼出的完整路径示例（如 `<HOME>/Documents/Applications/x.app` 存在）
+- 违反记录：MEM-007（LC_HOME_PATH 误传 Documents，全屏启动 App bundle not found）
+
+## R-015 删除补丁前必须确认上游该 bug 点是否仍存在
+- 条件：合入上游后清理「作废补丁」时
+- 动作：对每个待删补丁，在上游原文 grep 该 bug 的特征代码（如 `hostUrlScheme` 字典字面量）；仍在则保留并重放，只在**上游已重写该段**时才删
+- 验证：待删补丁清单里每条都附「上游 grep 结果」；`grep -c 'insert nil\|hostUrlScheme' 上游文件` 的输出贴在回复里
+- 违反记录：MEM-008（误删 M6 nil 兜底 → 多任务闪退）
+
+## R-016 弹窗关闭按钮必须显式 dismiss
+- 条件：写任何 `Button("好"/"确定"/"关闭")` 或 sheet/alert 的确认按钮
+- 动作：用 `@Environment(\.dismiss)` 或绑定 isPresented 置 false；禁止空闭包 `{}`
+- 验证：`grep -rn 'Button("好") {}'` 全仓应为 0
+- 违反记录：MEM-009（照抄上游空闭包，本仓层叠下失效）

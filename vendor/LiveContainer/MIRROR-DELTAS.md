@@ -38,6 +38,7 @@
 
 | # | 文件 | 改动 | 原因 | 引入版本 | 真机验证 |
 |---|---|---|---|---|---|
+| M13 | `LiveContainer/LCBootstrap.m` | `exceptionHandler`（:740-760） | 崩溃时**双写** error 到 lcUserDefaults + lcSharedDefaults（lastGuestLaunchError/Uptime），扩展上下文照旧 | 上游只在 `!isLiveProcess` 时写 error 键；`isLiveProcess` 分支交给 NSExtensionContext，宿主读不到 → owner 实测「闪退后下次启动不弹报错，且有无弹窗毫无规律」 | v0.3.843 | ⏳ 待真机 |
 | M6r | `MultitaskSupport/AppSceneViewController.m` | :64-83 userInfo 字典 | hostUrlScheme/_bundleId/_dataUUID 全部 nil 兜底 | 上游原文 `@{@"hostUrlScheme": lcAppUrlScheme, ...}` 任一 nil 即 insert-nil 崩溃；宿主 TDHostBoot 不经过 LiveContainerMain 时 lcAppUrlScheme=nil（owner 2026-11-12 .ips 实证，多任务闪退） | v0.3.843 | ⏳ 待真机 |
 | M7 | `LiveContainer/LCSharedUtils.m` | `launchToGuestAppWithClassicMode` 内 | `lcMainBundle` 为 nil 时兜底 `NSBundle.mainBundle`（宿主进程 TDHostBoot 不经过 LiveContainerMain） | v0.3.833 | ✅ 已重放至 9d6ea09b05 合入版 |
 | C7 | `LiveContainer/Tweaks/Tweaks.h` | 末尾加 NetBlock 两函数声明 | 联网禁用钩子声明（NetworkBlock.m 的接口） | ✅ 已重放 |

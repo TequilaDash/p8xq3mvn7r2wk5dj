@@ -1,5 +1,12 @@
 ## [0.3.843] - 2026-11-13
 
+### 新增（M13：崩溃后必留痕，「弹窗时有时无」根因）
+- 上游 `exceptionHandler` 的 `isLiveProcess` 分支把错误交给 `NSExtensionContext
+  cancelRequestWithError`，**不写 `error` 键**；宿主下次启动 `GuestLaunchError` 读不到
+  → owner 实测「闪退后手动启动不弹报错，且有没有弹窗毫无规律」。
+- 修法：双写——`lcUserDefaults["error"]` + `lcSharedDefaults["lastGuestLaunchError"]`
+  （含 systemUptime 防陈旧），扩展上下文照旧。
+
 ### 修复（0.3.842 三处）
 1. **全屏启动「App bundle not found! Unable to read LCAppInfo.plist」**
    根因：`LC_HOME_PATH` 语义是 **HOME（容器根）**，上游 LCBootstrap.m:341 自己拼

@@ -739,11 +739,21 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
 
 static void exceptionHandler(NSException *exception) {
     NSString *error = [NSString stringWithFormat:@"%@\nCall stack: %@", exception.reason, exception.callStackSymbols];
+    // 本仓适配 (M13): 双写。
+    // 上游只在 !isLiveProcess 时写 lcUserDefaults["error"]；isLiveProcess 分支交给
+    // NSExtensionContext cancelRequestWithError，宿主读不到 -> owner 实测「闪退后
+    // 下次手动启动不弹报错，且是否有弹窗毫无规律」。
+    // 这里两个都写：扩展上下文照旧，同时落 error 键（lcUserDefaults + shared），
+    // 宿主启动时 GuestLaunchError 必能读到。
+    [lcUserDefaults setObject:error forKey:@"error"];
+    if(lcSharedDefaults) {
+        [lcSharedDefaults setObject:error forKey:@"lastGuestLaunchError"];
+        [lcSharedDefaults setDouble:NSProcessInfo.processInfo.systemUptime
+                             forKey:@"lastGuestLaunchErrorUptime"];
+    }
     if(isLiveProcess) {
         NSExtensionContext *context = [NSClassFromString(@"LiveProcessHandler") extensionContext];
         [context cancelRequestWithError:[NSError errorWithDomain:@"LiveProcess" code:1 userInfo:@{NSLocalizedDescriptionKey: error}]];
-    } else {
-        [lcUserDefaults setObject:error forKey:@"error"];
     }
 }
 

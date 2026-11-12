@@ -46,3 +46,30 @@
 - 正确做法：R-013 的 @interface 前置声明
 - 检测方法：CI 无 undeclared identifier
 - 关联规范：R-013
+
+## MEM-007 LC_HOME_PATH 语义误传（2026-11-13）
+
+- 现象：全屏启动报 `App bundle not found! Unable to read LCAppInfo.plist`
+- 我的错误动作：v0.3.801 把 `LC_HOME_PATH` 设为 `Documents`，注释还写「与上游 LCPath.docPath 对齐」
+- 根因：只看了一半——上游 `LCPath.docPath` 确实是 Documents，但 `LC_HOME_PATH` 环境变量语义是 **HOME（容器根）**，LCBootstrap.m:341 自己拼 `<LC_HOME_PATH>/Documents`，:744 是 `setenv("LC_HOME_PATH", getenv("HOME"), 0)`
+- 正确做法：`setenv("LC_HOME_PATH", NSHomeDirectory(), 1)`
+- 检测方法：`grep -n 'LC_HOME_PATH' vendor/.../LCBootstrap.m` 看上游怎么消费它，而不是假设
+- 关联规范：R-009
+
+## MEM-008 合入时误删上游仍存在的 bug 补丁（2026-11-13）
+
+- 现象：多任务启动闪退 `insert nil object`（AppSceneViewController initWithBundleId +1032）
+- 我的错误动作：全量合入 9d6ea09b05 时，把 M6（nil 兜底）当作「旧架构补丁」删掉
+- 根因：判定「哪些补丁作废」时只看「旧架构 vs 新架构」，没看**上游该崩溃点是否仍在**——上游 :64-69 的字典字面量一字未改
+- 正确做法：删除任何补丁前，先在上游原文里 grep 该 bug 点是否还存在；仍在则必须重放
+- 检测方法：`grep -n 'hostUrlScheme' vendor/.../AppSceneViewController.m` 确认上游写法
+- 关联规范：R-009
+
+## MEM-009 空闭包按钮依赖手势关闭（2026-11-13）
+
+- 现象：错误弹窗右上角「好」点了没反应
+- 我的错误动作：照抄上游 `Button("好") {}`（空闭包），以为是上游设计就没管
+- 根因：上游依赖 `.sheet` 的下滑手势关闭；本仓 sheet 被更上层 presentation 干扰时手势失效，空闭包就真的什么都不做
+- 正确做法：`@Environment(\.dismiss) private var dismiss` + `Button("好") { dismiss() }`
+- 检测方法：所有弹窗的关闭按钮必须显式调用 dismiss，grep `Button("好") {}` 应为 0
+- 关联规范：R-011
