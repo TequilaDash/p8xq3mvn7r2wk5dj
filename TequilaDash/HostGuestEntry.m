@@ -29,6 +29,13 @@ extern NSString *lcAppGroupPath;
 extern NSBundle *lcMainBundle;
 extern bool isLiveProcess;
 
+// LCSharedUtils 类声明（避免 import 头文件引入桥接头依赖链；
+// HostGuestEntry.m 是入口翻译单元，直接 import LCSharedUtils.h 会把
+// LCBootstrap.h 的 extern 变量与其它头一起拉进来，顺序脆弱）.
+@interface LCSharedUtils : NSObject
++ (NSString *)appGroupID;
+@end
+
 // 本仓适配 (v0.3.834): 初始化 LC 的 C 全局 —— 上游在 LiveContainerMain 开头赋值
 // （LCBootstrap.m:670-677），但独立宿主走 TDHostBoot 不经过它，导致
 // lcAppUrlScheme/lcMainBundle/lcUserDefaults/lcSharedDefaults/lcAppGroupPath 全为 nil：
