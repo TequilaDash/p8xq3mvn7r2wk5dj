@@ -506,7 +506,11 @@ class AppInfoProvider {
             let initialHeight = Constants.initialDockShowHeight
             
             // If not already in view hierarchy, add it
-            if hostingController.view.superview == nil {
+            // 本仓适配 (v0.3.839/M12b): superview 非 nil 但已不在任何活 window 里
+            // （旧 keyWindow 销毁后 superview 引用仍存在）也要重挂 —— 否则 dock 消失.
+            let inLiveWindow = hostingController.view.window != nil
+            if hostingController.view.superview == nil || !inLiveWindow {
+                hostingController.view.removeFromSuperview()
                 keyWindow.addSubview(hostingController.view)
                 hostingController.view.frame = CGRect(
                     x: screenBounds.width - currentDockWidth,
