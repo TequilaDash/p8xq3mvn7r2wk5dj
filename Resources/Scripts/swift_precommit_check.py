@@ -86,6 +86,10 @@ CHECKS = [
     # 这份副本没有逐字节守卫（它本来就该与上游不同），但必须让漂移**可见** ——
     # 否则同步上游时没人知道该重放哪几个文件。strict=True: 有未登记的漂移即失败。
     ("LC 核心适配副本漂移报告", "lc_core_drift_guard.py", False),
+    # i18n：代码里 `.loc` 引用的键必须在宿主 Resources/Localizable.xcstrings 里存在。
+    # 合入上游后新增键只进了 vendor 侧的 xcstrings 时，UI 会显示原始变量名
+    # （owner 2026-11-13 真机反馈 lc.appSettings.helperProcessesSupport 等）。
+    ("i18n 键完整性", "lc_i18n_guard.py", False),
     ("LC 适配规则防复发", "lc_adaptation_guard.py", False),
 ]
 

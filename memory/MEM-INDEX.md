@@ -73,3 +73,21 @@
 - 正确做法：`@Environment(\.dismiss) private var dismiss` + `Button("好") { dismiss() }`
 - 检测方法：所有弹窗的关闭按钮必须显式调用 dismiss，grep `Button("好") {}` 应为 0
 - 关联规范：R-011
+
+## MEM-010 崩溃无痕：isLiveProcess 分支不写 error 键（2026-11-13）
+
+- 现象：闪退后手动启动不弹报错，且有没有弹窗「毫无规律」
+- 我的错误动作：一直以为弹窗逻辑本身有问题，没查上游 exceptionHandler 的分支差异
+- 根因：上游 `exceptionHandler` 只在 `!isLiveProcess` 写 `lcUserDefaults["error"]`；`isLiveProcess` 分支只调 `NSExtensionContext cancelRequestWithError`，宿主读不到
+- 正确做法：双写——`lcUserDefaults["error"]` + `lcSharedDefaults["lastGuestLaunchError"]`(+uptime)，扩展上下文照旧
+- 检测方法：`grep -A12 'static void exceptionHandler' vendor/.../LCBootstrap.m` 必须看到两处写入
+- 关联规范：R-018
+
+## MEM-011 cp 目标路径写错，文件落进不该编的 target（2026-11-13）
+
+- 现象：0.3.843 CI 编译失败 `'LiveContainerSwiftUI-Swift.h' file not found (in target 'TDLiveProcess')`
+- 我的错误动作：`cp vendor/.../AppSceneViewController.m TDLiveProcess/LC/../` 想放到 LC 目录，`..` 让它落到了 `TDLiveProcess/` 根
+- 根因：cp 目标用了相对路径含 `..`，没有验证落地位置
+- 正确做法：cp 到确切文件路径（不带 `..`）；cp 后 `ls` 目标目录确认；再用 `git status` 看新增文件是否符合预期
+- 检测方法：`git status --porcelain | grep '^??'` 无意外新增；xcodegen 的 target sources 列表不含新文件
+- 关联规范：R-009

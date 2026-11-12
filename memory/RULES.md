@@ -74,3 +74,9 @@
 - 动作：所有失败分支都必须写一个宿主可读的持久标记（`lcUserDefaults["error"]` + `lcSharedDefaults["lastGuestLaunchError"]` + uptime），不得只走 NSExtensionContext / exit
 - 验证：`grep -A12 'static void exceptionHandler' 上游文件` 确认双写；真机崩溃后重启 App 必须看到弹窗
 - 违反记录：MEM-010（isLiveProcess 分支不写 error → 弹窗时有时无）
+
+## R-019 cp/写入文件必须用无 `..` 的确切路径，并验证落地
+- 条件：合入/重放补丁时复制任何文件
+- 动作：目标路径写完整（`<repo>/TDLiveProcess/LC/xxx.m`），不用 `../`；复制后立即 `ls` 目标目录 + `git status --porcelain` 检查新增项
+- 验证：新增文件清单与预期一一对应；CI 编译无「file not found in target X」类错误
+- 违反记录：MEM-011

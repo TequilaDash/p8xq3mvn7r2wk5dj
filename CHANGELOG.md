@@ -1,3 +1,19 @@
+## [0.3.844] - 2026-11-13
+
+### 修复（合入上游后 UI 显示原始变量名）
+- 上游 9d6ea09b05 新增两条 i18n 键，只进了 `vendor/LiveContainer/Resources/Localizable.xcstrings`，
+  宿主实际打包的 `Resources/Localizable.xcstrings` 没有 →
+  设置页显示 `lc.appSettings.helperProcessesSupport` /
+  `lc.appSettings.fixBackgroundTaskIdentifiers`（owner 真机反馈）。
+- 修法：两条键合并进宿主 xcstrings（en / zh-Hans / zh-Hant 齐全）：
+  · helperProcessesSupport = 启用应用辅助进程 / 啟用 App 輔助處理程序
+  · fixBackgroundTaskIdentifiers = 修复后台处理任务
+
+### 新增守卫
+- `Resources/Scripts/lc_i18n_guard.py`（已接入 precommit）：扫描 vendor + 适配层代码里
+  所有 `.loc` 键，校验宿主 xcstrings 全部存在且至少有 `en` 本地化。
+  当前 305 个代码键 / 339 个 xcstrings 键 / 缺失 0。
+
 ## [0.3.843] - 2026-11-13
 
 ### 新增（M13：崩溃后必留痕，「弹窗时有时无」根因）

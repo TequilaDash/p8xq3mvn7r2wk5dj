@@ -762,29 +762,6 @@
         }
       }
     },
-    "lc.appList.installation": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Installation"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "安装"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "安裝"
-          }
-        }
-      }
-    },
     "lc.appList.installFromIpa": {
       "extractionState": "manual",
       "localizations": {
@@ -896,6 +873,29 @@
           "stringUnit": {
             "state": "translated",
             "value": "請輸入安裝網址"
+          }
+        }
+      }
+    },
+    "lc.appList.installation": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Installation"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "安装"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "安裝"
           }
         }
       }
@@ -1316,75 +1316,6 @@
         }
       }
     },
-    "lc.apppSettings.orientationLock": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Orientation Lock"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "旋转锁定"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "方向鎖定"
-          }
-        }
-      }
-    },
-    "lc.apppSettings.orientationLock.landscape": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Landscape"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "横屏"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "橫向螢幕"
-          }
-        }
-      }
-    },
-    "lc.apppSettings.orientationLock.portrait": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Portrait"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "竖屏"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "垂直螢幕"
-          }
-        }
-      }
-    },
     "lc.appSettings.addExternalNonLocalContainer": {
       "extractionState": "stale",
       "localizations": {
@@ -1557,25 +1488,25 @@
         }
       }
     },
-    "lc.appSettings.fixes": {
+    "lc.appSettings.fixBackgroundTaskIdentifiers": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Fixes"
+            "value": "Fix Background Processing Tasks"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "修复"
+            "value": "修复后台处理任务"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "修復"
+            "value": "修復后台處理任務"
           }
         }
       }
@@ -1673,6 +1604,29 @@
         }
       }
     },
+    "lc.appSettings.fixes": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fixes"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "修复"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "修復"
+          }
+        }
+      }
+    },
     "lc.appSettings.forceSign": {
       "extractionState": "manual",
       "localizations": {
@@ -1738,6 +1692,29 @@
           "stringUnit": {
             "state": "translated",
             "value": "偽裝 SDK 版本使系統庫以應用程式建置時的 SDK 版本運行。"
+          }
+        }
+      }
+    },
+    "lc.appSettings.helperProcessesSupport": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Helper Process Support"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "启用应用辅助进程"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "啟用 App 輔助處理程序"
           }
         }
       }
@@ -2042,17 +2019,6 @@
         }
       }
     },
-    "lc.appSettings.selected32BitEmulator": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "32-bit emulator"
-          }
-        }
-      }
-    },
     "lc.appSettings.selectExternalStorage": {
       "extractionState": "stale",
       "localizations": {
@@ -2076,19 +2042,13 @@
         }
       }
     },
-    "lc.appSettings.signer": {
+    "lc.appSettings.selected32BitEmulator": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Signer"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "签名工具"
+            "value": "32-bit emulator"
           }
         }
       }
@@ -2112,6 +2072,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "這個應用程式沒有簽名，你還是想簽名嗎？"
+          }
+        }
+      }
+    },
+    "lc.appSettings.signer": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Signer"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "签名工具"
           }
         }
       }
@@ -2296,6 +2273,75 @@
           "stringUnit": {
             "state": "translated",
             "value": "在覆蓋主捆綁包時，透過使用LiveContainer的捆綁包識別符號來修復這些問題。"
+          }
+        }
+      }
+    },
+    "lc.apppSettings.orientationLock": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Orientation Lock"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "旋转锁定"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "方向鎖定"
+          }
+        }
+      }
+    },
+    "lc.apppSettings.orientationLock.landscape": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Landscape"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "横屏"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "橫向螢幕"
+          }
+        }
+      }
+    },
+    "lc.apppSettings.orientationLock.portrait": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Portrait"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "竖屏"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "垂直螢幕"
           }
         }
       }
@@ -3993,6 +4039,69 @@
         }
       }
     },
+    "lc.jitlessDiag.certLastUpdate": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Certificate Last Update Date"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "证书上次更新时间"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "證書上次更新時間"
+          }
+        }
+      }
+    },
+    "lc.jitlessDiag.certPassFound": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Certificate Password Found"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "检测到证书密码"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "檢測到證書密碼"
+          }
+        }
+      }
+    },
+    "lc.jitlessDiag.certTeamId": {
+      "extractionState": "stale",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Certificate Team ID"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "证书团队名"
+          }
+        }
+      }
+    },
     "lc.jitlessDiag.certificateRevoked": {
       "extractionState": "stale",
       "localizations": {
@@ -4082,69 +4191,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "證書無效時間"
-          }
-        }
-      }
-    },
-    "lc.jitlessDiag.certLastUpdate": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Certificate Last Update Date"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "证书上次更新时间"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "證書上次更新時間"
-          }
-        }
-      }
-    },
-    "lc.jitlessDiag.certPassFound": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Certificate Password Found"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "检测到证书密码"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "檢測到證書密碼"
-          }
-        }
-      }
-    },
-    "lc.jitlessDiag.certTeamId": {
-      "extractionState": "stale",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Certificate Team ID"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "证书团队名"
           }
         }
       }
@@ -4393,6 +4439,121 @@
           "stringUnit": {
             "state": "translated",
             "value": "此應用程式已被停止。"
+          }
+        }
+      }
+    },
+    "lc.settings.FrameIcon": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Frame Shortcut Icon"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "在App图标外加边框"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "在App圖示加上邊框"
+          }
+        }
+      }
+    },
+    "lc.settings.FrameIconDesc": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Frame shortcut icons with LiveContainer icon."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "在App图标外加LiveContainer图标边框。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "在App圖示外加上LiveContainer圖示邊框。"
+          }
+        }
+      }
+    },
+    "lc.settings.JitAddress": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Address"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "地址"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "地址"
+          }
+        }
+      }
+    },
+    "lc.settings.JitDesc": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Set up your JIT enabler. Local Network permission may be required."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "配置JIT启用工具。可能需要本地网络权限。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "設定JIT啟動器。可能需要本地網絡權限。"
+          }
+        }
+      }
+    },
+    "lc.settings.JitUDID": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "UDID"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "UDID"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "UDID"
           }
         }
       }
@@ -5097,52 +5258,6 @@
         }
       }
     },
-    "lc.settings.FrameIcon": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Frame Shortcut Icon"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "在App图标外加边框"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "在App圖示加上邊框"
-          }
-        }
-      }
-    },
-    "lc.settings.FrameIconDesc": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Frame shortcut icons with LiveContainer icon."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "在App图标外加LiveContainer图标边框。"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "在App圖示外加上LiveContainer圖示邊框。"
-          }
-        }
-      }
-    },
     "lc.settings.hideCollapsedDock": {
       "comment": "lc.settings.hideCollapsedDock",
       "extractionState": "stale",
@@ -5414,52 +5529,6 @@
         }
       }
     },
-    "lc.settings.JitAddress": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Address"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "地址"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "地址"
-          }
-        }
-      }
-    },
-    "lc.settings.JitDesc": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Set up your JIT enabler. Local Network permission may be required."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "配置JIT启用工具。可能需要本地网络权限。"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "設定JIT啟動器。可能需要本地網絡權限。"
-          }
-        }
-      }
-    },
     "lc.settings.jitEnabler": {
       "extractionState": "manual",
       "localizations": {
@@ -5548,29 +5617,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "免JIT模式診斷"
-          }
-        }
-      }
-    },
-    "lc.settings.JitUDID": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "UDID"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "UDID"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "UDID"
           }
         }
       }
@@ -6145,6 +6191,23 @@
         }
       }
     },
+    "lc.settings.noTmpToClean": {
+      "extractionState": "stale",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No temporary files to remove."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "没有可清理的 tmp 内容。"
+          }
+        }
+      }
+    },
     "lc.settings.notDevCert": {
       "extractionState": "stale",
       "localizations": {
@@ -6164,23 +6227,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "LiveContainer未使用開發證書簽名，因此無法正常運作。請使用開發證書簽名LiveContainer。"
-          }
-        }
-      }
-    },
-    "lc.settings.noTmpToClean": {
-      "extractionState": "stale",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "No temporary files to remove."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "没有可清理的 tmp 内容。"
           }
         }
       }
