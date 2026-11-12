@@ -1,3 +1,17 @@
+## [0.3.835] - 2026-11-12
+
+### 修复（多任务窗口被沙盒容器整屏盖住，返回 TD 主页才可见）
+- `MultitaskDockView.swift`：`windowHostingView` 原挂 `keyWindow.rootViewController.view.subviews.first`。
+  本仓架构：主页（TD UI）是 root，沙盒容器是 fullScreenCover 整屏覆盖（presentation 层级
+  在 root 之上）→ 挂在 root 上的多任务窗口被 cover 盖住 →
+  owner 2026-11-12 实测「只能在返回到 TD 主页（非沙盒容器页）才能看到多任务窗口」，
+  且多任务窗口内容白屏。
+- 修法（M8）：挂到 `keyWindow` 本身（在所有 presentation 之上），任何页面都可见。
+
+### 诊断（多任务 scene 白屏，iOS 27.2）
+- `AppSceneViewController.m` iOS27 分支加日志（M6b）：打印 `_scenePresenter` KVC 取值、
+  2 秒后 contentView 尺寸/层级。用于确认白屏是 scene presenter 未取到还是布局问题。
+
 ## [0.3.834] - 2026-11-12
 
 ### 修复（多任务窗口被沙盒容器整屏盖住，返回 TD 主页才可见）
