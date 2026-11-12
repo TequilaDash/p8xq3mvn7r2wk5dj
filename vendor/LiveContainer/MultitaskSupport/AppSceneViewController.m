@@ -188,6 +188,16 @@
         self.contentView.clipsToBounds = NO;
         // _scenePresenter was a property in 26, but made only ivar in 27
         self.presenter = [self.contentView valueForKey:@"_scenePresenter"];
+        // 本仓适配 (v0.3.833): iOS 27.2 真机白屏诊断 —— presenter/scene 是否取到.
+        // iOS 27 上 _scenePresenter 只是 ivar，KVC valueForKey 若取不到（ivar 布局变化）
+        // 则 presenter 为 nil，后续 scene 配置全空跑 -> 多任务窗口白屏
+        // （owner 2026-11-12 真机：多任务窗口有标题栏但内容全白）.
+        NSLog(@"[AppSceneVC] iOS27 scene setup: contentView=%@ presenter=%@ scene=%@",
+              self.contentView, self.presenter,
+              self.presenter ? self.presenter.scene : nil);
+        if (!self.presenter) {
+            NSLog(@"[AppSceneVC] ERROR _scenePresenter 为 nil (KVC 取 ivar 失败) -> 场景未配置 -> 白屏");
+        }
         self.sceneID = self.presenter.identifier;
         FBScene *scene = self.presenter.scene;
         [scene configureParameters:^(FBSMutableSceneParameters *parameters) {
@@ -217,6 +227,15 @@
         
         // Now it's time to get the initial settings from decorated VC
         [self.delegate appSceneVCWillActivateScene:self];
+        // 本仓适配 (v0.3.833): 白屏诊断 —— 2 秒后回看 contentView 尺寸/层级.
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            UIView *cv = self.contentView;
+            UIView *av = self.view;
+            NSLog(@"[AppSceneVC] 2s后白屏诊断: cv.frame=%@ av.frame=%@ cv.subviews=%lu av.subviews=%lu cv.window=%@ cv.hidden=%d",
+                  NSStringFromCGRect(cv.frame), NSStringFromCGRect(av.frame),
+                  (unsigned long)cv.subviews.count, (unsigned long)av.subviews.count,
+                  cv.window, cv.hidden);
+        });
         [self addChildViewController:self.hostingController.sceneViewController];
         
         // For new API, let FBSSceneObserver send host scene events instead of NSExtensionContext

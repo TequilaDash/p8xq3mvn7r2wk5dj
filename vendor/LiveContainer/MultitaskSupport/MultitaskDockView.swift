@@ -286,7 +286,12 @@ class AppInfoProvider {
     
     override init() {
         super.init()
-        keyWindow!.rootViewController!.view.subviews.first!.addSubview(self.windowHostingView)
+        // 本仓适配 (v0.3.834): 原上游挂到 rootVC.view.subviews.first。
+        // 但本仓沙盒容器是 fullScreenCover 整屏覆盖（SandboxHostView），
+        // presentation 层级在 root 之上 -> 多任务窗口被盖住。
+        // owner 2026-11-12 实测「只能返回到 TD 主页（非沙盒容器页）才能看到多任务窗口」。
+        // 挂到 keyWindow 本身（在所有 presentation 之上），任何页面都可见。
+        keyWindow!.addSubview(self.windowHostingView)
         setupDockView()
         NotificationCenter.default.addObserver(
             self,

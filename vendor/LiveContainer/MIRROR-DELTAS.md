@@ -21,6 +21,14 @@
 
 **M6 同步上游时**：上游若已给 `lcAppUrlScheme` 做兜底或宿主路径初始化 → 删除本仓改动。
 
+| M6b | `MultitaskSupport/AppSceneViewController.m` | `:190-198` + `:219-226`（iOS27 scene setup + 2s 后诊断） | 白屏诊断日志：打印 presenter/scene 是否取到、2 秒后 contentView 尺寸/层级 | owner 2026-11-12 真机：多任务窗口标题栏可见但内容全白（iOS 27.2 beta），需确认 `_scenePresenter` KVC 是否取到、contentView 是否有尺寸 | v0.3.833 | ⏳ 待真机 |
+
+**M6b 是纯诊断日志，不改变行为。同步上游时直接删除。**
+
+| M8 | `MultitaskSupport/MultitaskDockView.swift` | `:289`（`windowHostingView` 挂载） | 挂到 `keyWindow` 本身，不再挂 `rootVC.view.subviews.first` | 本仓沙盒容器是 fullScreenCover 整屏覆盖（presentation 层级在 root 之上），挂在 root 上的多任务窗口被盖住 → owner 2026-11-12 实测「只能返回到 TD 主页才能看到多任务窗口」。原版 LC 的 root 就是 LC UI，无 cover，所以上游没这个问题 | v0.3.834 | ✅ 架构差异实锤，待真机 |
+
+**M8 同步上游时**：若上游也改成「App 内容可能在 cover/presentation 上」的架构 → 采用上游写法。
+
 | M7 | `LiveContainer/LCSharedUtils.m` | `:159-170`（`launchToGuestAppWithClassicMode`） | `NSUserDefaults.lcMainBundle` 为 nil 时兜底 `NSBundle.mainBundle` | 同上，`lcMainBundle` 只在 LiveContainerMain 赋值，宿主进程为 nil → `openApplicationWithBundleIdentifier:nil` 使系统内部 `initWithContentsOfFile:` 抛异常崩溃（owner 2026-11-12 .ips 实证，非多任务启动也崩，且要手动点桌面才进容器） | v0.3.833 | ⏳ 待真机 |
 
 **M7 同步上游时**：上游若已给 `lcMainBundle` 做兜底 → 删除本仓改动。
