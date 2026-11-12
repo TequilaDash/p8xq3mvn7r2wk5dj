@@ -14,7 +14,7 @@
 #include <signal.h>
 #include <sys/mman.h>
 #include <stdlib.h>
-#include "litehook.h"
+#include "../litehook/src/litehook.h"
 #import "Tweaks/Tweaks.h"
 #include <mach-o/ldsyms.h>
 
@@ -39,11 +39,7 @@ bool sideStoreExist = false;
     return lcUserDefaults;
 }
 + (instancetype)lcSharedDefaults {
-    // 本仓适配 (v0.3.830): 上游这里判的是 `lcUserDefaults`（笔误），导致
-    // 每次调用都重新 `initWithSuiteName:` 建一个**新** defaults 对象 ——
-    // 主 App 侧写入的证书/开关立刻被下一次读取丢弃（新对象读的是空 suite）。
-    // 正确判据是 `lcSharedDefaults` 自身。
-    if(!lcSharedDefaults) {
+    if(!lcUserDefaults) {
         lcSharedDefaults = [[NSUserDefaults alloc] initWithSuiteName: [LCSharedUtils appGroupID]];
     }
     return lcSharedDefaults;
@@ -252,9 +248,75 @@ static void *getAppEntryPoint(void *handle) {
     return (void *)header + entryoff;
 }
 
+NSString *LCPrepareGuestExtension(NSDictionary *request) {
+    // Unlike an app launch, this process already has a live system extension
+    // context. Only prepare the guest environment and load its request handler.
+    lcMainBundle = NSBundle.mainBundle;
+    lcUserDefaults = NSUserDefaults.standardUserDefaults;
+    isLiveProcess = true;
+    lcAppUrlScheme = @"liveprocess";
+    lcSharedDefaults = [[NSUserDefaults alloc] initWithSuiteName:LCSharedUtils.appGroupID];
+    lcAppGroupPath = [request[@"appGroupPath"] length] ? request[@"appGroupPath"] : nil;
+    guestAppInfo = request[@"guestAppInfo"];
+    guestContainerInfo = request[@"guestContainerInfo"];
+
+    static NSMutableArray<NSURL *> *accessedURLs;
+    accessedURLs = [NSMutableArray array];
+    for (NSData *bookmark in request[@"bookmarks"]) {
+        NSError *error = nil;
+        BOOL stale = NO;
+        NSURL *url = [NSURL URLByResolvingBookmarkData:bookmark options:0 relativeToURL:nil bookmarkDataIsStale:&stale error:&error];
+        if (!url || ![url startAccessingSecurityScopedResource]) {
+            return error.localizedDescription ?: @"Unable to access the guest extension or its container";
+        }
+        [accessedURLs addObject:url];
+    }
+    NSString *bundlePath = request[@"bundlePath"];
+    NSString *appPath = request[@"appBundlePath"];
+    NSString *homePath = request[@"containerPath"];
+    NSString *lcHomePath = request[@"lcHomePath"];
+
+    NSBundle *bundle = [NSBundle bundleWithPath:bundlePath];
+
+    lcGuestAppId = bundle.bundleIdentifier;
+    NSString *originalHome = NSHomeDirectory();
+    setenv("LP_HOME_PATH", originalHome.fileSystemRepresentation, 1);
+    setenv("LC_HOME_PATH", lcHomePath.fileSystemRepresentation, 1);
+    setenv("HOME", homePath.fileSystemRepresentation, 1);
+    setenv("CFFIXED_USER_HOME", homePath.fileSystemRepresentation, 1);
+    setenv("TMPDIR", [[homePath stringByAppendingPathComponent:@"tmp"] stringByAppendingString:@"/"].fileSystemRepresentation, 1);
+    overwriteMainNSBundle(bundle);
+    overwriteMainCFBundle();
+    const char *executablePath = strdup(bundle.executablePath.fileSystemRepresentation);
+    *_CFGetProcessPath() = executablePath;
+    overwriteExecPath(executablePath);
+    NUDGuestHooksInit();
+    NSFMGuestExtensionHooksInit(request[@"parentContainerPath"]);
+    NSURLSCGuestHooksInit();
+
+    if (checkJITEnabled()) init_bypassDyldLibValidation();
+    DyldHooksInit(false, true, 0);
+    appMainImageIndex = _dyld_image_count();
+    __block void *handle = NULL;
+    void (^load)(void) = ^{
+        handle = dlopen_nolock(bundle.executablePath.fileSystemRepresentation, RTLD_LAZY | RTLD_GLOBAL | RTLD_FIRST);
+    };
+    NSDictionary *patchInfo = [NSDictionary dictionaryWithContentsOfFile:[bundlePath stringByAppendingPathComponent:@"LCAppExtension.plist"]];
+    if (@available(iOS 27.0, *)) {
+        if ([patchInfo[@"segCountMismatch"] boolValue]) bypass_seg_count_check(load);
+        else load();
+    } else {
+        load();
+    }
+    if (!handle) {
+        const char *error = dlerror();
+        return error ? @(error) : @"Unable to load the guest extension";
+    }
+    appExecutableHandle = handle;
+    return nil;
+}
+
 static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContainer, int argc, char *argv[]) {
-    // 本仓适配: 分步面包屑 ([LCBootstrap][stepN]), 访客起不来时控制台逐级定位卡死的步骤.
-    NSLog(@"[LCBootstrap][step1] invokeAppMain enter: selectedApp=%@ selectedContainer=%@", selectedApp, selectedContainer);
     NSString *appError = nil;
     if([[lcUserDefaults objectForKey:@"LCWaitForDebugger"] boolValue]) {
         sleep(100);
@@ -262,7 +324,6 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
     if (!LCSharedUtils.certificatePassword && !isSideStore) {
 #if !TARGET_OS_SIMULATOR
         if(@available(iOS 26.0 ,*))  {
-            NSLog(@"[LCBootstrap][step2] JIT gate: iOS 26+ without certificate password, JITLess mode required");
             return @"JITLess mode is required since iOS 26. Please set it up in settings. \nPlease go to LiveContainer settings -> tap \"Import Certificate from SideStore\" / \"Import Certificate\"";
         }
 #endif
@@ -271,26 +332,13 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
             usleep(1000*100);
         }
         if (!checkJITEnabled()) {
-            NSLog(@"[LCBootstrap][step3] JIT gate: checkJITEnabled still failing after retries");
             appError = @"JIT was not enabled. If you want to use LiveContainer without JIT, setup JITLess mode in settings.";
             return appError;
         }
     }
 
     NSFileManager *fm = NSFileManager.defaultManager;
-    // 本仓适配: LC_HOME_PATH 直接传 SandboxApps 根 (…/Documents/SandboxApps),
-    // 其下就是 LC 同款布局 Applications/<name>.app + Data/Application/<UUID>, 不再拼 /Documents.
-    // 本仓适配 (启动闪退加固): getenv 可能为 NULL, 而 [NSString stringWithUTF8String:NULL]
-    // 是未定义行为 (实测崩溃). LC_HOME_PATH 缺失时回落 HOME; 两者都缺则如实报错返回.
-    const char *lcHomeEnv = getenv("LC_HOME_PATH");
-    if (!lcHomeEnv) {
-        lcHomeEnv = getenv("HOME");
-    }
-    if (!lcHomeEnv) {
-        NSLog(@"[LCBootstrap][step4a] LC_HOME_PATH and HOME both unset");
-        return @"LC_HOME_PATH 与 HOME 均未设置, 无法定位容器根目录";
-    }
-    NSString *docPath = [NSString stringWithUTF8String:lcHomeEnv];
+    NSString *docPath = [NSString stringWithFormat:@"%s/Documents", getenv("LC_HOME_PATH")];
     
     NSURL *appGroupFolder = nil;
     
@@ -302,26 +350,21 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
     } else {
         bundlePath = [[NSBundle.mainBundle.bundleURL URLByAppendingPathComponent:@"Frameworks/SideStoreApp.framework"] path];
     }
-    NSLog(@"[LCBootstrap][step4] guest app bundle path resolved: %@", bundlePath);
     
 
-    // 本仓适配: 不写 LCAppInfo.plist, 直接读访客自己的 Info.plist
-    // (LCDataUUID 等 LC 专有键缺席无碍 —— selectedContainer 恒由宿主传入).
-    guestAppInfo = [NSDictionary dictionaryWithContentsOfFile:[NSString stringWithFormat:@"%@/Info.plist", bundlePath]];
-    NSLog(@"[LCBootstrap][step5] guest Info.plist read at %@: %@", bundlePath, guestAppInfo ? @"found" : @"missing");
+    guestAppInfo = [NSDictionary dictionaryWithContentsOfFile:[NSString stringWithFormat:@"%@/LCAppInfo.plist", bundlePath]];
 
     // not found locally, let's look for the app in shared folder
     if(!guestAppInfo) {
         NSURL *appGroupPath = [NSFileManager.defaultManager containerURLForSecurityApplicationGroupIdentifier:[LCSharedUtils appGroupID]];
         appGroupFolder = [appGroupPath URLByAppendingPathComponent:@"LiveContainer"];
         bundlePath = [NSString stringWithFormat:@"%@/Applications/%@", appGroupFolder.path, selectedApp];
-        guestAppInfo = [NSDictionary dictionaryWithContentsOfFile:[NSString stringWithFormat:@"%@/Info.plist", bundlePath]];
+        guestAppInfo = [NSDictionary dictionaryWithContentsOfFile:[NSString stringWithFormat:@"%@/LCAppInfo.plist", bundlePath]];
         isSharedBundle = true;
     }
-
+    
     if(!guestAppInfo) {
-        NSLog(@"[LCBootstrap][step6] guest Info.plist still missing after shared-folder fallback, bundlePath=%@", bundlePath);
-        return @"App bundle not found! Unable to read Info.plist.";
+        return @"App bundle not found! Unable to read LCAppInfo.plist.";
     }
     
     if([guestAppInfo[@"doUseLCBundleId"] boolValue] ) {
@@ -494,12 +537,6 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
 
     }
     
-    // 本仓适配 (启动闪退加固): newHomePath 为 nil 时 .UTF8String 返回 NULL,
-    // setenv(name, NULL, 1) 是未定义行为 (崩溃). 缺路径就如实报错, 不带着半配置去跳 main.
-    if (!newHomePath.length) {
-        NSLog(@"[LCBootstrap][step6a] newHomePath is nil, cannot set guest HOME");
-        return @"访客可写容器路径为空, 未设置 HOME (检查 selectedContainer 与包体 Info.plist)";
-    }
     setenv("CFFIXED_USER_HOME", newHomePath.UTF8String, 1);
     setenv("HOME", newHomePath.UTF8String, 1);
     // we don't change TMP's env in case some apps clear cache by directly deleting the tmp folder,
@@ -542,6 +579,9 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
     
     // hook NSUserDefault before running libraries' initializers
     NUDGuestHooksInit();
+    if (!isLiveProcess && [guestAppInfo[@"helperProcessesSupport"] boolValue]) {
+        NSExtensionGuestHooksInit(appBundle.bundleURL, [NSURL fileURLWithPath:newHomePath isDirectory:YES]);
+    }
     if(!isSideStore) {
         SecItemGuestHooksInit();
         NSFMGuestHooksInit();
@@ -551,6 +591,7 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
         NSURLSCGuestHooksInit();
     }
     // 联网管理 (本仓功能, LC 没有): 宿主按容器落 TD_NET_BLOCK, 命中即拦访客对外 connect
+    // (重放于 v0.3.840 合入上游 9d6ea09b05; 判据为值 '1' 而非变量存在, 见 M2/C1)
     const char *netBlockEnv = getenv("TD_NET_BLOCK");
     if(netBlockEnv && netBlockEnv[0] == '1') {
         NetBlockGuestHooksInit();
@@ -619,12 +660,13 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
     }
 
     // 联网管理 (本仓功能, LC 没有). 判据必须是**值**为 "1"，不能只看变量存在:
-    // HostGuestEntry.m 每次启动访客都 `setenv("TD_NET_BLOCK", "0"|"1", 1)`，
-    // 变量恒存在 —— 只判 `getenv(...)` 非空会让**所有**访客的网络都被拦成 EPERM.
+    // HostGuestEntry.m 每次启动访客都 setenv("TD_NET_BLOCK","0"|"1",1), 变量恒存在.
+    // (重放于 v0.3.840 合入上游 9d6ea09b05)
     const char *netBlockEnvAfter = getenv("TD_NET_BLOCK");
     if(netBlockEnvAfter && netBlockEnvAfter[0] == '1') {
         NetBlockApplyAfterGuestLoad();
     }
+
     appExecutableHandle = appHandle;
     const char *dlerr = dlerror();
     
@@ -653,10 +695,13 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
         dlopen([lcMainBundle.bundlePath stringByAppendingPathComponent:@"Frameworks/TweakLoader.dylib"].UTF8String, RTLD_LAZY|RTLD_GLOBAL);
     }
     
-    // 本仓适配 (v0.3.801): 不接 SideStore —— 上面这块是上游的 SideStoreSupport.framework
-    // dlopen (上游 LCBootstrap.m 同位置). 本仓 bundle 里没有该 framework (project.yml 未接
-    // SideStoreSupport target), sideStoreExist 恒 false, 整块永不执行, 故移除以免误导.
-    // isSideStore / sideStoreExist 变量与其它判断保留 (只删资源引用, 不改控制流语义).
+    if(sideStoreExist) {
+        if (!isLiveProcess && (isSideStore || ![guestAppInfo[@"dontInjectTweakLoader"] boolValue])) {
+            dlopen([lcMainBundle.bundlePath stringByAppendingPathComponent:@"Frameworks/SideStoreSupport.framework/SideStoreSupport"].UTF8String, RTLD_LAZY);
+        } else if (isLiveProcess && isSideStore) {
+            dlopen([lcMainBundle.bundlePath stringByAppendingPathComponent:@"../../Frameworks/SideStoreSupport.framework/SideStoreSupport"].UTF8String, RTLD_LAZY);
+        }
+    }
     
     // Fix dynamic properties of some apps
     [NSUserDefaults performSelector:@selector(initialize)];
@@ -679,18 +724,6 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
         return appError;
     }
 
-    // 启动进行中标记 (本仓适配): 宿主重启前落的 pending 文件在这里删 —— 能走到这一行说明
-    // 沙盒接管 / dyld 注入 / bundle 装载 / 入口点解析全部通过, 之后的崩溃归访客二进制自己.
-    // 无 app group 时这是宿主唯一可靠的「上次崩在启动阶段」信号 (扩展容器与本进程不共享 suite).
-    if (newHomePath.length > 0) {
-        NSString *tdPendingMarker = [newHomePath stringByAppendingPathComponent:@".td_guest_launch_pending"];
-        NSFileManager *tdFM = [NSFileManager defaultManager];
-        if ([tdFM fileExistsAtPath:tdPendingMarker]) {
-            [tdFM removeItemAtPath:tdPendingMarker error:nil];
-            NSLog(@"[LCBootstrap][step6b] pending launch marker cleared: %@", tdPendingMarker);
-        }
-    }
-
     // Go!
     NSLog(@"[LCBootstrap] jumping to main %p", appMain);
     int ret;
@@ -706,13 +739,8 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
 
 static void exceptionHandler(NSException *exception) {
     NSString *error = [NSString stringWithFormat:@"%@\nCall stack: %@", exception.reason, exception.callStackSymbols];
-    NSLog(@"[LCBootstrap][step8] uncaught exception, persisting to shared defaults: %@", error);
-    // 本仓适配: 两个分支都把完整错误串写进共享 suite ([LCSharedUtils appGroupID]) 的
-    // lastGuestLaunchError, 宿主 SwiftUI 端读它弹持久 alert; systemUptime 供宿主判陈旧.
-    [lcSharedDefaults setObject:error forKey:@"lastGuestLaunchError"];
-    [lcSharedDefaults setDouble:[[NSProcessInfo processInfo] systemUptime] forKey:@"lastGuestLaunchErrorUptime"];
     if(isLiveProcess) {
-        NSExtensionContext *context = [NSClassFromString(@"TequilaDashLiveProcessHandler") extensionContext];
+        NSExtensionContext *context = [NSClassFromString(@"LiveProcessHandler") extensionContext];
         [context cancelRequestWithError:[NSError errorWithDomain:@"LiveProcess" code:1 userInfo:@{NSLocalizedDescriptionKey: error}]];
     } else {
         [lcUserDefaults setObject:error forKey:@"error"];
@@ -724,19 +752,10 @@ int LiveContainerMain(int argc, char *argv[]) {
     lcUserDefaults = NSUserDefaults.standardUserDefaults;
     
     lcSharedDefaults = [[NSUserDefaults alloc] initWithSuiteName: [LCSharedUtils appGroupID]];
-    // 本仓适配 (启动闪退加固): 原写法 infoDictionary[@"CFBundleURLTypes"][0][...][0] 在
-    // CFBundleURLTypes 为空时会对空数组取下标 -> NSRangeException 崩溃. firstObject 全部空安全.
-    NSArray *lcUrlTypes = lcMainBundle.infoDictionary[@"CFBundleURLTypes"];
-    NSArray *lcUrlSchemes = [lcUrlTypes.firstObject objectForKey:@"CFBundleURLSchemes"];
-    lcAppUrlScheme = lcUrlSchemes.firstObject;
+    lcAppUrlScheme = NSBundle.mainBundle.infoDictionary[@"CFBundleURLTypes"][0][@"CFBundleURLSchemes"][0];
     lcAppGroupPath = [[NSFileManager.defaultManager containerURLForSecurityApplicationGroupIdentifier:[NSClassFromString(@"LCSharedUtils") appGroupID]] path];
-    // 本仓适配: 扩展 scheme[0] 是 TequilaDashliveprocess (不与真实 LC 的 liveprocess 撞), 判定同步改
-    isLiveProcess = [lcAppUrlScheme isEqualToString:@"TequilaDashliveprocess"];
-    // 本仓适配 (启动闪退加固): getenv 可能为 NULL, setenv(name, NULL, ...) 是未定义行为.
-    const char *bootHomeEnv = getenv("HOME");
-    if (bootHomeEnv) {
-        setenv("LC_HOME_PATH", bootHomeEnv, 0);
-    }
+    isLiveProcess = [lcAppUrlScheme isEqualToString:@"liveprocess"];
+    setenv("LC_HOME_PATH", getenv("HOME"), 0);
 
     NSString *selectedApp = [lcUserDefaults stringForKey:@"selected"];
     NSString *selectedContainer = [lcUserDefaults stringForKey:@"selectedContainer"];
@@ -780,9 +799,7 @@ int LiveContainerMain(int argc, char *argv[]) {
         if([lastLaunchType isEqualToString:@"Shared"]) {
             preferencesTo = [LCSharedUtils.appGroupPath.path stringByAppendingPathComponent:[NSString stringWithFormat:@"LiveContainer/Data/Application/%@/Library/Preferences", lastLaunchDataUUID]];
         } else {
-            // 本仓适配: LC_HOME_PATH 直接传 SandboxApps 根 (…/Documents/SandboxApps),
-    // 其下就是 LC 同款布局 Applications/<name>.app + Data/Application/<UUID>, 不再拼 /Documents.
-    NSString *docPath = [NSString stringWithUTF8String:getenv("LC_HOME_PATH")];
+            NSString *docPath = [NSString stringWithFormat:@"%s/Documents", getenv("LC_HOME_PATH")];
             preferencesTo = [docPath stringByAppendingPathComponent:[NSString stringWithFormat:@"Data/Application/%@/Library/Preferences", lastLaunchDataUUID]];
         }
         // recover preferences
@@ -875,14 +892,9 @@ int LiveContainerMain(int argc, char *argv[]) {
         }
         NSString *appError = invokeAppMain(selectedApp, selectedContainer, argc, argv);
         if (appError) {
-            NSLog(@"[LCBootstrap][step7] invokeAppMain returned error, guest launch failed: %@", appError);
-            // 本仓适配: 失败原因同步落共享 suite ([LCSharedUtils appGroupID]) 的 lastGuestLaunchError,
-            // 宿主 SwiftUI 端 (RootView) 回壳首帧读它弹持久 alert; systemUptime 供宿主判陈旧.
-            [lcSharedDefaults setObject:appError forKey:@"lastGuestLaunchError"];
-            [lcSharedDefaults setDouble:[[NSProcessInfo processInfo] systemUptime] forKey:@"lastGuestLaunchErrorUptime"];
             if(isLiveProcess) {
                 dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(100 * NSEC_PER_MSEC)), dispatch_get_main_queue(), ^{
-                    NSExtensionContext *context = [NSClassFromString(@"TequilaDashLiveProcessHandler") extensionContext];
+                    NSExtensionContext *context = [NSClassFromString(@"LiveProcessHandler") extensionContext];
                     [context cancelRequestWithError:[NSError errorWithDomain:@"LiveProcess" code:1 userInfo:@{NSLocalizedDescriptionKey: appError}]];
                     exit(1);
                 });
@@ -923,7 +935,9 @@ int LiveContainerMain(int argc, char *argv[]) {
     void *LiveContainerSwiftUIHandle = dlopen("@executable_path/Frameworks/LiveContainerSwiftUI.framework/LiveContainerSwiftUI", RTLD_LAZY);
     NSCAssert(LiveContainerSwiftUIHandle, @"%s", dlerror());
     
-    // 本仓适配 (v0.3.801): 不接 SideStore, 无 SideStoreSupport.framework 可 dlopen.
+    if(sideStoreExist) {
+        void* sideStoreHandle = dlopen("@executable_path/Frameworks/SideStoreSupport.framework/SideStoreSupport", RTLD_LAZY);
+    }
 
     if ([lcUserDefaults boolForKey:@"LCLoadTweaksToSelf"]) {
         NSString *tweakFolder = nil;

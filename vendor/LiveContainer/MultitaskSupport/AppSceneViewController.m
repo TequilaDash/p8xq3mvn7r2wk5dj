@@ -57,19 +57,8 @@
     
     NSExtensionItem *item = [NSExtensionItem new];
     NSMutableArray* bookmarks = [NSMutableArray array];
-    // 本仓适配 (v0.3.833): `NSUserDefaults.lcAppUrlScheme` 在多任务启动时为 nil ——
-    // 它只在 `LiveContainerMain`（LCBootstrap.m:674/731）里赋值，而本仓独立宿主走
-    // `TDHostBoot` 不经过 `LiveContainerMain`。字典字面量 `@{...: nil}` 会抛
-    // `NSInvalidArgumentException: insert nil object` 导致整个 App 崩溃
-    // （owner 2026-11-12 真机 .ips 实证，多任务启动闪退）.
-    // 兜底：nil 时取主 App 的 CFBundleURLTypes[0] 第一个 scheme。
-    NSString *hostScheme = NSUserDefaults.lcAppUrlScheme;
-    if (!hostScheme) {
-        NSArray *schemes = NSBundle.mainBundle.infoDictionary[@"CFBundleURLTypes"][0][@"CFBundleURLSchemes"];
-        hostScheme = schemes.firstObject;
-    }
     NSMutableDictionary *userInfo = @{
-        @"hostUrlScheme": hostScheme,
+        @"hostUrlScheme": NSUserDefaults.lcAppUrlScheme,
         @"selected": _bundleId,
         @"selectedContainer": _dataUUID,
         @"bookmarks": bookmarks,
@@ -93,27 +82,12 @@
         if (!isSharedApp) {
             NSURL *dataURL = [docURL URLByAppendingPathComponent:[NSString stringWithFormat:@"Data/Application/%@", dataUUID]];
             NSURL *tweaksURL = [docURL URLByAppendingPathComponent:@"Tweaks"];
-            // 本仓适配 (v0.3.830): `bookmarkDataWithOptions:` 失败返回 nil，而
-            // `-addObject:` 传 nil 会抛 `__NSArrayM insertObject:atIndex: object cannot be nil`
-            // 并**整个 App 崩溃**（owner 2026-11-11 真机日志实证：
-            //   AppSceneViewController initWithBundleId:dataUUID:delegate: + 1032
-            //   DecoratedAppSceneViewController initWindowName:bundleId:dataUUID:rootVC: + 408
-            //   LCUtils launchMultitaskGuestApp:completionHandler: block_invoke + 280）。
-            // 上游只给 containerBookmark 加了判空，另外两处漏了 —— 本仓补齐。
-            // bookmark 失败通常是容器目录不存在（还没建 Data/Application/<uuid>）或
-            // 主包 bundleURL 不可 bookmark（越界沙盒），两者都不该让 App 崩。
-            NSData* bundleBookmark = [bundle.bundleURL bookmarkDataWithOptions:(1<<11) includingResourceValuesForKeys:0 relativeToURL:0 error:0];
-            if (bundleBookmark) {
-                [bookmarks addObject:bundleBookmark];
-            }
+            [bookmarks addObject:[bundle.bundleURL bookmarkDataWithOptions:(1<<11) includingResourceValuesForKeys:0 relativeToURL:0 error:0]];
             NSData* containerBookmark = [dataURL bookmarkDataWithOptions:(1<<11) includingResourceValuesForKeys:0 relativeToURL:0 error:0];
             if(containerBookmark) {
                 [bookmarks addObject:containerBookmark];
             }
-            NSData* tweaksBookmark = [tweaksURL bookmarkDataWithOptions:(1<<11) includingResourceValuesForKeys:0 relativeToURL:0 error:0];
-            if (tweaksBookmark) {
-                [bookmarks addObject:tweaksBookmark];
-            }
+            [bookmarks addObject:[tweaksURL bookmarkDataWithOptions:(1<<11) includingResourceValuesForKeys:0 relativeToURL:0 error:0]];
         }
     }
     item.userInfo = userInfo;
@@ -188,16 +162,6 @@
         self.contentView.clipsToBounds = NO;
         // _scenePresenter was a property in 26, but made only ivar in 27
         self.presenter = [self.contentView valueForKey:@"_scenePresenter"];
-        // 本仓适配 (v0.3.833): iOS 27.2 真机白屏诊断 —— presenter/scene 是否取到.
-        // iOS 27 上 _scenePresenter 只是 ivar，KVC valueForKey 若取不到（ivar 布局变化）
-        // 则 presenter 为 nil，后续 scene 配置全空跑 -> 多任务窗口白屏
-        // （owner 2026-11-12 真机：多任务窗口有标题栏但内容全白）.
-        NSLog(@"[AppSceneVC] iOS27 scene setup: contentView=%@ presenter=%@ scene=%@",
-              self.contentView, self.presenter,
-              self.presenter ? self.presenter.scene : nil);
-        if (!self.presenter) {
-            NSLog(@"[AppSceneVC] ERROR _scenePresenter 为 nil (KVC 取 ivar 失败) -> 场景未配置 -> 白屏");
-        }
         self.sceneID = self.presenter.identifier;
         FBScene *scene = self.presenter.scene;
         [scene configureParameters:^(FBSMutableSceneParameters *parameters) {
@@ -227,39 +191,6 @@
         
         // Now it's time to get the initial settings from decorated VC
         [self.delegate appSceneVCWillActivateScene:self];
-        // 本仓适配 (v0.3.834/M10): iOS 27.2 多任务白屏的确定性修复.
-        // iOS 18+ 分支 contentView = sceneViewController.view，依赖 _UISceneHostingController
-        // 内部挂 presentationView；iOS 27.2 beta 上场景连接异步完成，view 层级里
-        // presentationView 可能尚未挂上 -> 窗口有标题栏但内容全白
-        // （owner 2026-11-12 真机实测，v0.3.835 M8 修层级后窗口可见但内容仍白）.
-        // 与 iOS<18 分支对齐：显式把 presenter.presentationView 挂到 contentView，
-        // 并延迟 0.5s 再挂一次兜底（场景连接完成后再保证层级），幂等（同一对象只会移到顶层）.
-        UIView *presentationView = self.presenter.presentationView;
-        if (presentationView && presentationView.superview != self.contentView) {
-            [self.contentView addSubview:presentationView];
-            presentationView.frame = self.contentView.bounds;
-            presentationView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-        }
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            UIView *pv = self.presenter.presentationView;
-            if (pv && pv.superview == nil) {
-                [self.contentView addSubview:pv];
-                pv.frame = self.contentView.bounds;
-                pv.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-                NSLog(@"[AppSceneVC] M10: presentationView 延迟挂载完成（场景异步连接后）");
-            }
-        });
-        // 本仓适配 (v0.3.833/M6b): 白屏诊断 —— 2 秒后回看 contentView 尺寸/层级.
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            UIView *cv = self.contentView;
-            UIView *av = self.view;
-            UIView *pv = self.presenter.presentationView;
-            NSLog(@"[AppSceneVC] 2s后白屏诊断: cv.frame=%@ av.frame=%@ cv.subviews=%lu pv.superview=%@ pv.frame=%@ cv.window=%@ cv.hidden=%d",
-                  NSStringFromCGRect(cv.frame), NSStringFromCGRect(av.frame),
-                  (unsigned long)cv.subviews.count,
-                  pv.superview, NSStringFromCGRect(pv.frame),
-                  cv.window, cv.hidden);
-        });
         [self addChildViewController:self.hostingController.sceneViewController];
         
         // For new API, let FBSSceneObserver send host scene events instead of NSExtensionContext

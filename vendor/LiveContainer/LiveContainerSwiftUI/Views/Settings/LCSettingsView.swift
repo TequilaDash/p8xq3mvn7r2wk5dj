@@ -568,8 +568,7 @@ struct LCSettingsView: View {
             return
         }
         
-        guard let _ = LCUtils.getCertTeamId(withKeyData: certificateData, password: certificatePassword) else {
-            // 本仓适配 (v0.3.832): 把 ZSign 的具体失败原因直接显示在弹窗里,
+// 本仓适配 (v0.3.832): 把 ZSign 的具体失败原因直接显示在弹窗里,
             // 而不是笼统的「验证证书失败」. 详见 ZSigner.lastZSignLogs.
             let detail = (NSClassFromString("ZSigner") as? NSObject.Type)?
                 .perform(NSSelectorFromString("lastZSignLogs"))?
@@ -580,9 +579,7 @@ struct LCSettingsView: View {
             } else {
                 errorInfo = base
             }
-            errorShow = true
-            return
-        }
+
 
         LCUtils.appGroupUserDefault.set(certificateData, forKey: "LCCertificateData")
         LCUtils.appGroupUserDefault.set(certificatePassword, forKey: "LCCertificatePassword")

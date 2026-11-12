@@ -10,7 +10,8 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 class SearchContext: ObservableObject {
-    /// 本仓适配 (v0.3.809): 共享实例.
+    @Published var query: String = ""
+/// 本仓适配 (v0.3.809): 共享实例.
     ///
     /// 上游两处声明都是 `@ObservedObject var searchContext = SearchContext()`
     /// （LCAppListView.swift:86 与 LCAltStoreSourcesView.swift:487）。`@ObservedObject`
@@ -21,7 +22,6 @@ class SearchContext: ObservableObject {
     /// TabView 承载会重建，故改为共享实例。
     static let shared = SearchContext()
 
-    @Published var query: String = ""
     @Published var debouncedQuery: String = ""
     @Published var isTyping: Bool = false
 
@@ -31,7 +31,8 @@ class SearchContext: ObservableObject {
         $query
             .debounce(for: .seconds(0.2), scheduler: DispatchQueue.main)
             .sink { [weak self] value in
-                // 本仓适配 (v0.3.816): 清空 query（点搜索栏的 X 取消）时**不走 isTyping 副作用**。
+                self?.isTyping = true
+// 本仓适配 (v0.3.816): 清空 query（点搜索栏的 X 取消）时**不走 isTyping 副作用**。
                 //
                 // 真机实测：直接点 X 会重新载入列表；先点键盘「完成」再点 X 不会。
                 // 原因：`.searchable` 把 query 置 "" 后，本 sink 仍置 `isTyping = true`
@@ -42,7 +43,7 @@ class SearchContext: ObservableObject {
                     self?.debouncedQuery = ""
                     return
                 }
-                self?.isTyping = true
+
                 self?.debouncedQuery = value
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
                     self?.isTyping = false
@@ -743,31 +744,7 @@ struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
         }
         
         if let appToReplace {
-            // copy previous configration to new app
-            finalNewApp.autoSaveDisabled = true
-            finalNewApp.isLocked = appToReplace.appInfo.isLocked
-            finalNewApp.isHidden = appToReplace.appInfo.isHidden
-            finalNewApp.isJITNeeded = appToReplace.appInfo.isJITNeeded
-            finalNewApp.isShared = appToReplace.appInfo.isShared
-            finalNewApp.spoofSDKVersion = appToReplace.appInfo.spoofSDKVersion
-            finalNewApp.doSymlinkInbox = appToReplace.appInfo.doSymlinkInbox
-            finalNewApp.containerInfo = appToReplace.appInfo.containerInfo
-            finalNewApp.tweakFolder = appToReplace.appInfo.tweakFolder
-            finalNewApp.selectedLanguage = appToReplace.appInfo.selectedLanguage
-            finalNewApp.dataUUID = appToReplace.appInfo.dataUUID
-            finalNewApp.orientationLock = appToReplace.appInfo.orientationLock
-            finalNewApp.dontInjectTweakLoader = appToReplace.appInfo.dontInjectTweakLoader
-            finalNewApp.hideLiveContainer = appToReplace.appInfo.hideLiveContainer
-            finalNewApp.dontLoadTweakLoader = appToReplace.appInfo.dontLoadTweakLoader
-            finalNewApp.doUseLCBundleId = appToReplace.appInfo.doUseLCBundleId
-            finalNewApp.fixFilePickerNew = appToReplace.appInfo.fixFilePickerNew
-            finalNewApp.fixLocalNotification = appToReplace.appInfo.fixLocalNotification
-            finalNewApp.lastLaunched = appToReplace.appInfo.lastLaunched
-            finalNewApp.jitLaunchScriptJs = appToReplace.appInfo.jitLaunchScriptJs
-            finalNewApp.multitaskSpecified = appToReplace.appInfo.multitaskSpecified
-            finalNewApp.classicMode = appToReplace.appInfo.classicMode
-            finalNewApp.autoSaveDisabled = false
-            finalNewApp.save()
+            LCAppModel.copy(fromApp: appToReplace, toAppInfo: finalNewApp)
         } else {
             // enable SDK version spoof by defalut
             finalNewApp.spoofSDKVersion = true

@@ -39,11 +39,7 @@ bool sideStoreExist = false;
     return lcUserDefaults;
 }
 + (instancetype)lcSharedDefaults {
-    // 本仓适配 (v0.3.830): 上游这里判的是 `lcUserDefaults`（笔误），导致
-    // 每次调用都重新 `initWithSuiteName:` 建一个**新** defaults 对象 ——
-    // 主 App 侧写入的证书/开关立刻被下一次读取丢弃（新对象读的是空 suite）。
-    // 正确判据是 `lcSharedDefaults` 自身。
-    if(!lcSharedDefaults) {
+    if(!lcUserDefaults) {
         lcSharedDefaults = [[NSUserDefaults alloc] initWithSuiteName: [LCSharedUtils appGroupID]];
     }
     return lcSharedDefaults;
@@ -250,6 +246,74 @@ static void *getAppEntryPoint(void *handle) {
     }
     assert(entryoff > 0);
     return (void *)header + entryoff;
+}
+
+NSString *LCPrepareGuestExtension(NSDictionary *request) {
+    // Unlike an app launch, this process already has a live system extension
+    // context. Only prepare the guest environment and load its request handler.
+    lcMainBundle = NSBundle.mainBundle;
+    lcUserDefaults = NSUserDefaults.standardUserDefaults;
+    isLiveProcess = true;
+    lcAppUrlScheme = @"liveprocess";
+    lcSharedDefaults = [[NSUserDefaults alloc] initWithSuiteName:LCSharedUtils.appGroupID];
+    lcAppGroupPath = [request[@"appGroupPath"] length] ? request[@"appGroupPath"] : nil;
+    guestAppInfo = request[@"guestAppInfo"];
+    guestContainerInfo = request[@"guestContainerInfo"];
+
+    static NSMutableArray<NSURL *> *accessedURLs;
+    accessedURLs = [NSMutableArray array];
+    for (NSData *bookmark in request[@"bookmarks"]) {
+        NSError *error = nil;
+        BOOL stale = NO;
+        NSURL *url = [NSURL URLByResolvingBookmarkData:bookmark options:0 relativeToURL:nil bookmarkDataIsStale:&stale error:&error];
+        if (!url || ![url startAccessingSecurityScopedResource]) {
+            return error.localizedDescription ?: @"Unable to access the guest extension or its container";
+        }
+        [accessedURLs addObject:url];
+    }
+    NSString *bundlePath = request[@"bundlePath"];
+    NSString *appPath = request[@"appBundlePath"];
+    NSString *homePath = request[@"containerPath"];
+    NSString *lcHomePath = request[@"lcHomePath"];
+
+    NSBundle *bundle = [NSBundle bundleWithPath:bundlePath];
+
+    lcGuestAppId = bundle.bundleIdentifier;
+    NSString *originalHome = NSHomeDirectory();
+    setenv("LP_HOME_PATH", originalHome.fileSystemRepresentation, 1);
+    setenv("LC_HOME_PATH", lcHomePath.fileSystemRepresentation, 1);
+    setenv("HOME", homePath.fileSystemRepresentation, 1);
+    setenv("CFFIXED_USER_HOME", homePath.fileSystemRepresentation, 1);
+    setenv("TMPDIR", [[homePath stringByAppendingPathComponent:@"tmp"] stringByAppendingString:@"/"].fileSystemRepresentation, 1);
+    overwriteMainNSBundle(bundle);
+    overwriteMainCFBundle();
+    const char *executablePath = strdup(bundle.executablePath.fileSystemRepresentation);
+    *_CFGetProcessPath() = executablePath;
+    overwriteExecPath(executablePath);
+    NUDGuestHooksInit();
+    NSFMGuestExtensionHooksInit(request[@"parentContainerPath"]);
+    NSURLSCGuestHooksInit();
+
+    if (checkJITEnabled()) init_bypassDyldLibValidation();
+    DyldHooksInit(false, true, 0);
+    appMainImageIndex = _dyld_image_count();
+    __block void *handle = NULL;
+    void (^load)(void) = ^{
+        handle = dlopen_nolock(bundle.executablePath.fileSystemRepresentation, RTLD_LAZY | RTLD_GLOBAL | RTLD_FIRST);
+    };
+    NSDictionary *patchInfo = [NSDictionary dictionaryWithContentsOfFile:[bundlePath stringByAppendingPathComponent:@"LCAppExtension.plist"]];
+    if (@available(iOS 27.0, *)) {
+        if ([patchInfo[@"segCountMismatch"] boolValue]) bypass_seg_count_check(load);
+        else load();
+    } else {
+        load();
+    }
+    if (!handle) {
+        const char *error = dlerror();
+        return error ? @(error) : @"Unable to load the guest extension";
+    }
+    appExecutableHandle = handle;
+    return nil;
 }
 
 static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContainer, int argc, char *argv[]) {
@@ -515,6 +579,9 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
     
     // hook NSUserDefault before running libraries' initializers
     NUDGuestHooksInit();
+    if (!isLiveProcess && [guestAppInfo[@"helperProcessesSupport"] boolValue]) {
+        NSExtensionGuestHooksInit(appBundle.bundleURL, [NSURL fileURLWithPath:newHomePath isDirectory:YES]);
+    }
     if(!isSideStore) {
         SecItemGuestHooksInit();
         NSFMGuestHooksInit();
@@ -522,6 +589,12 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
     }
     if(isLiveProcess) {
         NSURLSCGuestHooksInit();
+    }
+    // 联网管理 (本仓功能, LC 没有): 宿主按容器落 TD_NET_BLOCK, 命中即拦访客对外 connect
+    // (重放于 v0.3.840 合入上游 9d6ea09b05; 判据为值 '1' 而非变量存在, 见 M2/C1)
+    const char *netBlockEnv = getenv("TD_NET_BLOCK");
+    if(netBlockEnv && netBlockEnv[0] == '1') {
+        NetBlockGuestHooksInit();
     }
     // ignore setting handler from guest app
     litehook_rebind_symbol(LITEHOOK_REBIND_GLOBAL, NSSetUncaughtExceptionHandler, hook_do_nothing, nil);
@@ -584,6 +657,14 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
         bypass_seg_count_check(dlopenBlock);
     } else {
         dlopenBlock();
+    }
+
+    // 联网管理 (本仓功能, LC 没有). 判据必须是**值**为 "1"，不能只看变量存在:
+    // HostGuestEntry.m 每次启动访客都 setenv("TD_NET_BLOCK","0"|"1",1), 变量恒存在.
+    // (重放于 v0.3.840 合入上游 9d6ea09b05)
+    const char *netBlockEnvAfter = getenv("TD_NET_BLOCK");
+    if(netBlockEnvAfter && netBlockEnvAfter[0] == '1') {
+        NetBlockApplyAfterGuestLoad();
     }
 
     appExecutableHandle = appHandle;

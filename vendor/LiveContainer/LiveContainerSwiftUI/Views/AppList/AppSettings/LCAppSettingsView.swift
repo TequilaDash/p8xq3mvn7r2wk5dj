@@ -37,22 +37,12 @@ struct LCAppSettingsView: View {
     @State private var errorShow = false
     @State private var errorInfo = ""
     @State private var selectUnusedContainerSheetShow = false
-    /// 本仓新增 (M2): 联网禁用开关. 读 defaults `TDNetBlock-<bundleId>`, 由 HostGuestEntry.m
-    /// 转成 `TD_NET_BLOCK` 环境变量供访客进程内的 NetworkBlock.m 使用.
-    @State private var netBlockEnabled = false
     
     @EnvironmentObject private var sharedModel : SharedModel
     
     init(model: LCAppModel) {
         self.appInfo = model.appInfo
         self._model = ObservedObject(wrappedValue: model)
-        // 本仓新增 (M2): 初值取 defaults.
-        // 键口径必须与 HostGuestEntry.m:43-45 完全一致: 那边先拼 `TDNetBlock-<selected>`,
-        // 再用 `TDLastGuestBundleId` 覆盖 —— 而该键**全仓无人写入**, 所以实际生效的
-        // 永远是 `TDNetBlock-<selected>`, 而 `selected` 由 LCAppModel.swift:324-329 写成
-        // `appInfo.relativeBundlePath`. 故这里也用 relativeBundlePath, 两边才同一把钥匙.
-        let key = "TDNetBlock-" + (model.appInfo.relativeBundlePath ?? "")
-        _netBlockEnabled = State(initialValue: UserDefaults.standard.bool(forKey: key))
     }
     
     var body: some View {
@@ -154,6 +144,10 @@ struct LCAppSettingsView: View {
             
             
             Section {
+                Toggle(isOn: $model.uiHelperProcessesSupport) {
+                    Text("lc.appSettings.helperProcessesSupport".loc)
+                }
+                .disabled(model.uiIs32bit)
                 Toggle(isOn: $model.uiIsJITNeeded) {
                     Text("lc.appSettings.launchWithJit".loc)
                 }
@@ -216,14 +210,12 @@ struct LCAppSettingsView: View {
                     }
                 }
             } footer: {
-
                     if #available(iOS 26.0, *), model.uiIsJITNeeded {
                         Text("lc.appSettings.launchWithJitDesc".loc + "\n" + "lc.appSettings.jit26.scriptDesc".loc)
 
                     } else {
                         Text("lc.appSettings.launchWithJitDesc".loc)
                     }
-                
             }
 
             Section {
@@ -245,11 +237,6 @@ struct LCAppSettingsView: View {
                 }
             } footer: {
                 if model.uiIsLocked {
-                    Text("lc.appSettings.hideAppDesc".loc)
-                        .transition(.opacity.combined(with: .slide))
-                }
-            }
-
             // 本仓新增 (M2): 联网禁用. LC 上游没有此功能.
             // 与锁定/隐藏同一 Section 风格, 但独立成节 —— 它不参与 Face ID 认证,
             // 只写 defaults `TDNetBlock-<bundleId>`, 由 HostGuestEntry.m 转成
@@ -265,6 +252,11 @@ struct LCAppSettingsView: View {
             } footer: {
                 Text("开启后该 App 在访客进程里无法发起对外连接（TCP connect 返回 EPERM）。"
                      + "对 UDP 与 DNS 暂不生效。下次启动该 App 时生效。")
+            }
+
+                    Text("lc.appSettings.hideAppDesc".loc)
+                        .transition(.opacity.combined(with: .slide))
+                }
             }
             
             if #available(iOS 16.0, *) {
@@ -332,6 +324,11 @@ struct LCAppSettingsView: View {
                 }
                 Toggle(isOn: $model.uiFixLocalNotification) {
                     Text("lc.appSettings.fixLocalNotification".loc)
+                }
+                if #available(iOS 26.0, *) {
+                    Toggle(isOn: $model.uiFixBackgroundTaskIdentifiers) {
+                        Text("lc.appSettings.fixBackgroundTaskIdentifiers".loc)
+                    }
                 }
                 Toggle(isOn: $model.uiUseLCBundleId) {
                     Text("lc.appSettings.useLCBundleId".loc)

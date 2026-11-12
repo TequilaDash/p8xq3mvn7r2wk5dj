@@ -138,14 +138,6 @@ class AppInfoProvider {
 
     @objc public var windowHostingView = VirtualWindowsHostView()
     internal var hostingController: UIHostingController<AnyView>?
-    // 本仓适配 (v0.3.838/M12): 永久独立窗口.
-    // 根因：windowHostingView 在 manager 首次引用时一次性挂到「当时的 keyWindow」，
-    // 该 window 可能是 fullScreenCover 的 presentation window——SwiftUI 页面切换时
-    // 被销毁 -> 多任务窗口（dock + 访客窗口容器）跟着消失
-    // （owner 2026-11-12 实测：返回上一级再进沙盒容器，多任务直接消失）.
-    // 上游 LC 的 root window 永远存活所以没这问题；本仓必须用独立 UIWindow.
-    // 本仓适配 (v0.3.839/M12b): keyWindow 变化（fullScreenCover 开/关）时重挂.
-    private var windowObservers: [NSObjectProtocol] = []
 
     public struct Constants {
         // MARK: - Layout & Sizing
@@ -278,18 +270,7 @@ class AppInfoProvider {
     }
 
     public var keyWindow: UIWindow? {
-        // 本仓适配 (v0.3.836): 原上游 `windows.first` 在上游成立（LC root 单窗口稳定）。
-        // 本仓是 TD 的 SwiftUI App，存在多个 window（主 window + fullScreenCover 的
-        // presentation window），`windows.first` 不一定是 keyWindow —— 挂错 window 后，
-        // 返回上一级再回来时多任务窗口随旧 window 销毁而消失
-        // （owner 2026-11-12 实测：返回再进沙盒容器，多任务窗口不见了）。
-        // 改为显式取 isKeyWindow；找不到时回落 foregroundActive 的第一个 window.
-        let scene = UIApplication.shared.connectedScenes.first(where: {
-            $0.activationState == .foregroundActive
-        }) as? UIWindowScene
-        return scene?.keyWindow
-            ?? scene?.windows.first(where: { $0.isKeyWindow })
-            ?? scene?.windows.first
+        (UIApplication.shared.connectedScenes.first as? UIWindowScene)?.windows.first
     }
 
     public var safeAreaInsets: UIEdgeInsets {
@@ -305,19 +286,8 @@ class AppInfoProvider {
     
     override init() {
         super.init()
-        // 本仓适配 (v0.3.839/M12b): 回滚 M12 的独立 UIWindow——它 windowLevel 高于
-        // 一切且整屏覆盖，命中测试虽有穿透逻辑但 SwiftUI presentation 体系下
-        // owner 实测「多任务窗口打开后除多任务外任意界面都点不了」——独立 window
-        // 参与键盘/触摸事件分发与 UIKit 假设冲突，无法安全使用，回滚.
-        // 改回挂 keyWindow（v0.3.834 行为，窗口可见可点），窗口消失问题改用
-        // 「keyWindow 变化时重新挂载」解决（见 windowDidBecomeKey 监听）.
-        attachHostingViewToKeyWindow()
+        keyWindow!.rootViewController!.view.subviews.first!.addSubview(self.windowHostingView)
         setupDockView()
-        windowObservers.append(NotificationCenter.default.addObserver(
-            forName: UIWindow.didBecomeKeyNotification, object: nil, queue: .main
-        ) { [weak self] _ in
-            self?.attachHostingViewToKeyWindow()
-        })
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(userDefaultsDidChange),
@@ -333,7 +303,6 @@ class AppInfoProvider {
     }
     
     deinit {
-        windowObservers.forEach(NotificationCenter.default.removeObserver)
         NotificationCenter.default.removeObserver(self)
         NotificationCenter.default.removeObserver(self, name: UIDevice.orientationDidChangeNotification, object: nil)
     }
@@ -355,21 +324,6 @@ class AppInfoProvider {
         }
     }
     
-    /// 本仓适配 (v0.3.839/M12b): 把 windowHostingView 挂到当前 keyWindow.
-    /// 页面切换（fullScreenCover 开/关）导致 keyWindow 变化时重新挂载，
-    /// 解决 v0.3.837「返回再进多任务消失」——不引入独立 window（M12 失败回滚）.
-    private func attachHostingViewToKeyWindow() {
-        DispatchQueue.main.async { [weak self] in
-            guard let self, let keyWindow = self.keyWindow else { return }
-            if self.windowHostingView.superview !== keyWindow {
-                self.windowHostingView.removeFromSuperview()
-                keyWindow.addSubview(self.windowHostingView)
-                self.windowHostingView.frame = keyWindow.bounds
-                self.windowHostingView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-            }
-        }
-    }
-
     private func setupDockView() {
         DispatchQueue.main.async {
             let dockView = AnyView(MultitaskDockSwiftView()
@@ -506,11 +460,7 @@ class AppInfoProvider {
             let initialHeight = Constants.initialDockShowHeight
             
             // If not already in view hierarchy, add it
-            // 本仓适配 (v0.3.839/M12b): superview 非 nil 但已不在任何活 window 里
-            // （旧 keyWindow 销毁后 superview 引用仍存在）也要重挂 —— 否则 dock 消失.
-            let inLiveWindow = hostingController.view.window != nil
-            if hostingController.view.superview == nil || !inLiveWindow {
-                hostingController.view.removeFromSuperview()
+            if hostingController.view.superview == nil {
                 keyWindow.addSubview(hostingController.view)
                 hostingController.view.frame = CGRect(
                     x: screenBounds.width - currentDockWidth,

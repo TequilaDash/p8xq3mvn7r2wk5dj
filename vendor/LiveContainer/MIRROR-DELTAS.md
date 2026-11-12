@@ -11,52 +11,13 @@
 | # | 文件 | 上游行号 | 改动 | 原因 | 引入版本 | 真机验证 |
 |---|---|---|---|---|---|---|
 | M1 | `LiveContainerSwiftUI/Views/AppList/LCAppListView.swift` | `:12`（`class SearchContext`） | 加 `static let shared` | `@ObservedObject` 的默认值在视图重建时重新求值 → 新 `SearchContext` → `query` 归零 → SwiftUI `.searchable` 重新激活搜索框 | v0.3.809 | ✅ 2026-11-11 owner 实测「修复好了」 |
-| M1b | 同上 | `:86`（`LCAppListView.searchContext`） | `= SearchContext()` → `= .shared` | 同上 | v0.3.809 | ✅ 同上 |
-| M1c | `LiveContainerSwiftUI/Views/LCAltStoreSourcesView.swift` | `:487` | `= SearchContext()` → `= .shared` | 同上 | v0.3.809 | ✅ 同上 |
-| M1d | `LiveContainerSwiftUI/Views/AppList/LCAppListView.swift` | `:31-48`（`SearchContext.init` 的 debounce sink） | `value.isEmpty` 时提前 `return`，不置 `isTyping = true` | 点搜索栏 X 取消后，sink 仍置 `isTyping` → 视图重算 → `.searchable` 重新激活搜索框（真机实测：先点键盘「完成」再点 X 不会复现） | v0.3.816 | ⏳ 待真机 |
 
 **M1 / M1b / M1c / M1d 属于同一处修复，必须同时应用。**
 
-| M6 | `MultitaskSupport/AppSceneViewController.m` | `:58-77`（`initWithBundleId` 的 userInfo 字典） | `NSUserDefaults.lcAppUrlScheme` 为 nil 时兜底取主 App 的 `CFBundleURLTypes[0][0]` | 上游 `lcAppUrlScheme` 只在 `LiveContainerMain` 赋值，独立宿主走 `TDHostBoot` 不经过 → 多任务启动时 nil → 字典字面量 `@{...:nil}` 抛 `insert nil object` 崩溃（owner 2026-11-12 .ips 实证） | v0.3.833 | ⏳ 待真机 |
-
-**M6 同步上游时**：上游若已给 `lcAppUrlScheme` 做兜底或宿主路径初始化 → 删除本仓改动。
-
-| M6b | `MultitaskSupport/AppSceneViewController.m` | `:190-198` + `:219-226`（iOS27 scene setup + 2s 后诊断） | 白屏诊断日志：打印 presenter/scene 是否取到、2 秒后 contentView 尺寸/层级 | owner 2026-11-12 真机：多任务窗口标题栏可见但内容全白（iOS 27.2 beta），需确认 `_scenePresenter` KVC 是否取到、contentView 是否有尺寸 | v0.3.833 | ⏳ 待真机 |
-
-**M6b 是纯诊断日志，不改变行为。同步上游时直接删除。**
-
-| M8 | `MultitaskSupport/MultitaskDockView.swift` | `:289`（`windowHostingView` 挂载） | 挂到 `keyWindow` 本身，不再挂 `rootVC.view.subviews.first` | 本仓沙盒容器是 fullScreenCover 整屏覆盖（presentation 层级在 root 之上），挂在 root 上的多任务窗口被盖住 → owner 2026-11-12 实测「只能返回到 TD 主页才能看到多任务窗口」。原版 LC 的 root 就是 LC UI，无 cover，所以上游没这个问题 | v0.3.834 | ✅ 架构差异实锤，待真机 |
-
-**M8 同步上游时**：若上游也改成「App 内容可能在 cover/presentation 上」的架构 → 采用上游写法。
-
-| M9 | `LiveContainerSwiftUI/Utilities/LCUtilsExtensions.swift` | `:57-64`（`signTweaks` 的预校验） | 移除 tweak 的 `checkCodeSignature` 预校验，直接全部交 ZSign 签名 | iOS 19+ 上 dyld_bypass 的 fcntl hook 已禁用（dyld_bypass_validation.m:111），checkCodeSignature 的 mmap 触发内核对未签名 dylib 页的真实校验 → `SIGKILL - CODESIGNING Invalid Page` 整个进程被杀（owner 2026-11-12 .ips 实证：注入任意 dylib 点启动即闪退）。原版在 iOS 27.2 上同样存在（代码已 diff 验证逐字节一致） | v0.3.835 | ⏳ 待真机 |
-
-**M9 同步上游时**：上游若修了 checkCodeSignature 的 mmap 致命校验（或恢复 iOS 19+ bypass）→ 删除本仓改动。
-
-| M10 | `MultitaskSupport/AppSceneViewController.m` | `:228-241`（iOS27 分支加 presentationView 挂载） | 显式把 `presenter.presentationView` 挂进 contentView + 0.5s 延迟兜底 | iOS 27.2 beta 上场景连接异步，`sceneViewController.view` 层级里 presentationView 可能未挂 → 多任务窗口内容白屏（v0.3.835 M8 修层级后窗口可见但内容仍白，owner 2026-11-12 实测）。与 iOS<18 分支对齐（那边显式 addSubview presentationView） | v0.3.836 | ⏳ 待真机 |
-
-**M10 同步上游时**：上游若已显式挂 presentationView 或修复场景连接时序 → 删除本仓改动。
-
-| M11 | `MultitaskSupport/MultitaskDockView.swift` | `:272-276`（keyWindow getter） | `windows.first` → 显式 `isKeyWindow` 优先 | 本仓 TD 的 SwiftUI App 存在多 window（主 + fullScreenCover presentation），`windows.first` 不一定是 keyWindow → 挂错 window 后返回上一级再进来多任务窗口随旧 window 销毁消失（owner 2026-11-12 实测「返回再进沙盒容器多任务不见了」）。上游 LC root 单窗口稳定，`windows.first` 恰好成立 | v0.3.836 | ⏳ 待真机 |
-
-**M11 同步上游时**：上游若也支持多 window 架构 → 采用上游写法。
-
-| M12 | `MultitaskSupport/MultitaskDockView.swift` | `:137-142`（persistentWindow 属性）、`:294-315`（init 挂载）、`:497-500`（showDock） | windowHostingView 与 dock 改挂**永久独立 UIWindow**（windowLevel .alert+100，永不销毁） | M11 只修了「选 keyWindow」，但 keyWindow 会随 fullScreenCover 关闭被销毁——manager init 时一次性挂载，页面切换后 windowHostingView 连同多任务窗口一起消失（owner 2026-11-12 实测 v0.3.837 仍未解决）。上游 LC root window 永远存活所以无此问题；独立宿主必须用独立 window | v0.3.838 | ⏳ 待真机 |
-
-**M12 同步上游时**：若上游改用独立 window 或支持 presentation 生命周期 → 采用上游写法。
-
-**M12 已回滚（owner 2026-11-12 实测：独立 window 全屏挡住一切触摸，任意界面点不了）**。
-VirtualWindowsHostView 的 hitTest 穿透在 UIKit + SwiftUI presentation 混合下不生效，
-独立 window 参与事件分发与系统假设冲突。**不要恢复 M12。**
-
-| M12b | `MultitaskSupport/MultitaskDockView.swift` | init/attachHostingViewToKeyWindow/deinit | 回滚 M12 独立 window；windowHostingView 挂 keyWindow，并监听 `UIWindow.didBecomeKeyNotification` 在 keyWindow 变化时自动重挂 | 解决 v0.3.837「返回再进多任务消失」：fullScreenCover 开/关导致 keyWindow 切换，重挂保证始终在当前 keyWindow 上，窗口不再随旧 window 销毁 | v0.3.839 | ⏳ 待真机 |
-
-**M12b 同步上游时**：上游若原生支持 window 切换重挂 → 删除本仓改动。
-
-| M7 | `LiveContainer/LCSharedUtils.m` | `:159-170`（`launchToGuestAppWithClassicMode`） | `NSUserDefaults.lcMainBundle` 为 nil 时兜底 `NSBundle.mainBundle` | 同上，`lcMainBundle` 只在 LiveContainerMain 赋值，宿主进程为 nil → `openApplicationWithBundleIdentifier:nil` 使系统内部 `initWithContentsOfFile:` 抛异常崩溃（owner 2026-11-12 .ips 实证，非多任务启动也崩，且要手动点桌面才进容器） | v0.3.833 | ⏳ 待真机 |
 
 **M7 同步上游时**：上游若已给 `lcMainBundle` 做兜底 → 删除本仓改动。
 
+| M1c | `LiveContainerSwiftUI/Views/LCAltStoreSourcesView.swift` | :487 SearchContext .shared | 同 M1（宿主 SwiftUI 重建视图丢搜索状态） | v0.3.809 | ✅ 已重放 |
 | M5 | `LiveContainerSwiftUI/Views/Settings/LCSettingsView.swift` | `:571-585`（`importCertificate` 失败分支） | 失败弹窗里附带 ZSign 的具体失败原因（`ZSigner.lastZSignLogs`），不再笼统显示「验证证书失败」 | owner 2026-11-11 真机：导入普通证书报「验证证书失败」但不知根因，需要直接看到原因而不是去翻日志 | v0.3.832 | ⏳ 待真机 |
 
 **M5 是诊断增强，不改变导入逻辑。同步上游时：**
@@ -68,7 +29,6 @@ VirtualWindowsHostView 的 hitTest 穿透在 UIKit + SwiftUI presentation 混合
 | # | 文件 | 上游行号 | 改动 | 原因 | 引入版本 |
 |---|---|---|---|---|---|
 | M3 | `LiveContainer/LCBootstrap.m` | `:41-45`（`+[NSUserDefaults lcSharedDefaults]`） | `if(!lcUserDefaults)` → `if(!lcSharedDefaults)` | 上游笔误：判的是 `lcUserDefaults`，于是每次调用都重新 `initWithSuiteName:` 建**新** defaults 对象 → 刚写入的证书/开关被下一次读取丢弃。访客路径里 `lcUserDefaults` 恰好在 `:724` 已赋值，所以真实运行时碰巧没暴露；但 `lcSharedDefaults` 早于 `:724` 被调用时（如扩展进程）会返回 nil | v0.3.830 |
-| M4 | `MultitaskSupport/AppSceneViewController.m` | `:85`、`:90` | 给 `bundle.bundleURL` / `tweaksURL` 的 bookmark 加判空再 `addObject:` | 上游只给 `containerBookmark` 判了空，另两处漏了。`bookmarkDataWithOptions:` 失败返回 nil → `-addObject:nil` 抛 `__NSArrayM insertObject:atIndex: object cannot be nil` → **整个 App 崩溃**（owner 2026-11-11 真机日志实证，多任务启动路径） | v0.3.830 |
 
 **M3 / M4 都是上游自身缺陷，同步上游时应先检查上游是否已修：**
 - M3 若上游已改成 `if(!lcSharedDefaults)` → 删除本仓改动。
@@ -78,6 +38,11 @@ VirtualWindowsHostView 的 hitTest 穿透在 UIKit + SwiftUI presentation 混合
 
 | # | 文件 | 改动 | 原因 | 引入版本 | 真机验证 |
 |---|---|---|---|---|---|
+| M7 | `LiveContainer/LCSharedUtils.m` | `launchToGuestAppWithClassicMode` 内 | `lcMainBundle` 为 nil 时兜底 `NSBundle.mainBundle`（宿主进程 TDHostBoot 不经过 LiveContainerMain） | v0.3.833 | ✅ 已重放至 9d6ea09b05 合入版 |
+| M9 | `LiveContainerSwiftUI/Utilities/LCUtilsExtensions.swift` | `signTweaks` 内 | 移除 checkCodeSignature 预校验（iOS 19+ mmap 未签名 dylib → SIGKILL CODESIGNING），直接全量重签 | v0.3.835 | ✅ 已重放至 9d6ea09b05 合入版 |
+| M5 | `LiveContainerSwiftUI/Views/Settings/LCSettingsView.swift` | `importCertificate` 失败分支 | 弹窗附带 ZSigner.lastZSignLogs 具体原因 | v0.3.832 | ✅ 已重放 |
+| M2 | `LiveContainerSwiftUI/Views/AppList/AppSettings/LCAppSettingsView.swift` | netBlockEnabled + Section | 联网禁用开关（LC 无此功能），写 TDNetBlock-<relativeBundlePath> | v0.3.825 | ✅ 已重放 |
+| M1 | `LiveContainerSwiftUI/Views/AppList/LCAppListView.swift` | SearchContext.shared + 清空 guard | 搜索栏 X 取消重激活（宿主 SwiftUI 会重建视图） | v0.3.816 | ✅ 已重放 |
 | M2 | `LiveContainerSwiftUI/Views/AppList/AppSettings/LCAppSettingsView.swift` | ① `@State netBlockEnabled`（:40-42）② `init` 里读 TDNetBlock-&lt;relativeBundlePath&gt;（:50-55）③ 锁定/隐藏节之后加「禁止联网」Section + `onChange` 写回（:249-264） | **LC 上游没有此功能**。owner 2026-11-08 需求：按 App 禁用联网。链路：UI 写 `UserDefaults["TDNetBlock-<selected>"]` → HostGuestEntry.m:43-46 读并 `setenv("TD_NET_BLOCK","1")` → 访客进程 LCBootstrap.m:550 调 `NetBlockGuestHooksInit()`、`:617-623` 调 `NetBlockApplyAfterGuestLoad()` → NetworkBlock.m 拦 BSD `connect`（EPERM） | v0.3.825 | ⏳ 待真机 |
 
 **M2 的键必须与 `HostGuestEntry.m:43-45` 完全一致**：那边先拼 TDNetBlock-&lt;selected&gt;，再用 TDLastGuestBundleId 覆盖——而 TDLastGuestBundleId 全仓无人写入，故实际生效的永远是 TDNetBlock-&lt;selected&gt;，其中 `selected` 由 LCAppModel.swift:324-329 写成 `appInfo.relativeBundlePath`。

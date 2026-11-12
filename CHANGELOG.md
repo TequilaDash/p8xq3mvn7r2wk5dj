@@ -1,3 +1,26 @@
+## [0.3.840] - 2026-11-12
+
+### 全量合入上游 main 最新（9d6ea09b05「built-in jit enablers, ram donors, helper process」）
+
+**此前镜像缺失该 commit 的全部内容**（13 文件 / +525 行新文件），导致多任务、模块注入
+在旧架构上反复打补丁（M6/M8/M10/M11/M12 全部无效）。本次全量覆盖 + 按表重放本仓补丁。
+
+新架构核心：
+- `LCPrepareGuestExtension`：LiveProcess 扩展进程内直接准备 guest 环境（bookmark 解析、
+  HOME/TMPDIR 重定向、NSExtension hooks），**不再走宿主 KVC 私有 API 挂 scene**
+  —— 多任务白屏/消失/挡触摸的根源（旧架构）随旧代码一起消失
+- `Tweaks/NSExtension+GuestHooks.m`（525 行新文件）：扩展进程内 hook
+- LCAppModel +44 行：jit enabler / ram donor / helper process 支持
+- LCAppInfo +58 行、LCSettingsView 新开关（helperProcessesSupport / fixBackgroundTaskIdentifiers）
+
+重放的本仓补丁（详见 MIRROR-DELTAS / ADAPTERS.md）：
+- M1/M1c 搜索栏、M2 禁止联网、M3 lcSharedDefaults 笔误、M5 证书失败详情、
+  M7 lcMainBundle 兜底、M9 signTweaks 预校验移除、C1 TD_NET_BLOCK 两处、
+  LCMachOUtils 验签诊断
+- **删除作废补丁**：M4/M6/M6b/M8/M10/M11/M12/M12b（多任务窗口系列，新架构下不存在）
+
+适配副本（TDPLiveProcess/LC）同步：29 文件，26 逐字节同上游、2 处 C2 补丁、1 本仓新增。
+
 ## [0.3.839] - 2026-11-12
 
 ### 回滚 M12（紧急：独立 window 挡住全部触摸）

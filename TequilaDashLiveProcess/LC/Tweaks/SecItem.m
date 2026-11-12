@@ -8,7 +8,7 @@
 #import <Security/Security.h>
 #import "utils.h"
 #import <CommonCrypto/CommonDigest.h>
-#import "litehook.h"
+#import "../../litehook/src/litehook.h"
 #import "LCSharedUtils.h"
 
 extern void* (*msHookFunction)(void *symbol, void *hook, void **old);

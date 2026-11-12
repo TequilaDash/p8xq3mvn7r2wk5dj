@@ -7,7 +7,7 @@
 #include <dlfcn.h>
 #include <stdlib.h>
 #include <sys/mman.h>
-#import "litehook.h"
+#import "../../litehook/src/litehook.h"
 #import "LCMachOUtils.h"
 #include "mach_excServer.h"
 #import "../utils.h"

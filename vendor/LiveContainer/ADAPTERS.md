@@ -181,31 +181,16 @@ python Resources/Scripts/lc_mirror_guard.py --write   # 重新生成 .upstream-m
     （Release 时 `DEVELOPMENT_TEAM_SUFFIX` 为空）。侧载工具会注入这两个 group；
     自签/免费账号没有 → 删掉这两项即可（主 App 其余功能不受影响）。
 
-## LC 核心适配副本差异
+## LC 核心适配副本差异（2026-11-12 全量合入上游 9d6ea09b05 后）
 
-`<prefix>LiveProcess/LC/` 是上游 `vendor/LiveContainer/LiveContainer/` 的**适配副本**
-（主 App 与访客进程共用同一份 LC 核心）。它**必须**与上游不同，但差异必须登记 ——
-否则同步上游时没人知道该重放哪几个文件。守卫：`Resources/Scripts/lc_core_drift_guard.py`。
+适配副本 `<prefix>LiveProcess/LC/`（29 文件）：逐字节相同 26、有差异 2、本仓新增 1。
 
-当前状态：适配副本 28 文件 | 逐字节相同 20 | 有差异 7 | 新增 1。
-
-| # | 文件 | 改动 | 原因 | 同步上游时 |
+| # | 文件 | 差异 | 原因 | 同步上游时 |
 |---|---|---|---|---|
-| C1 | `LCBootstrap.m` | ① `#include "litehook.h"` 直取 ② `[LCBootstrap][step1-6a]` 面包屑 NSLog ③ `getenv("LC_HOME_PATH")` 为 NULL 时回落 `HOME`，两者都缺则如实返回错误 ④ `newHomePath` 为 nil 时提前返回（`setenv(name, NULL, 1)` 是 UB）⑤ 不写 `LCAppInfo.plist`，直接读访客自己的 `Info.plist` ⑥ `TD_NET_BLOCK` 钩子调用（`NetBlockGuestHooksInit` / `NetBlockApplyAfterGuestLoad`，后者判**值**为 `'1'` 而非仅判变量存在） | 启动闪退加固 + 本仓联网禁用功能接入 + 访客起不来时的定位手段 | **逐条重放**。上游若自己修了 NULL 解引用 → 删除对应改动，用上游版本 |
-| C2 | `LCMachOUtils.m` | `#import "../litehook/src/litehook.h"` + `#import "LCUtils.h"` → `#import "LCMachOUtils.h"` + `#import "litehook.h"` | 搬运集不含 `LCUtils.h`，类型声明改从自己的头取（CI run 42478120577 实锤） | 保留（本仓目录结构决定） |
-| C3 | `Tweaks/Dyld.m` | `#import "../../litehook/src/litehook.h"` → `#import "litehook.h"` | 同上，头搜索路径已含 litehook | 保留 |
-| C4 | `Tweaks/NSUserDefaults.m` | 同 C3 | 同 C3 | 保留 |
-| C5 | `Tweaks/NSFileManager+GuestHooks.m` | 同 C3 | 同 C3 | 保留 |
-| C6 | `Tweaks/SecItem.m` | 同 C3 | 同 C3 | 保留 |
-| C7 | `Tweaks/Tweaks.h` | 新增 `NetBlockGuestHooksInit()` / `NetBlockApplyAfterGuestLoad()` 声明 | 本仓联网禁用功能（`NetworkBlock.m`）的对外接口 | 保留（上游没有此功能） |
-| C8 | `Tweaks/NetworkBlock.m` | **本仓新增文件**（上游无） | 联网禁用：拦 BSD `connect` 返回 EPERM。链路见 MIRROR-DELTAS 的 M2 | 保留（上游没有此功能） |
+| C1 | （联网禁用补丁落在 vendor 的 Bootstrap，见 MIRROR-DELTAS） | 适配副本与上游一致 | 联网禁用 | vendor 侧维护 |
+| C2 | `LCMachOUtils.m` | ①头文件直取 LCMachOUtils.h/litehook.h ②验签失败诊断日志 | 搬运集不含 LCUtils.h；诊断定位签名问题 | ①保留 ②上游若加诊断则删 |
+| C3 | `Tweaks/NetworkBlock.m` | 本仓新增文件 | 联网禁用实现 | 保留 |
 
-**上游同步流程**（`Resources/Scripts/lc_sync_upstream.py`）：
+（旧 C1 面包屑/getenv 防护/writeLCAppInfoIfNeeded、C3-C7 头文件路径差异已被上游
+9d6ea09b05 重构吸收或不再需要，全部移除。Tweaks 其余文件与上游逐字节一致。）
 
-```
-python Resources/Scripts/lc_sync_upstream.py --check            # 当前漂移状态
-python Resources/Scripts/lc_sync_upstream.py --fetch            # clone 最新上游
-python Resources/Scripts/lc_sync_upstream.py --diff-core <dir>  # 比对上表 8 个文件
-```
-`--diff-core` 会逐文件打印差异行数，按上表「同步上游时」列逐条处理：
-上游自己修了的 → 删掉本仓改动；上游仍未修 → 重放。

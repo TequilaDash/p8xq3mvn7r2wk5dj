@@ -54,7 +54,7 @@ extension LCUtils {
                 continue
             }
 
-            // 本仓适配 (v0.3.835): iOS 19+ 上 checkCodeSignature 的 mmap 会触发内核对
+// 本仓适配 (v0.3.835): iOS 19+ 上 checkCodeSignature 的 mmap 会触发内核对
             // 未签名 dylib 页面的真实签名校验 → SIGKILL - CODESIGNING "Invalid Page"
             // → 整个进程被杀（owner 2026-11-12 .ips 实证：注入任意 dylib 点启动即闪退）.
             // 原因：dyld_bypass_validation 的 fcntl hook 在 iOS 19+ 已禁用
