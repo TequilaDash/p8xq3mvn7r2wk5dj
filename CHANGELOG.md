@@ -1,3 +1,15 @@
+## [0.3.834] - 2026-11-12
+
+### 修复（非多任务启动也崩溃，且要手动点桌面才进容器）
+- `LCSharedUtils.m launchToGuestAppWithClassicMode`：`NSUserDefaults.lcMainBundle` 在
+  宿主进程为 nil（只在 LiveContainerMain 赋值），`openApplicationWithBundleIdentifier:nil`
+  使系统内部 `initWithContentsOfFile:` 抛异常崩溃。
+  owner 2026-11-12 .ips 实证：
+    -[NSMutableDictionary initWithContentsOfFile:]
+    _LSCommonOpenApplicationWithBundleIdentifier.cold.1
+    +[LCSharedUtils launchToGuestAppWithClassicMode:] + 408
+- 修法（M7）：nil 时兜底 NSBundle.mainBundle。
+
 ## [0.3.833] - 2026-11-12
 
 ### 修复（多任务启动闪退：hostUrlScheme 为 nil 导致字典崩溃）

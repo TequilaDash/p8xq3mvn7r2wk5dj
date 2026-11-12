@@ -21,6 +21,10 @@
 
 **M6 同步上游时**：上游若已给 `lcAppUrlScheme` 做兜底或宿主路径初始化 → 删除本仓改动。
 
+| M7 | `LiveContainer/LCSharedUtils.m` | `:159-170`（`launchToGuestAppWithClassicMode`） | `NSUserDefaults.lcMainBundle` 为 nil 时兜底 `NSBundle.mainBundle` | 同上，`lcMainBundle` 只在 LiveContainerMain 赋值，宿主进程为 nil → `openApplicationWithBundleIdentifier:nil` 使系统内部 `initWithContentsOfFile:` 抛异常崩溃（owner 2026-11-12 .ips 实证，非多任务启动也崩，且要手动点桌面才进容器） | v0.3.833 | ⏳ 待真机 |
+
+**M7 同步上游时**：上游若已给 `lcMainBundle` 做兜底 → 删除本仓改动。
+
 | M5 | `LiveContainerSwiftUI/Views/Settings/LCSettingsView.swift` | `:571-585`（`importCertificate` 失败分支） | 失败弹窗里附带 ZSign 的具体失败原因（`ZSigner.lastZSignLogs`），不再笼统显示「验证证书失败」 | owner 2026-11-11 真机：导入普通证书报「验证证书失败」但不知根因，需要直接看到原因而不是去翻日志 | v0.3.832 | ⏳ 待真机 |
 
 **M5 是诊断增强，不改变导入逻辑。同步上游时：**

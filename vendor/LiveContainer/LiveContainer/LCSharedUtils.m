@@ -157,9 +157,15 @@ NSString* FBSOpenApplicationOptionKeyPayloadURL = @"__PayloadURL";
         configuration.frontBoardOptions = dict;
     }
     LSApplicationWorkspace* workspace = [PrivClass(LSApplicationWorkspace) defaultWorkspace];
-    
+
+    // 本仓适配 (v0.3.833): `NSUserDefaults.lcMainBundle` 在宿主进程为 nil（只在
+    // LiveContainerMain 赋值），`openApplicationWithBundleIdentifier:nil` 让系统内部
+    // `initWithContentsOfFile:` 抛异常崩溃（owner 2026-11-12 .ips 实证，
+    // 非多任务启动也崩，且要手动点桌面才进容器）。兜底取 mainBundle。
+    NSBundle *hostBundle = NSUserDefaults.lcMainBundle ?: NSBundle.mainBundle;
+
     for (int i = 0; i < tries; i++) {
-        [workspace openApplicationWithBundleIdentifier:NSUserDefaults.lcMainBundle.bundleIdentifier
+        [workspace openApplicationWithBundleIdentifier:hostBundle.bundleIdentifier
                                          configuration:configuration
                                      completionHandler:^(BOOL success, NSError* error) {
             NSLog(@"success=%d error=%@", success, error);
