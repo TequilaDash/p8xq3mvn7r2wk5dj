@@ -304,9 +304,14 @@ jobs:
           path: |
             ~/Library/Caches/ipatool/sap/apple-assets-v2
             ~/Library/Developer/Xcode/DerivedData
-          key: sap-${{ runner.os }}-${{ hashFiles('Resources/Scripts/prepare.sap.py') }}
+          # v2 (2026-11-12): 仓库改名后 runner 工作目录变了
+          # （/8lep7tcs4cj24d7m/ -> /p8xq3mvn7r2wk5dj/），DerivedData 里的
+          # CMakeCache.txt 记着旧绝对路径 -> cmake 拒绝执行
+          # "CMakeCache.txt directory is different than the directory ... where created"。
+          # 改 key 让缓存失效重建（DerivedData 里含 CMake 缓存）.
+          key: sap-v2-${{ runner.os }}-${{ hashFiles('Resources/Scripts/prepare.sap.py') }}
           restore-keys: |
-            sap-${{ runner.os }}-
+            sap-v2-${{ runner.os }}-
 
       - name: Cache Rust toolchain
         uses: actions/cache@v4
