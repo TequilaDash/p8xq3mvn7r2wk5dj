@@ -37,6 +37,9 @@ struct LCAppSettingsView: View {
     @State private var errorShow = false
     @State private var errorInfo = ""
     @State private var selectUnusedContainerSheetShow = false
+
+    // 本仓新增 (M2, 重放于 9d6ea09b05 合入): 联网禁用开关
+    @State private var netBlockEnabled = false
     
     @EnvironmentObject private var sharedModel : SharedModel
     
@@ -237,10 +240,12 @@ struct LCAppSettingsView: View {
                 }
             } footer: {
                 if model.uiIsLocked {
-            // 本仓新增 (M2): 联网禁用. LC 上游没有此功能.
-            // 与锁定/隐藏同一 Section 风格, 但独立成节 —— 它不参与 Face ID 认证,
-            // 只写 defaults `TDNetBlock-<bundleId>`, 由 HostGuestEntry.m 转成
-            // `TD_NET_BLOCK` 环境变量, 访客进程内 NetworkBlock.m 拦 BSD connect.
+                    Text("lc.appSettings.hideAppDesc".loc)
+                        .transition(.opacity.combined(with: .slide))
+                }
+            }
+
+            // 本仓新增 (M2, 重放于 9d6ea09b05 合入): 联网禁用. LC 上游没有此功能.
             Section {
                 Toggle(isOn: $netBlockEnabled) {
                     Text("禁止联网")
@@ -252,11 +257,6 @@ struct LCAppSettingsView: View {
             } footer: {
                 Text("开启后该 App 在访客进程里无法发起对外连接（TCP connect 返回 EPERM）。"
                      + "对 UDP 与 DNS 暂不生效。下次启动该 App 时生效。")
-            }
-
-                    Text("lc.appSettings.hideAppDesc".loc)
-                        .transition(.opacity.combined(with: .slide))
-                }
             }
             
             if #available(iOS 16.0, *) {

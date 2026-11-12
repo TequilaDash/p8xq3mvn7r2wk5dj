@@ -1,3 +1,10 @@
+## [0.3.842] - 2026-11-12
+
+### 修复（0.3.841 编译失败两处）
+- M2 的 @State 声明漏插（只插了 init 块）→ `cannot find $netBlockEnabled`：补上
+- M2 Section 被误插进 footer 内部破坏结构 → `unable to type-check`：
+  从 footer 移出，放到锁定/隐藏 Section 之后（独立 Section）
+
 ## [0.3.841] - 2026-11-12
 
 ### 修复（0.3.840 编译失败：C7 声明被覆盖）
