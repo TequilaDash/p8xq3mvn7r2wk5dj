@@ -69,7 +69,7 @@ struct TDSandboxLogView: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Text("最近 300 行").font(.footnote).foregroundColor(.secondary)
+                Text("全部日志").font(.footnote).foregroundColor(.secondary)
                 Spacer()
                 Button("刷新") { reload() }
                 Button("清空", role: .destructive) { SandboxLog.shared.clear(); reload() }
@@ -108,8 +108,8 @@ struct TDSandboxLogView: View {
     }
 
     private func reload() {
-        let lines = SandboxLog.shared.all().components(separatedBy: "\n")
-        text = lines.suffix(300).joined(separator: "\n")
+        // 全部日志（owner 要求）：不再截到最近 300 行；文件有 512KB 轮转上限.
+        text = SandboxLog.shared.all()
     }
 }
 
