@@ -34,8 +34,18 @@ void NSFMGuestHooksInit(void) {
         saveCachedSymbol(@"webKitHeader", dscPtr, webKitHeader-dscPtr);
     }
     
-    swizzle(NSFileManager.class, @selector(createDirectoryAtPath:withIntermediateDirectories:attributes:error:), @selector(hook_createDirectoryAtPath:withIntermediateDirectories:attributes:error:));
-    
+    // 本仓适配 (M14, 2026-11-13): iOS 26+ 禁止 hook createDirectoryAtPath。
+    // 原因：iOS 26+ Foundation 的 -createDirectoryAtPath:... 真实实现是 Swift 桥
+    // `_NSFileManagerBridge.createDirectory(at:)`，而该桥又回调 ObjC selector →
+    // hook → 原实现 → 桥 → …无穷递归（owner 2026-11-13 .ips 实测 10678 层
+    // recursionInfo 后撞栈保护页 SIGSEGV）。
+    // 该 hook 只为修 WebKit 保存 Cookie 的老问题（上游注释 issues/888），
+    // 老系统上才需要；iOS 26+ 装上必然崩溃，直接跳过。
+    if (@available(iOS 26.0, *)) {
+        NSLog(@"[NSFMGuestHooks] iOS 26+ 跳过 createDirectoryAtPath hook (Swift bridge 递归)");
+    } else {
+        swizzle(NSFileManager.class, @selector(createDirectoryAtPath:withIntermediateDirectories:attributes:error:), @selector(hook_createDirectoryAtPath:withIntermediateDirectories:attributes:error:));
+    }
 }
 
 // NSFileManager simulate app group

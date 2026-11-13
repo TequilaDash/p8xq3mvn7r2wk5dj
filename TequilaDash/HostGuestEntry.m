@@ -44,7 +44,28 @@ extern bool isLiveProcess;
 //   · 免 JIT 总根因：appGroupID 兜底失败 -> 访客进程读不到证书 -> certificatePassword nil
 // 上游 LC 本身就是 guest 启动器（main.c -> LiveContainerMain）所以无此问题 ——
 // 这才是「对齐上游」缺的一块（R-LC-19）.
+// 本仓适配 (M15, 2026-11-13): 宿主进程的未捕获异常也要留痕。
+// 上游的 exceptionHandler 装在 LiveContainerMain 里；宿主走 TDHostBoot 从不经过它
+// → 多任务等**宿主进程**崩溃时一个 error 键都不写，下次进入 App 无任何弹窗
+// （owner 2026-11-13 实测「手动再次进入一个报错弹窗都不弹出来」）。
+static void TDUncaughtExceptionHandler(NSException *exception) {
+    NSString *err = [NSString stringWithFormat:@"%@\nCall stack: %@",
+                     exception.reason, exception.callStackSymbols];
+    [NSUserDefaults.standardUserDefaults setObject:err forKey:@"error"];
+    NSUserDefaults *shared = nil;
+    @try {
+        NSString *group = [NSClassFromString(@"LCSharedUtils") performSelector:@selector(appGroupID)]
+                            ? [[NSClassFromString(@"LCSharedUtils") performSelector:@selector(appGroupID)] description] : nil;
+        if (group.length) {
+            shared = [[NSUserDefaults alloc] initWithSuiteName:group];
+            [shared setObject:err forKey:@"lastGuestLaunchError"];
+            [shared setDouble:NSProcessInfo.processInfo.systemUptime forKey:@"lastGuestLaunchErrorUptime"];
+        }
+    } @catch (__unused NSException *e) {}
+}
+
 void TDInitLCGlobals(void) {
+    NSSetUncaughtExceptionHandler(&TDUncaughtExceptionHandler);
     lcMainBundle = [NSBundle mainBundle];
     lcUserDefaults = NSUserDefaults.standardUserDefaults;
     lcSharedDefaults = [[NSUserDefaults alloc] initWithSuiteName: [LCSharedUtils appGroupID]];

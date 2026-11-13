@@ -86,3 +86,9 @@
 - 动作：①覆盖 vendor 侧；②把差异合并进宿主打包路径（`Resources/Localizable.xcstrings`、`Resources/LCAssets.bundle`）；③跑 `lc_i18n_guard.py .` 与 `bash Resources/Scripts/` 相关校验
 - 验证：lc_i18n_guard 输出「缺失 0 | 无 en 0」；真机上设置页不出现任何 `lc.` 开头的键名
 - 违反记录：MEM-012
+
+## R-021 i18n 校验必须包含 state 字段
+- 条件：合并/新增任何 Localizable 条目
+- 动作：`stringUnit.state` 必须是 `translated`（plural 变体逐 case 检查）；`needs_review`/`new` 等同未翻译
+- 验证：`python Resources/Scripts/lc_i18n_guard.py .` 输出「缺本地化 0」
+- 违反记录：MEM-013

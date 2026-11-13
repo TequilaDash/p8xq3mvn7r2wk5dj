@@ -1,3 +1,23 @@
+## [0.3.846] - 2026-11-13
+
+### 修复（五个 .ips 实证的两类真根因）
+
+1. **多任务/默认启动 `insertObject:atIndex: object cannot be nil`**（5 崩里 4 个）
+   上游 `AppSceneViewController` 有 4 处 `[bookmarks addObject:...]`，只有
+   `containerBookmark` 一处判空，另 3 处 `bookmarkDataWithOptions` 失败返回 nil 即崩。
+   合入 9d6ea09b05 时我把 M4 当旧补丁删了。→ 重放 M4r（3 处全判空）。
+
+2. **`NSFileManager(LiveContainerHooks) hook_createDirectoryAtPath` 无限递归（10678 层）**
+   .ips `recursionInfoArray` 实证：iOS 26+ Foundation 该 selector 的真实实现是 Swift 桥
+   `_NSFileManagerBridge.createDirectory(at:)`，桥又回调 ObjC selector → hook → 原实现 → 桥
+   → 无限递归 → 撞栈保护页 SIGSEGV。该 hook 只为修老 WebKit cookie 问题（issues/888）。
+   → M14：iOS 26+ 跳过该 swizzle。
+
+3. **崩溃后无任何报错弹窗**
+   上游 `exceptionHandler` 装在 `LiveContainerMain`；宿主走 `TDHostBoot` 从不经过
+   → 宿主进程崩溃（多任务）一个 `error` 键都不写。→ M15：`TDInitLCGlobals` 里
+   `NSSetUncaughtExceptionHandler` 装宿主自己的处理器（写 standard + app group 双份）。
+
 ## [0.3.845] - 2026-11-13
 
 ### 补全（i18n 全部代码引用键都有中文）

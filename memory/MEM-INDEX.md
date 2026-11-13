@@ -100,3 +100,12 @@
 - 正确做法：合入后把新键从 vendor xcstrings 合并进宿主 xcstrings（en+zh-Hans+zh-Hant）；用 lc_i18n_guard.py 校验
 - 检测方法：`python Resources/Scripts/lc_i18n_guard.py .` 输出「缺失 0」
 - 关联规范：R-020
+
+## MEM-013 i18n needs_review 状态导致翻译不生效（2026-11-13）
+
+- 现象：键明明有中文值，App 里仍显示英文（看起来「有翻译却没生效」）
+- 我的错误动作：只检查「本地化是否存在」，没检查 `stringUnit.state`
+- 根因：String Catalog 的 `needs_review` / `new` 状态在构建时**不会被采用**，回退源语言；上游把新增键的中文标了 `needs_review`，直接复制过来等于没翻译
+- 正确做法：zh-Hans/zh-Hant 的 `stringUnit.state` 一律置 `translated`；plural 变体要逐 case 检查
+- 检测方法：`lc_i18n_guard.py`（已加 `_is_translated()`，把非 translated 视为「缺本地化」）输出「缺本地化 0」
+- 关联规范：R-020
