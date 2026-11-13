@@ -169,3 +169,11 @@
 - 根因：直接字符串替换，没有区分「标识符内部子串 / Python 标准库调用 / 只读镜像」
 - 正确做法：`(?<![A-Za-z0-9_])OLD(?![A-Za-z0-9_])` 词边界；显式跳过 `re.OLD(`；os.walk 路径前缀要归一化（`./vendor` vs `.\\vendor`），vendor 一律 `git checkout --`
 - 验证：`swift_precommit_check.py` 全绿（含 LC 镜像/漂移守卫）
+
+## MEM-021 bad_query 在 iOS 27.0b4 失效 → 用 worse_query（2026-11-13）
+
+- 现象：iOS 27.0 beta 4 起 bad_query 对任意容器返回 -4（kernelRejected），列目录/取扩展全废
+- 替代原语：worse_query（App Group 的 Library/Caches 换 symlink → containermanagerd 按 class 7 / part 3 签发 token → 本进程 consume）
+- 落地：`Engine/worse_query.{h,m}` + `Exploits/WorseQueryExploit.swift`，登记进 `ExploitRegistry`，默认启用，老用户一次性迁移
+- 关键约束：必须有已签名 `group.*`（否则 -1）；**只在宿主进程有效**，访客进程里 LC 的 app group hook 会改写路径 → -5/-6
+- 关联规范：R-029
