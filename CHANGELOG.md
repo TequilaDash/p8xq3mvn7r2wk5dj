@@ -1,3 +1,12 @@
+## [0.3.855] - 2026-11-13
+
+### 适配
+- `worse_query` 现在**也支持目录枚举**：先为目录签一个 sandbox extension，再用
+  `FileManager.contentsOfDirectory` 读一级条目（bad_query 的 inode 全表扫描那条路走不通）。
+  这样「只开 worse_query」时，原来依赖 bad_query 列目录的功能也能工作；签不到扩展时
+  返回 nil，注册表继续试其它玩法.
+- `ExploitKind.supportsListing` 同步为 true（bad_query / worse_query）.
+
 ## [0.3.854] - 2026-11-13
 
 ### 新增
