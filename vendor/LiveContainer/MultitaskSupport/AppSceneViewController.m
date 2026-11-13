@@ -123,12 +123,14 @@
             [MultitaskManager registerMultitaskContainerWithContainer:self.dataUUID];
             self.identifier = identifier;
             self.pid = [self.extension pidForRequestIdentifier:self.identifier];
+            NSLog(@"[TD-Multitask] 扩展请求成功 uuid=%@ pid=%d", identifier, self.pid);
             [delegate appSceneVC:self didInitializeWithError:nil];
             dispatch_async(dispatch_get_main_queue(), ^{
                 [self setUpAppPresenter];
             });
         } else {
             NSError* error = [NSError errorWithDomain:@"LiveProcess" code:2 userInfo:@{NSLocalizedDescriptionKey: @"Failed to start app. Child process has unexpectedly crashed"}];
+            NSLog(@"[TD-Multitask] 扩展请求失败 (identifier=nil) bundle=%@", self.bundleId);
             [delegate appSceneVC:self didInitializeWithError:error];
         }
     }];
@@ -178,10 +180,14 @@
         /// !! do NOT use self.hostingController.sceneView here as it breaks keyboard focus on iOS 26 below. I have no idea why this happens even though both return the same object. Maybe sceneView didn't initialize its ViewController properly?
         self.contentView = self.hostingController.sceneViewController.view;
         self.contentView.clipsToBounds = NO;
+        NSLog(@"[TD-Multitask] hostingVC setup pid=%d contentView=%@ sceneVC=%@",
+              self.pid, NSStringFromClass(self.contentView.class),
+              NSStringFromClass(self.hostingController.sceneViewController.class));
         // _scenePresenter was a property in 26, but made only ivar in 27
         self.presenter = [self.contentView valueForKey:@"_scenePresenter"];
         self.sceneID = self.presenter.identifier;
         FBScene *scene = self.presenter.scene;
+        NSLog(@"[TD-Multitask] scene 配置前 scene=%@ id=%@", scene, self.sceneID);
         [scene configureParameters:^(FBSMutableSceneParameters *parameters) {
             [parameters updateSettingsWithBlock:updateSceneSettings];
             [parameters updateClientSettingsWithBlock:updateSceneClientSettings];

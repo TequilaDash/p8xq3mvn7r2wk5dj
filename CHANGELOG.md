@@ -1,3 +1,12 @@
+## [0.3.865] - 2026-11-13
+
+### 诊断
+- 多任务链路补日志：扩展请求 uuid/pid、失败分支、`_UISceneHostingController`/contentView 类型、
+  sceneID 与 FBScene 配置前状态。配合 `td-console.log` 可判断白屏卡在
+  「扩展没起来 / hostingView 没挂上 / scene 没配置」哪一段。
+- 已从真机日志确认：`worse_query` 对 `/var/containers/Bundle/Application` 返回 **-6**
+  （内核拒签），这类系统路径只能走 bad_query；多任务 adopt 本身成功（bounds 393x852）。
+
 ## [0.3.864] - 2026-11-13
 
 ### 修复
