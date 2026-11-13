@@ -33,6 +33,9 @@ enum JITEnablerType : Int, CaseIterable, Identifiable {
 }
 
 struct LCSettingsView: View {
+    // 本仓新增 (M25, 2026-11-13): 右上角「日志」入口（面板自带 SSH 启停与连接命令）.
+    @State private var showLogPanel = false
+
     @State var errorShow = false
     @State var errorInfo = ""
     @State var successShow = false
@@ -442,6 +445,19 @@ struct LCSettingsView: View {
                     certificateImportPasswordAlert.show = false
                 }
             )
+        }
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button {
+                    showLogPanel = true
+                } label: {
+                    Image(systemName: "terminal")
+                }
+                .accessibilityLabel("日志")
+            }
+        }
+        .sheet(isPresented: $showLogPanel) {
+            TDLogPanelSheet()
         }
         .navigationViewStyle(StackNavigationViewStyle())
         .onAppear() {

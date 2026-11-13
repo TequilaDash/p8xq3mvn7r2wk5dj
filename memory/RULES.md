@@ -152,3 +152,9 @@
 - 动作：不要挂 SwiftUI 的 `PresentationHostingController`/系统的私有容器；自建普通容器 VC（必要时独立覆盖窗口，并实现 hitTest 穿透）
 - 验证：多任务/浮窗能出现画面且不触发 UIKit 层级断言
 - 违反记录：MEM-023
+
+## R-032 网络拦截必须覆盖 connectx
+- 条件：实现/修改网络禁用类 hook
+- 动作：至少覆盖 connect、connectx、sendto、sendmsg、getaddrinfo；安装与首次拦截都要打日志；状态读取以「访客自己的配置文件」为准
+- 验证：Console 出现 `[NetBlock] hooks 已安装` 与 `[NetBlock] 已拦截 <syscall>`；目标 App 无法解析/外发
+- 违反记录：MEM-024

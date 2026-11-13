@@ -196,3 +196,12 @@
   并把 LC dock 的 `windowHostingView`（真正承载访客画面的视图）挪进该窗口
 - 检测方法：Console 出现 `[TD-Multitask] 覆盖窗口挂载`
 - 关联规范：R-031
+
+## MEM-024 「禁止联网没用」两类真因（2026-11-13）
+
+- 现象：开关打开后 App 仍能联网；且界面上有两套开关
+- 真因1：旧开关写 `TDNetBlock-<relativeBundlePath>`、新开关存 LCAppInfo `TDNetBlock`，两套口径并存；且 HostGuestEntry 只读 standardUserDefaults，绕过 LCAppModel 的入口读不到
+- 真因2：只 hook `connect`；Network.framework / nw_connection 走 **connectx**，这类 App 形同未拦
+- 正确做法：只保留一套 UI；HostGuestEntry 直接读访客 `LCAppInfo.plist` 的 TDNetBlock；hook 覆盖 connect/sendto/sendmsg/getaddrinfo/**connectx**，并打印一次安装/拦截日志
+- 已知边界：WebKit 网络进程（com.apple.WebKit.Networking）是系统进程，guest 内 hook 管不到
+- 关联规范：R-032
