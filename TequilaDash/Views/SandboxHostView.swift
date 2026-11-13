@@ -18,6 +18,15 @@ import UIKit
 /// `LCTabView()` 当根（App/LiveContainerSwiftUIApp.swift:105-108），而 LCTabView 内部
 /// 自己用 `NavigationView`（Views/LCTabView.swift:64）。两层导航叠加会导致
 /// 子页返回按钮层级错乱（真机实测「返回上一级」行为异常）。
+
+/// 框架（LiveContainerSwiftUI）导出的沙盒日志入口.
+@_silgen_name("TDSandboxLogAppend")
+private func TDSandboxLogAppendC(_ message: UnsafePointer<CChar>?)
+
+private func sandboxLog(_ message: String) {
+    message.withCString { TDSandboxLogAppendC($0) }
+}
+
 struct SandboxHostView: View {
     @Environment(\.dismiss) private var dismiss
 
@@ -30,15 +39,15 @@ struct SandboxHostView: View {
             .toolbar(.hidden, for: .navigationBar)
             .onReceive(NotificationCenter.default.publisher(
                 for: Notification.Name("TDCloseSandboxContainer"))) { _ in
-                SandboxLog.shared.log("通过 LC 返回键关闭沙盒容器")
+                sandboxLog("通过 LC 返回键关闭沙盒容器")
                 dismiss()
             }
             .onAppear {
-                SandboxLog.shared.log("沙盒容器出现（呈现方式=\(UserDefaults.standard.bool(forKey: "TDPresentSandboxAsSheet") ? "从下往上" : "原生平滑")）")
+                sandboxLog("沙盒容器出现（呈现方式=\(UserDefaults.standard.bool(forKey: "TDPresentSandboxAsSheet") ? "从下往上" : "原生平滑")）")
                 NotificationCenter.default.post(name: Notification.Name("TDShowSandboxOverlay"), object: nil)
             }
             .onDisappear {
-                SandboxLog.shared.log("沙盒容器消失")
+                sandboxLog("沙盒容器消失")
                 NotificationCenter.default.post(name: Notification.Name("TDHideSandboxOverlay"), object: nil)
             }
     }

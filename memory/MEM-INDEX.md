@@ -263,3 +263,14 @@
 - 工具：`Resources/Scripts/td_device_logs.py`（paramiko，环境变量给凭据）
 - 真机实证：`worse_query` 对 `/var/containers/Bundle/Application` 返回 -6（内核拒签），这类路径只能 bad_query；
   多任务 adopt 本身成功（bounds 393x852、after superview=UIView）
+
+## MEM-032 沙盒容器 UI 硬性偏好（2026-11-13 owner 明确）
+
+- 返回键放 **LC 原生导航栏最左**，与 LC 自己的 `+ / ?` 并排；不要自绘顶部栏
+- **不要**任何额外底栏（占位/挤压界面）；宿主导航栏也要隐藏，避免突兀白色顶条
+- 呈现方式要可切换：默认原生平滑推入（支持左滑返回），可选「从下往上」；设置位置在
+  **沙盒容器 → 设置 → 实验性功能**（二级页，不是弹窗），要有图例、现代美观
+- 日志：每个板块**各自独立**。沙盒容器日志文件 `Documents/sandbox.log`，
+  页面沿用现有日志样式（标题/右上关闭/全部日志+刷新/等宽区），**显示全部**，不要截 300 行
+- exploit 日志独立 `Documents/exploit.log`，入口在「更多 → exploit → 右上角日志」
+- 通用诊断 `Documents/td-console.log`（NSLog 落盘，SSH `cat`）
