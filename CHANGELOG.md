@@ -1,3 +1,21 @@
+## [0.3.878] - 2026-11-14
+
+### vroot Tier A（默认关）
+- 新增 `TequilaDashLCUIAdapters/VRoot/TDVRootConfig.{h,m}` + `TDVRootShim.m`：
+  `__DATA,__interpose` 21 个 libc 符号（open/openat/__open_nocancel/stat/lstat/fstatat/
+  access/faccessat/realpath/readlink/opendir/mkdir/rename/unlink/getattrlist/
+  getmntinfo/getmntinfo_r_np/getuid/geteuid/getgid/getegid），按前缀映射到
+  `Documents/rootfs`；LC 自身路径/访客包/app group/系统路径一律不映射。
+- per-app 开关写在 `LCAppInfo.plist`：`TDVRoot = off|path|full`（绝对路径 = path+指定根），
+  可选 `TDVRootPath` 覆盖根；宿主 `LiveProcessDebugLauncher` 透传 `TD_VROOT/TD_VROOT_MODE`
+  给扩展与访客，`LCBootstrap` 在 HOME 覆盖后与 DyldHooksInit 前安装。
+- `full` 模式：HOME/CFFIXED_USER_HOME 指向 vroot，PATH 前置 `$JBROOT`，uid/euid 返回 0；
+  `getmntinfo` 追加 vroot 挂载项。**不拦截 posix_spawn/64 位 stat64**（Tier B）。
+- `LCPathBridge.ensureLayout()` 建 `Documents/rootfs`、`Documents/mntfs` 空目录。
+- 已知边界（Tier A 设计）：只拦 dlopen 之后装载的镜像（访客二进制/动态库）；
+  共享缓存里的 Foundation 内部调用不在拦截范围，Swift FileManager 路径映射
+  后续按需走既有 NSFileManager seam（Tier B）。
+
 ## [0.3.877] - 2026-11-14
 
 ### worse_query 目录枚举重写：对齐 WQFiles 的生产级 inode 扫描
