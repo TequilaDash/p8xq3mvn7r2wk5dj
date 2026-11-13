@@ -194,3 +194,16 @@
 - 动作：在 `LCPatchExecSlice` 的 LC_LOAD_DYLIB 遍历里按**精确已知脏名**修正（不要泛化替换）；同时补 NUL 终止，并把 patch rev +1 让已装包重打；只读包用文件别名兜底
 - 验证：重新安装/启动该访客不再报 no such file
 - 违反记录：MEM-030
+
+## R-039 移植原语必须连**同仓库的辅助能力**一起移植
+- 条件：只移植某个原语（worse_query / bad_query 等）来替代旧能力
+- 动作：先看上游仓库文件清单与调用方（YumEdit/Regitela/WQFiles/WQToolkit），确认是否配套 pathleak 等；
+  按成对能力移植，不要凭名字判断能力限制
+- 验证：只启用新原语时，原依赖旧原语的功能仍可用
+- 违反记录：MEM-033
+
+## R-040 fishhook 必须用结构体数组 API
+- 条件：调用 fishhook `rebind_symbols`
+- 动作：`struct rebinding rb = { name, replacement, &replaced }; rebind_symbols(&rb, 1);`；不要两参调用
+- 验证：日志里校验计数 > 0，且自检 DNS 返回 EAI_AGAIN
+- 违反记录：MEM-034

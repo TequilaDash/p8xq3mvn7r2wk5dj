@@ -52,6 +52,8 @@ extern bool isLiveProcess;
 static void TDUncaughtExceptionHandler(NSException *exception) {
     NSString *err = [NSString stringWithFormat:@"%@\nCall stack: %@",
                      exception.reason, exception.callStackSymbols];
+    // 同时写入 td-console，嵌套/宿主进程崩溃时无需再依赖系统 .ips.
+    NSLog(@"[crash] %@", err);
     [NSUserDefaults.standardUserDefaults setObject:err forKey:@"error"];
     NSUserDefaults *shared = nil;
     @try {

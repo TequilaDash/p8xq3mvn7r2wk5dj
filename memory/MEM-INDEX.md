@@ -274,3 +274,22 @@
   页面沿用现有日志样式（标题/右上关闭/全部日志+刷新/等宽区），**显示全部**，不要截 300 行
 - exploit 日志独立 `Documents/exploit.log`，入口在「更多 → exploit → 右上角日志」
 - 通用诊断 `Documents/td-console.log`（NSLog 落盘，SSH `cat`）
+
+## MEM-033 worse_query 缺的是 pathleak（2026-11-13 真机 + 上游源码）
+
+- 现象：只开 worse_query 时列目录全部失败（-6 / -255）；用户指出上游项目支持
+- 根因：`forcequitOS/worse_query` 仓库里除 `worse_query.m` 还有 **`pathleak.m`**（inode + fsgetpath 枚举，
+  即 bad_query_list 的重写版）。我们移植时只拿了 worse_query.m，漏了 pathleak
+- 正确做法：`Engine/pathleak.{h,m}` 原样移植；`WorseQueryExploit.paths` 优先 pathleak，失败再签扩展读目录；
+  consume 时把 `/private/var/...` 归一化成 `/var/...` 再试
+- 参考：YumEdit/Regitela/GestaltX/WQToolkit/WQFiles 都是 pathleak + worse_query 成对使用
+- 关联规范：R-039
+
+## MEM-034 禁止联网真正失效点：fishhook 两参误用（2026-11-13）
+
+- 现象：NetBlock 日志「hooks 已安装」但自检 rc=0、毫无拦截
+- 根因：`rebind_symbols((char*)"connect", hook)` 两参调用（无原型/隐式声明），实际把字符串指针
+  当 `struct rebinding[]`、hook 当元素个数 → 什么都没绑
+- 修复：`struct rebinding rb = { (char*)name, hook, NULL }; rebind_symbols(&rb, 1);`
+- 验证（真机）：`[NetBlock] 校验 connect=1 dns=1`、`自检 rc=2 (EAI_AGAIN)`、`已拦截 getaddrinfo`
+- 关联规范：R-040

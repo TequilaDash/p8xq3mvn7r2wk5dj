@@ -1,3 +1,15 @@
+## [0.3.876] - 2026-11-14
+
+### worse_query 目录枚举：改用上游的 inode 基线
+- 0.3.874 固定 1M/2M 作为 pathleak 扫描上限，真机日志显示对具体容器目录 `命中=0`、
+  随后 worse_query 返回 `code=4`。改为与上游 `ContentView.leakPaths` 相同：
+  在临时目录写一个文件取当前 inode 基线，以它（或 1M/2M 中较大者）作扫描上限，
+  并在 `exploit.log` 记录 `基线/上限/命中数`，下次可直接判定是否覆盖到目标 inode。
+
+### 崩溃留痕
+- 宿主未捕获异常处理同时 `NSLog` 到 `td-console.log`（含 reason + callStackSymbols），
+  不再只写 UserDefaults；嵌套/多任务崩溃可直接从日志看到符号化调用栈。
+
 ## [0.3.875] - 2026-11-14
 
 ### 修复沙盒容器「App 设置」一进即闪退
