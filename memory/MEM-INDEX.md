@@ -218,3 +218,12 @@
 - 现象：CI 报 `call to main actor-isolated initializer 'init()' in a synchronous nonisolated context`，位置在 `TDLogPanelHost.makeViewController()` 里的 `UIHostingController(...)`
 - 根因：Swift 6 approachable concurrency 下 UIHostingController.init 是 MainActor；@objc static 方法默认 nonisolated
 - 正确做法：给宿主类/工厂加 `@MainActor`（反射调用仍发生在主线程，运行时无碍）
+
+## MEM-027 三处「以为修了其实没生效」（2026-11-13 晚）
+
+- **Search bar**：共享 SearchContext / isPresented / dropFirst 三套补丁都没解决「自动收起+抖动」；
+  owner 判定很可能是系统 bug，要求完全对齐上游。已把两个视图文件恢复成上游原文，停用 R-LC-4。
+  教训：拿不准是宿主还是系统问题时，先回退到上游行为，不要叠加自我发明。
+- **exploit 长按**：`Button` 会吞掉挂在它外面的 `onLongPressGesture`。改行内 HStack + `onTapGesture` / `onLongPressGesture` 才生效。
+- **禁止联网**：iOS 26+ 新二进制是 chained fixups，fishhook 改 `__la_symbol_ptr` 对其无效；
+  必须用 `litehook_rebind_symbol(guestImageHeader, ...)` 在访客镜像 dlopen 后按镜像重绑。

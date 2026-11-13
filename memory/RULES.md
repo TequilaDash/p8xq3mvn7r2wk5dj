@@ -158,3 +158,21 @@
 - 动作：至少覆盖 connect、connectx、sendto、sendmsg、getaddrinfo；安装与首次拦截都要打日志；状态读取以「访客自己的配置文件」为准
 - 验证：Console 出现 `[NetBlock] hooks 已安装` 与 `[NetBlock] 已拦截 <syscall>`；目标 App 无法解析/外发
 - 违反记录：MEM-024
+
+## R-033 iOS 26+ 的符号重绑必须按访客镜像地址做
+- 条件：在访客进程 hook libc 符号（connect/connectx/sendto/sendmsg/getaddrinfo 等）
+- 动作：dlopen 后取 `LCGetLoadedImageHeader(0, appExecPath)`，用 `litehook_rebind_symbol(header, ...)`；fishhook 只作旧镜像兜底
+- 验证：新二进制（chained fixups）下也出现 `[NetBlock] 已按访客镜像重绑` 且实际拦截
+- 违反记录：MEM-027
+
+## R-034 交互手势不要挂在 Button 上
+- 条件：列表行需要「单击切换 + 长按说明」
+- 动作：用 HStack + contentShape + `onTapGesture` + `onLongPressGesture`，不要用 Button 包住再挂长按
+- 验证：长按真的弹出说明
+- 违反记录：MEM-027
+
+## R-035 系统级怪象先回退上游
+- 条件：某个 UI 行为在宿主改造后异常、但无法证明是宿主代码导致
+- 动作：把相关文件恢复上游原文并移除本仓守护规则；不要继续叠加补丁
+- 验证：行为与上游一致（或仍异常 → 判为系统问题，记录不改）
+- 违反记录：MEM-027
