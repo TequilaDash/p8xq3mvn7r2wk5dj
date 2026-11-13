@@ -188,3 +188,9 @@
 - 动作：不要在 init 设置 `allowsBackgroundLocationUpdates`；在 start 且 `applicationState == .active` 时设置；否则等 didBecomeActive
 - 验证：后台/冷启动路径不再触发 CoreLocation 断言
 - 违反记录：MEM-029
+
+## R-038 第三方重签写坏的 load command 要在 patch 阶段就地纠正
+- 条件：访客 dlopen 报某个依赖路径「多出/缺少字符」且原版同样复现
+- 动作：在 `LCPatchExecSlice` 的 LC_LOAD_DYLIB 遍历里按**精确已知脏名**修正（不要泛化替换）；同时补 NUL 终止，并把 patch rev +1 让已装包重打；只读包用文件别名兜底
+- 验证：重新安装/启动该访客不再报 no such file
+- 违反记录：MEM-030

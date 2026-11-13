@@ -242,3 +242,13 @@
 - 根因：init 里 `manager.allowsBackgroundLocationUpdates = true`；进程当时非活跃/无后台权限
 - 正确做法：只在 App 活跃且确实要启动定位时设置；非活跃就等 didBecomeActive 再 start
 - 关联规范：R-037
+
+## MEM-030 访客 `TweakLoader.dylibC` 脏名：原版 LC 也起不来（2026-11-13）
+
+- 现象：`dlopen(... NSKSign): Library not loaded: @loader_path/../../Tweaks/TweakLoader.dylibC`
+- 判定：owner 用**原版 LC** 的默认与多任务都能复现；最新包体自带这个坏 load command（旧包体正常）
+- 两层修复（都做了）：
+  1. `LCPatchExecSlice` 就地纠正 `.../TweakLoader.dylibC` → `.../TweakLoader.dylib`（M29）；
+     `insertDylibCommand` 补 NUL（M27）；`LCAppInfo.currentPatchRev` 7→8 强制重打已装访客（M28）
+  2. `Documents/Tweaks/TweakLoader.dylibC` 兼容别名（M26），供无法重打的只读包
+- 关联规范：R-038

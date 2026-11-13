@@ -1,3 +1,14 @@
+## [0.3.860] - 2026-11-13
+
+### 按 owner 意见收敛
+- **移除静态别名**：不再无条件创建 `TweakLoader.dylibC`。改为动态识别 ——
+  `LCMachOReferencesString()` 只读扫描访客二进制的 load command，
+  只有确实引用了 `TweakLoader.dylibC` 时才建别名；干净包不产生任何额外文件。
+- **撤销 patch rev 提升**：`LCAppInfo.currentPatchRev` 回到上游的 7，不再为了重写脏名而改版本号。
+- **撤销就地改写**：不再在 `LCPatchExecSlice` 里改访客二进制里的 dylib 名。
+- **保留根因修复**：`insertDylibCommand` 补字符串 NUL（上游 bug）——新打补丁的访客不会再
+  生成 `TweakLoader.dylibC` 这种脏名；已装好的旧访客由动态别名兜底。
+
 ## [0.3.859] - 2026-11-13
 
 ### 修复（上游 bug）

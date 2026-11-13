@@ -430,14 +430,25 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
         }
         NSString *target = [bundlePath stringByAppendingPathComponent:@"Frameworks/TweakLoader.dylib"];
         symlink(target.UTF8String, tweakLoaderPath.UTF8String);
-        // 本仓适配 (M26, 2026-11-13): 兼容被第三方签名工具写坏成
-        // `@loader_path/../../Tweaks/TweakLoader.dylibC` 的访客（owner 实测某个
-        // signall 包就是这种 LC_LOAD_DYLIB，dyld 报 no such file）。
-        // 额外建一个同名别名，指向同一个 TweakLoader，避免这类包直接起不来.
-        NSString *legacyAlias = [tweakFolder stringByAppendingPathComponent:@"TweakLoader.dylibC"];
-        if (![fm fileExistsAtPath:legacyAlias]) {
-            remove(legacyAlias.UTF8String);
-            symlink(target.UTF8String, legacyAlias.UTF8String);
+    }
+
+    // 本仓适配 (M26, 2026-11-13，动态识别): 只有该访客二进制真的引用了
+    // `.../TweakLoader.dylibC`（LC 注入时缺 NUL 造成的脏名）才建别名；
+    // 二进制干净就什么都不建，不额外制造文件.
+    {
+        NSString *execPath = appBundle.executablePath;
+        if (execPath && LCMachOReferencesString(execPath.fileSystemRepresentation, "TweakLoader.dylibC")) {
+            NSString *lcBundlePath = NSBundle.mainBundle.bundlePath;
+            if ([lcBundlePath hasSuffix:@"PlugIns/LiveProcess.appex"]) {
+                lcBundlePath = lcBundlePath.stringByDeletingLastPathComponent.stringByDeletingLastPathComponent;
+            }
+            NSString *target = [lcBundlePath stringByAppendingPathComponent:@"Frameworks/TweakLoader.dylib"];
+            NSString *legacyAlias = [tweakFolder stringByAppendingPathComponent:@"TweakLoader.dylibC"];
+            if (![fm fileExistsAtPath:legacyAlias]) {
+                remove(legacyAlias.UTF8String);
+                symlink(target.UTF8String, legacyAlias.UTF8String);
+                NSLog(@"[LCBootstrap] 访客引用了 TweakLoader.dylibC，已建动态别名");
+            }
         }
     }
 
