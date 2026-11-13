@@ -1,3 +1,12 @@
+## [0.3.859] - 2026-11-13
+
+### 修复（上游 bug）
+- `insertDylibCommand` 插入 `LC_LOAD_DYLIB` 时只 `strncpy(strlen(name))`，**没有写结尾 NUL**，
+  且该分支不像 `LC_ID_DYLIB` 那样先 `bzero`。新命令后残留旧数据，dyld 读路径时
+  会一直读到下一个 NUL，于是 `.../TweakLoader.dylib` 变成 `.../TweakLoader.dylibC` 这类脏串
+  （owner 真机 dlopen 报 "Library not loaded ... (no such file)"）。上游同样存在，已补终止符。
+- 保留 `TweakLoader.dylibC` 兼容别名，供已经被写坏的访客继续启动.
+
 ## [0.3.858] - 2026-11-13
 
 ### 追加（18:16 / 18:24 两个 .ips）

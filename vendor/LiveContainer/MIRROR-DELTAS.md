@@ -86,6 +86,7 @@
 |---|---|---|---|---|
 | 1 | `LiveContainer/LCBootstrap.m` | M13 + M18 + M22 + M26 | 崩溃双写 error；巢中巢兼容（UI 已移除）；`TDNetBlock` 传参；TweakLoader `.dylibC` 兼容别名 | v0.3.858 |
 | 2 | `LiveContainer/LCSharedUtils.m` | M7 | `lcMainBundle` nil 兜底 | v0.3.833 |
+| 2b | `LiveContainer/LCMachOUtils.m` | M27 | `insertDylibCommand` 补字符串 NUL 终止（否则注入路径读进旧数据，出现 `TweakLoader.dylibC`） | v0.3.859 |
 | 3 | `LiveContainer/Tweaks/NSFileManager+GuestHooks.m` | M16 + M17 | ①保存真实 IMP 防两套 hook 成环 ②iOS 26+ 不装 createDirectory swizzle ③`lcAppGroupPath` 判空 | v0.3.848 |
 | 4 | `LiveContainer/Tweaks/Tweaks.h` | C7 | `NetBlockGuestHooksInit` 声明（宿主联网拦截，上游无） | v0.3.840 |
 | 5 | `LiveContainerSwiftUI/Models/LCAppInfo.h` | M18 + M22 | `nestedLCCompat` / `netBlock` 属性 | v0.3.850 |

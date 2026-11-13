@@ -76,6 +76,13 @@ static void insertDylibCommand(uint32_t cmd, const char *path, struct mach_heade
     dylib->dylib.current_version = 0x10000;
     dylib->dylib.timestamp = 2;
     strncpy((void *)dylib + dylib->dylib.name.offset, name, strlen(name));
+    // 本仓适配 (M27, 2026-11-13): 上面只拷贝了 strlen 字节、**没写结尾 NUL**；
+    // 而 LC_LOAD_DYLIB 这条分支又不像 LC_ID_DYLIB 那样先 bzero ——
+    // 新命令后的空闲区残留旧数据，dyld 会一直读到下一个 NUL，
+    // 于是路径变成 `.../TweakLoader.dylibC` 这种脏字符串（owner 真机 dlopen 报
+    // "Library not loaded: @loader_path/../../Tweaks/TweakLoader.dylibC"）。
+    // 补一个显式终止符即可。
+    ((char *)dylib + dylib->dylib.name.offset)[strlen(name)] = 0;
     header->ncmds++;
     header->sizeofcmds += dylib->cmdsize;
 }

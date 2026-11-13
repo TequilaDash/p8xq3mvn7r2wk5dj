@@ -227,3 +227,18 @@
 - **exploit 长按**：`Button` 会吞掉挂在它外面的 `onLongPressGesture`。改行内 HStack + `onTapGesture` / `onLongPressGesture` 才生效。
 - **禁止联网**：iOS 26+ 新二进制是 chained fixups，fishhook 改 `__la_symbol_ptr` 对其无效；
   必须用 `litehook_rebind_symbol(guestImageHeader, ...)` 在访客镜像 dlopen 后按镜像重绑。
+
+## MEM-028 访客启动失败后不能继续跑宿主 UI（进程已被 LC 改写）（2026-11-13）
+
+- 现象：某个访客起不来后，同进程进入宿主界面：应用列表空了、界面显示本地化键名、悬浮球变黑；杀进程重开即恢复
+- 根因：LCBootstrap 把 NSBundle / NSUserDefaults / execPath 改成访客的且**不回滚**；我们失败后调 TDHostBoot() 在脏进程里建 UI
+- 正确做法：访客 main 返回即 exit(0)，让用户重开；错误详情由下次启动读 defaults["error"] 弹出
+- 检测：失败后进程直接退出（Console 有 `[TDHost] guest 返回(...)，进程已被 LC 改写`）
+- 关联规范：R-036
+
+## MEM-029 CLLocationManager 的后台允许位不能在 init/后台设置（2026-11-13）
+
+- 现象：SIGABRT `Invalid parameter not satisfying: !stayUp || CLClientIsBackgroundable(...)`（18:16 .ips，栈在 BackgroundKeepAlive.init）
+- 根因：init 里 `manager.allowsBackgroundLocationUpdates = true`；进程当时非活跃/无后台权限
+- 正确做法：只在 App 活跃且确实要启动定位时设置；非活跃就等 didBecomeActive 再 start
+- 关联规范：R-037

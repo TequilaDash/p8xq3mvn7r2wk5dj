@@ -176,3 +176,15 @@
 - 动作：把相关文件恢复上游原文并移除本仓守护规则；不要继续叠加补丁
 - 验证：行为与上游一致（或仍异常 → 判为系统问题，记录不改）
 - 违反记录：MEM-027
+
+## R-036 访客进程失败后必须退出进程
+- 条件：在自宿主里以「同进程重启」方式运行访客，且访客加载失败或 main 返回
+- 动作：清理 selected/selectedContainer 后 `exit(0)`，不要在当前进程继续构建宿主 UI
+- 验证：失败后 App 关闭；重开显示错误详情且界面正常
+- 违反记录：MEM-028
+
+## R-037 定位后台权限位只在前台、按需设置
+- 条件：使用 CLLocationManager 的后台定位
+- 动作：不要在 init 设置 `allowsBackgroundLocationUpdates`；在 start 且 `applicationState == .active` 时设置；否则等 didBecomeActive
+- 验证：后台/冷启动路径不再触发 CoreLocation 断言
+- 违反记录：MEM-029
