@@ -35,8 +35,12 @@ struct SandboxHostView: View {
             }
             .onAppear {
                 SandboxLog.shared.log("沙盒容器出现（呈现方式=\(UserDefaults.standard.bool(forKey: "TDPresentSandboxAsSheet") ? "从下往上" : "原生平滑")）")
+                NotificationCenter.default.post(name: Notification.Name("TDShowSandboxOverlay"), object: nil)
             }
-            .onDisappear { SandboxLog.shared.log("沙盒容器消失") }
+            .onDisappear {
+                SandboxLog.shared.log("沙盒容器消失")
+                NotificationCenter.default.post(name: Notification.Name("TDHideSandboxOverlay"), object: nil)
+            }
     }
 }
 

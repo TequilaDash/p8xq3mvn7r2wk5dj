@@ -55,6 +55,30 @@ static UIViewController *gContainer = nil;
     gContainer.view.backgroundColor = UIColor.clearColor;
     gWindow.rootViewController = gContainer;
 
+    // 沙盒容器出现/消失时同步覆盖窗口：容器回来就重新挂载访客层并显示；
+    // 容器离开就隐藏覆盖窗口，避免访客浮窗飘在宿主其它界面上.
+    static id showObserver = nil;
+    static id hideObserver = nil;
+    if (!showObserver) {
+        showObserver = [NSNotificationCenter.defaultCenter
+            addObserverForName:@"TDShowSandboxOverlay" object:nil queue:NSOperationQueue.mainQueue
+                    usingBlock:^(NSNotification * _Nonnull note) {
+            if (!gWindow) return;
+            gWindow.hidden = NO;
+            [TDGuestOverlay adoptGuestHostingViews];
+            NSLog(@"[TD-Multitask] 覆盖窗口随沙盒容器显示");
+        }];
+    }
+    if (!hideObserver) {
+        hideObserver = [NSNotificationCenter.defaultCenter
+            addObserverForName:@"TDHideSandboxOverlay" object:nil queue:NSOperationQueue.mainQueue
+                    usingBlock:^(NSNotification * _Nonnull note) {
+            if (!gWindow) return;
+            gWindow.hidden = YES;
+            NSLog(@"[TD-Multitask] 覆盖窗口随沙盒容器隐藏");
+        }];
+    }
+
     // 回到前台时若窗口被系统隐掉，重新亮出来（多任务窗口「返回后消失」的兜底）.
     static id activeObserver = nil;
     if (!activeObserver) {
