@@ -10,6 +10,8 @@
 #import "LiveProcessDebugLauncher.h"
 #import <Foundation/Foundation.h>
 
+#include <stdlib.h>
+
 // 与 TequilaDashLiveProcess/main.m 逐字对齐的六个键 (防串味, 不用 LC 的键名).
 static NSString * const TDLPHostSchemeKey      = @"TequilaDashHostScheme";
 static NSString * const TDLPGuestFolderNameKey = @"TequilaDashGuestFolderName";
@@ -17,8 +19,79 @@ static NSString * const TDLPGuestBundleIDKey   = @"TequilaDashGuestBundleID";
 static NSString * const TDLPContainerUUIDKey   = @"TequilaDashContainerUUID";
 static NSString * const TDLPHomePathKey        = @"TequilaDashHomePath";
 static NSString * const TDLPBookmarksKey       = @"TequilaDashBookmarks";
+// vroot (Tier A): 与 TequilaDashLiveProcess/main.m 的 TDLPVRoot*Key 逐字对齐.
+// per-app 开关存在 LCAppInfo.plist 的 TDVRoot / TDVRootPath, 这里翻译成载荷键.
+static NSString * const TDLPVRootPathKey        = @"tdVRoot";
+static NSString * const TDLPVRootModeKey        = @"tdVRootMode";
 
 NSString * const TequilaDashLiveProcessBundleID = @"com.tequila.dash.liveprocess";
+
+// 从 per-app LCAppInfo.plist 读 vroot 开关:
+//   TDVRoot     = "off" | "path" | "full"; 写成绝对路径时等价于 path + 该路径
+//   TDVRootPath = 可选, 显式覆盖 vroot 根 (默认 <LC_HOME_PATH>/Documents/rootfs)
+// 返回 YES 时 *outPath/*outMode 均非空; 关闭或 plist 不存在返回 NO.
+static BOOL TDReadVRootSwitch(NSDictionary *payload, NSString **outPath, NSString **outMode) {
+    NSString *guestFolder = payload[TDLPGuestFolderNameKey];
+    if (![guestFolder isKindOfClass:NSString.class] || guestFolder.length == 0) {
+        return NO;
+    }
+    NSString *home = payload[TDLPHomePathKey];
+    if (![home isKindOfClass:NSString.class] || home.length == 0) {
+        const char *envHome = getenv("LC_HOME_PATH");
+        home = (envHome && envHome[0] == '/') ? [NSString stringWithUTF8String:envHome] : nil;
+    }
+    if (home.length == 0) {
+        home = NSHomeDirectory();
+    }
+    NSString *plistPath = [[[home stringByAppendingPathComponent:@"Documents"]
+        stringByAppendingPathComponent:@"Applications"]
+        stringByAppendingPathComponent:guestFolder];
+    plistPath = [plistPath stringByAppendingPathComponent:@"LCAppInfo.plist"];
+    NSDictionary *appInfo = [NSDictionary dictionaryWithContentsOfFile:plistPath];
+    if (![appInfo isKindOfClass:NSDictionary.class]) {
+        return NO;
+    }
+
+    NSString *mode = nil;
+    NSString *path = nil;
+    id rawMode = appInfo[@"TDVRoot"];
+    if ([rawMode isKindOfClass:NSString.class] && [(NSString *)rawMode length] > 0) {
+        NSString *raw = (NSString *)rawMode;
+        if ([raw hasPrefix:@"/"]) {
+            path = raw; // 写作绝对路径 = 打开 path 模式并指定根
+            mode = @"path";
+        } else {
+            mode = raw;
+        }
+    } else if ([rawMode isKindOfClass:NSNumber.class]) {
+        mode = [(NSNumber *)rawMode boolValue] ? @"path" : @"off";
+    }
+    id rawPath = appInfo[@"TDVRootPath"];
+    if ([rawPath isKindOfClass:NSString.class] && [(NSString *)rawPath hasPrefix:@"/"]) {
+        path = rawPath;
+    }
+    if (mode.length == 0) {
+        return NO;
+    }
+    mode = [mode lowercaseString];
+    if ([mode isEqualToString:@"off"]) {
+        return NO;
+    }
+    if (![mode isEqualToString:@"path"] && ![mode isEqualToString:@"full"]) {
+        // 未知模式 fail-closed: 不向下传, 避免拼错反而打开映射.
+        return NO;
+    }
+    if (path.length == 0) {
+        path = [[home stringByAppendingPathComponent:@"Documents"]
+            stringByAppendingPathComponent:@"rootfs"];
+    }
+    if (![path hasPrefix:@"/"]) {
+        return NO;
+    }
+    *outPath = path;
+    *outMode = mode;
+    return YES;
+}
 
 NSString *TequilaDashLiveProcessDebugLaunch(NSDictionary<NSString *, id> *userInfo) {
     static dispatch_once_t onceToken;
@@ -34,6 +107,14 @@ NSString *TequilaDashLiveProcessDebugLaunch(NSDictionary<NSString *, id> *userIn
     NSMutableDictionary *payload = [userInfo mutableCopy] ?: [NSMutableDictionary dictionary];
     if (![payload objectForKey:TDLPHostSchemeKey]) {
         payload[TDLPHostSchemeKey] = hostScheme;
+    }
+    // vroot (Tier A, 默认关): per-app LCAppInfo.plist 开关 -> 载荷键; main.m 落成
+    // TD_VROOT/TD_VROOT_MODE, LCBootstrap + TDVRootShim 消费. 没配就不写 (env 保持干净).
+    NSString *vrootPath = nil;
+    NSString *vrootMode = nil;
+    if (TDReadVRootSwitch(payload, &vrootPath, &vrootMode)) {
+        payload[TDLPVRootPathKey] = vrootPath;
+        payload[TDLPVRootModeKey] = vrootMode;
     }
 
     // ── 定位扩展: [NSExtension extensionWithIdentifier:error:] (反射, 不链接) ──

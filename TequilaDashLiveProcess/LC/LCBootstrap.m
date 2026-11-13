@@ -3,6 +3,8 @@
 #import "LCSharedUtils.h"
 #import "UIKitPrivate.h"
 #import "utils.h"
+// vroot (Tier A): 纯路径前缀映射 + full 模式 HOME/PATH 切换. 默认关 (TD_VROOT 未设即空操作).
+#import "TDVRootConfig.h"
 
 #include <mach/mach.h>
 #include <mach-o/dyld.h>
@@ -285,6 +287,9 @@ NSString *LCPrepareGuestExtension(NSDictionary *request) {
     setenv("LC_HOME_PATH", lcHomePath.fileSystemRepresentation, 1);
     setenv("HOME", homePath.fileSystemRepresentation, 1);
     setenv("CFFIXED_USER_HOME", homePath.fileSystemRepresentation, 1);
+    // vroot (Tier A, 默认关): 与 invokeAppMain 同一口径 —— full 模式覆盖 HOME/CFFIXED_USER_HOME,
+    // path/full 都前置 PATH. TD_VROOT 未设时本调用立即返回.
+    TDVRootApplyEnvironmentOverrides();
     setenv("TMPDIR", [[homePath stringByAppendingPathComponent:@"tmp"] stringByAppendingString:@"/"].fileSystemRepresentation, 1);
     overwriteMainNSBundle(bundle);
     overwriteMainCFBundle();
@@ -295,6 +300,8 @@ NSString *LCPrepareGuestExtension(NSDictionary *request) {
     NSFMGuestExtensionHooksInit(request[@"parentContainerPath"]);
     NSURLSCGuestHooksInit();
 
+    // vroot (Tier A): 与 invokeAppMain 同一点 —— 在扩展的 DyldHooksInit 之前强制重读配置.
+    TDVRootInstallIfRequested();
     if (checkJITEnabled()) init_bypassDyldLibValidation();
     DyldHooksInit(false, true, 0);
     appMainImageIndex = _dyld_image_count();
@@ -560,6 +567,9 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
     
     setenv("CFFIXED_USER_HOME", newHomePath.UTF8String, 1);
     setenv("HOME", newHomePath.UTF8String, 1);
+    // vroot (Tier A, 默认关): mode=full 用 $JBROOT 覆盖 HOME/CFFIXED_USER_HOME 并前置 PATH;
+    // mode=path 保留访客 HOME, 只前置 PATH. TD_VROOT 未设时本调用立即返回.
+    TDVRootApplyEnvironmentOverrides();
     // we don't change TMP's env in case some apps clear cache by directly deleting the tmp folder,
     // which if symlinked, the new tmp cannot be recreated (#1040, #1125) or the app may camplain about the tmp folder being a symlimk (#884)
 
@@ -634,6 +644,9 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
     // ignore setting handler from guest app
     litehook_rebind_symbol(LITEHOOK_REBIND_GLOBAL, NSSetUncaughtExceptionHandler, hook_do_nothing, nil);
     
+    // vroot (Tier A): __DATA,__interpose 在镜像装载时已生效; 这里在访客 dlopen 之前
+    // 按当前环境变量强制重读配置 (进程早期可能还没拿到宿主 userInfo 落下的 TD_VROOT).
+    TDVRootInstallIfRequested();
     BOOL hookDlopen = !isSideStore && !isSharedBundle && LCSharedUtils.certificatePassword && isLiveProcess;
     DyldHooksInit([guestAppInfo[@"hideLiveContainer"] boolValue], hookDlopen, [guestAppInfo[@"spoofSDKVersion"] unsignedIntValue]);
     

@@ -30,6 +30,10 @@ static NSString * const TDLPGuestBundleIDKey = @"TequilaDashGuestBundleID";
 static NSString * const TDLPContainerUUIDKey = @"TequilaDashContainerUUID";
 static NSString * const TDLPHomePathKey      = @"TequilaDashHomePath";
 static NSString * const TDLPBookmarksKey     = @"TequilaDashBookmarks";
+// vroot (Tier A): 第 7/8 个载荷键. 宿主 LiveProcessDebugLauncher 从 per-app
+// LCAppInfo.plist 的 TDVRoot/TDVRootPath 读出后放到这里, 本文件落成 TD_VROOT/TD_VROOT_MODE.
+static NSString * const TDLPVRootPathKey     = @"tdVRoot";
+static NSString * const TDLPVRootModeKey     = @"tdVRootMode";
 
 #pragma mark - 扩展处理类
 
@@ -106,6 +110,26 @@ static int TequilaDashLiveProcessMain(int argc, char *argv[]) {
     if (appInfo[@"tdNetBlock"]) {
         setenv("TD_NET_BLOCK", [appInfo[@"tdNetBlock"] boolValue] ? "1" : "0", 1);
         NSLog(@"[TequilaDashLiveProcess] TD_NET_BLOCK=%s", getenv("TD_NET_BLOCK"));
+    }
+    // vroot (Tier A, 默认关): 宿主填 tdVRoot (绝对路径) / tdVRootMode (off|path|full),
+    // 这里落成 LCBootstrap 与 TDVRootShim 读取的环境变量; 缺键就不写 (保持 env 干净).
+    NSString *vrootPath = appInfo[TDLPVRootPathKey];
+    if (![vrootPath isKindOfClass:NSString.class]) {
+        vrootPath = appInfo[@"TD_VROOT"];
+    }
+    if ([vrootPath isKindOfClass:NSString.class] && vrootPath.length > 0) {
+        NSString *vrootMode = appInfo[TDLPVRootModeKey];
+        if (![vrootMode isKindOfClass:NSString.class] || vrootMode.length == 0) {
+            vrootMode = appInfo[@"TD_VROOT_MODE"] ?: @"path";
+        }
+        const char *vrootPathC = vrootPath.fileSystemRepresentation;
+        const char *vrootModeC = vrootMode.fileSystemRepresentation;
+        if (vrootPathC && vrootModeC) {
+            setenv("TD_VROOT", vrootPathC, 1);
+            setenv("TD_VROOT_MODE", vrootModeC, 1);
+            NSLog(@"[TequilaDashLiveProcess] TD_VROOT=%s mode=%s",
+                  getenv("TD_VROOT"), getenv("TD_VROOT_MODE"));
+        }
     }
     if (mappedHostScheme) {
         [defaults setObject:mappedHostScheme forKey:@"hostUrlScheme"];

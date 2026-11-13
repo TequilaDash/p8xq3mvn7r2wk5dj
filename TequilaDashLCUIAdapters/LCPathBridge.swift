@@ -47,10 +47,15 @@ enum LCPathBridge {
     static var dataApplication: URL { hostContainerRoot.appendingPathComponent("Data/Application", isDirectory: true) }
     static var tweaks: URL { hostContainerRoot.appendingPathComponent("Tweaks", isDirectory: true) }
 
+    /// vroot (Tier A) 的两个空壳目录: 契约与 Nyxian 的 `$croot/Documents/{rootfs,mntfs}` 同构.
+    /// 这里只负责创建, 不负责解包 (rootfs 解包在切片 2 由宿主侧 libarchive 做).
+    static var rootfs: URL { hostContainerRoot.appendingPathComponent("rootfs", isDirectory: true) }
+    static var mntfs: URL { hostContainerRoot.appendingPathComponent("mntfs", isDirectory: true) }
+
     /// 确保 LC 期望的三层目录存在（上游 LiveContainerSwiftUIApp.init 同款做法）.
     static func ensureLayout() throws {
         let fm = FileManager.default
-        for dir in [applications, dataApplication, tweaks] {
+        for dir in [applications, dataApplication, tweaks, rootfs, mntfs] {
             if !fm.fileExists(atPath: dir.path) {
                 try fm.createDirectory(at: dir, withIntermediateDirectories: true)
             }

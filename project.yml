@@ -465,6 +465,9 @@ targets:
           - "LC/main.c"
       # 复用主 App 已有的 C 底座, 逐个文件列, 不列目录 (方案 2.2: 列 Engine/ 会把整棵 Swift 树编进扩展).
       - path: TequilaDash/Engine/EscHookBridge.c
+      # vroot (Tier A): 三个文件只编进扩展进程 —— __DATA,__interpose 只应作用于访客,
+      # 不进主 App / LiveContainerSwiftUI.framework (后者已 excludes "VRoot").
+      - path: TequilaDashLCUIAdapters/VRoot
       - path: TequilaDash/Services/MachOLoader/uloader.c
       - path: vendor/litehook/src
       - path: vendor/fishhook
@@ -503,6 +506,11 @@ targets:
         OTHER_LDFLAGS:
           - "-framework Foundation"
           - "-framework UIKit"
+        # vroot (Tier A): LCBootstrap.m 的 #import "TDVRootConfig.h".
+        # $(inherited) 不能丢: EscHookBridge.c 经工程级搜索路径找 litehook.h / fishhook.h.
+        HEADER_SEARCH_PATHS:
+          - "$(inherited)"
+          - "$(SRCROOT)/TequilaDashLCUIAdapters/VRoot"
         # LC 同款 (LiveContainer.xcodeproj:1910/1952): dyld_bypass_validation.h 的
         # orig_dyld_* 函数指针是头内暂定定义, Dyld.m 与 dyld_bypass_validation.m 两个 TU
         # 都 include 它 —— LC 靠 -fcommon 让暂定定义跨 TU 合并 (run 42478527343 实锤
@@ -722,6 +730,10 @@ targets:
           - "LiveContainerSwiftUI-Bridging-Header.h"
       - path: vendor/LiveContainer/MultitaskSupport
       - path: TequilaDashLCUIAdapters
+        excludes:
+          # vroot (Tier A): interpose 表只编进 TequilaDashLiveProcess 扩展,
+          # 不进本 framework (否则主 App 进程也装一套路径拦截).
+          - "VRoot"
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: "$(TD_HOST_BUNDLE_ID).LiveContainerSwiftUI"
