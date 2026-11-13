@@ -93,8 +93,6 @@
 | 7 | `LiveContainerSwiftUI/Models/LCAppModel.swift` | M18 + M22 | `uiNestedLCCompat`/`uiNetBlock`；runApp 写 `TDGuestNetBlock` | v0.3.850 |
 | 8 | `LiveContainerSwiftUI/Utilities/LCUtilsExtensions.swift` | M9 | `signTweaks` 移除签名预校验 | v0.3.835 |
 | 9 | `LiveContainerSwiftUI/Views/AppList/AppSettings/LCAppSettingsView.swift` | M18 + M22 | 「实验性」段：巢中巢兼容 + 禁止联网 | v0.3.850 |
-| 10 | `LiveContainerSwiftUI/Views/AppList/LCAppListView.swift` | M1 + M23 | `SearchContext.shared`；`isPresented` 绑定修「点 X 又自动进搜索」 | v0.3.850 |
-| 11 | `LiveContainerSwiftUI/Views/LCAltStoreSourcesView.swift` | M1c + M23 | 同 M1；同 `isPresented` 绑定 | v0.3.850 |
 | 12 | `LiveContainerSwiftUI/Views/Settings/LCSettingsView.swift` | M5 + M25 | 证书失败详情；右上角「日志」入口（自绘面板 + SSH 启停） | v0.3.857 |
 | 13 | `MultitaskSupport/AppSceneViewController.m` | M4r + M6r + M22 | bookmarks 判空 + userInfo 兜底 + 传 `tdNetBlock` | v0.3.850 |
 

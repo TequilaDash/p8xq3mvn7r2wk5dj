@@ -95,3 +95,21 @@ void NetBlockApplyAfterGuestLoad(void) {
     rebind_symbols((char *)"getaddrinfo", hook_getaddrinfo);
     rebind_symbols((char *)"connectx", hook_connectx);
 }
+
+/// 访客镜像 dlopen 完成后调用：按**该镜像**的加载地址重绑.
+///
+/// 为什么不用 fishhook：iOS 26+ 的新二进制多是 chained fixups，fishhook 依赖
+/// `__la_symbol_ptr` 改写，对这类镜像不生效 —— 表现就是「禁止联网开了但完全没用」。
+/// litehook 直接在镜像里按导入表地址替换，能覆盖 chained fixups.
+void NetBlockApplyAfterGuestLoadWithImage(const struct mach_header_64 *header) {
+    if (!header) return;
+    litehook_rebind_symbol((const mach_header_u *)header, connect, hook_connect, nil);
+    litehook_rebind_symbol((const mach_header_u *)header, sendto, hook_sendto, nil);
+    litehook_rebind_symbol((const mach_header_u *)header, sendmsg, hook_sendmsg, nil);
+    litehook_rebind_symbol((const mach_header_u *)header, getaddrinfo, hook_getaddrinfo, nil);
+    void *connectxSym = dlsym(RTLD_DEFAULT, "connectx");
+    if (connectxSym) {
+        litehook_rebind_symbol((const mach_header_u *)header, connectxSym, (void *)hook_connectx, nil);
+    }
+    NSLog(@"[NetBlock] 已按访客镜像重绑 connect/connectx/sendto/sendmsg/getaddrinfo");
+}

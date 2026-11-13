@@ -58,13 +58,50 @@ static UIViewController *gContainer = nil;
 + (void)adoptGuestHostingViews {
     UIViewController *container = [self guestHostController];
     if (!container) return;
+    if (CGRectIsEmpty(container.view.bounds) && gWindow) {
+        container.view.frame = gWindow.bounds;
+    }
+    NSLog(@"[TD-Multitask] adopt: container=%@ bounds=%@ window=%@",
+          NSStringFromClass(container.class), NSStringFromCGRect(container.view.bounds),
+          NSStringFromCGRect(gWindow.bounds));
     // LC 的 dock 会把访客层 windowHostingView 塞进 keyWindow 的 rootVC.view.subviews.first，
     // 本仓沙盒容器在 fullScreenCover 里，那份 subviews.first 在封面之下 —— 访客画面因此
     // 不可见（owner 实测「只有 dock 没有内容」）。这里把它挪进覆盖窗口的容器。
     UIView *host = MultitaskDockManager.shared.windowHostingView;
+    NSLog(@"[TD-Multitask] adopt: before superview=%@ frame=%@",
+          host.superview ? NSStringFromClass(host.superview.class) : @"nil",
+          NSStringFromCGRect(host.frame));
     host.frame = container.view.bounds;
     host.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     [container.view addSubview:host];
+    NSLog(@"[TD-Multitask] adopt: after superview=%@ subviews=%lu",
+          host.superview ? NSStringFromClass(host.superview.class) : @"nil",
+          (unsigned long)container.view.subviews.count);
+
+    // dock 自己的 init 会把 windowHostingView 塞回 keyWindow.rootVC.view.subviews.first
+    // （在 fullScreenCover 之下），所以在这里补两次延后搬迁，确保最终落在覆盖窗口里.
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        UIViewController *c = [TDGuestOverlay guestHostController];
+        UIView *h = MultitaskDockManager.shared.windowHostingView;
+        if (c && h.superview != c.view) {
+            h.frame = c.view.bounds;
+            h.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+            [c.view addSubview:h];
+            NSLog(@"[TD-Multitask] adopt(0.5s): re-homed to %@", NSStringFromClass(c.view.class));
+        }
+    });
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        UIViewController *c = [TDGuestOverlay guestHostController];
+        UIView *h = MultitaskDockManager.shared.windowHostingView;
+        if (c && h.superview != c.view) {
+            h.frame = c.view.bounds;
+            h.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+            [c.view addSubview:h];
+            NSLog(@"[TD-Multitask] adopt(1.5s): re-homed to %@", NSStringFromClass(c.view.class));
+        }
+    });
 }
 
 + (void)tearDown {

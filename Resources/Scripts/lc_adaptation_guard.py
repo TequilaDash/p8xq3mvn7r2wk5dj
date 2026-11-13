@@ -7,7 +7,7 @@
 已实现的可机器检查项:
   R-LC-2  镜像改动必须登记在 MIRROR-DELTAS.md      （另由 lc_mirror_delta_guard.py 管）
   R-LC-3  两个扩展的 sources 必须包含 LCSharedUtils.m
-  R-LC-4  LC 源码里的 `@ObservedObject var x = X()` 必须用 .shared
+  R-LC-4  已停用（owner 2026-11-13 要求搜索栏完全对齐上游，撤销 .shared 改动）
   R-LC-6  改 suite 后必须成对: 宿主写 LCCertificate* 时必须同时有 group suite 写入
   R-LC-7  主 target 不得直接打包 vendor 下的 .xcassets（必须用物理副本 .bundle）
   R-LC-8  容器根三处必须一致（LCPath.docPath / SandboxContainerStore.root / LCPathBridge）
@@ -367,7 +367,6 @@ def main():
 
     checks = [
         ("R-LC-3 扩展自带 LC 核心", check_extension_has_lc_core),
-        ("R-LC-4 @ObservedObject 默认值", check_observed_object_defaults),
         ("R-LC-6 证书 suite 成对", check_certificate_suite_pairing),
         ("R-LC-7 xcassets 不得直打包 vendor", check_xcassets_from_vendor),
         ("R-LC-8 容器根一致性", check_container_root_consistency),

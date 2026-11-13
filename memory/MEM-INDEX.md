@@ -212,3 +212,9 @@
 - 约束：框架不能 import 主 App 类型
 - 做法：主 App 提供 `@objc(TDLogPanelHost).makeViewController()`；框架侧 `NSClassFromString` + `perform` 取 VC，用 UIViewControllerRepresentable 放进 sheet
 - 坑：面板跑在独立 UIHostingController 里，`@Environment(\.dismiss)` 拿不到外层 SwiftUI sheet → 关闭按钮改发 `NotificationCenter` 通知，由 sheet 容器 `dismiss()`
+
+## MEM-026 Swift 6 下 @objc 宿主工厂必须是 MainActor（2026-11-13）
+
+- 现象：CI 报 `call to main actor-isolated initializer 'init()' in a synchronous nonisolated context`，位置在 `TDLogPanelHost.makeViewController()` 里的 `UIHostingController(...)`
+- 根因：Swift 6 approachable concurrency 下 UIHostingController.init 是 MainActor；@objc static 方法默认 nonisolated
+- 正确做法：给宿主类/工厂加 `@MainActor`（反射调用仍发生在主线程，运行时无碍）

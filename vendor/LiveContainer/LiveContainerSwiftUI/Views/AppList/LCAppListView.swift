@@ -11,23 +11,6 @@ import UniformTypeIdentifiers
 
 class SearchContext: ObservableObject {
     @Published var query: String = ""
-    /// 本仓适配 (v0.3.850): 搜索栏呈现状态。
-    /// 真机实测: 键盘还在时点搜索栏的 X，`.searchable` 自己收起后又会把焦点抢回来
-    /// （表现为「点 X 关闭后又自动进入搜索」；先点键盘完成再点 X 则不出现）。
-    /// 绑定 isPresented 后在清空(query=="")时显式置 false 并 resignFirstResponder，
-    /// 才能把「取消」这个终态钉住。
-    @Published var isPresented: Bool = false
-/// 本仓适配 (v0.3.809): 共享实例.
-    ///
-    /// 上游两处声明都是 `@ObservedObject var searchContext = SearchContext()`
-    /// （LCAppListView.swift:86 与 LCAltStoreSourcesView.swift:487）。`@ObservedObject`
-    /// 的默认值在**视图重建时会重新求值**，于是拿到一个全新的 SearchContext，
-    /// `query` 回到 "" —— 而 SwiftUI 的 `.searchable` 在取消搜索后若观察到 query 变化，
-    /// 会重新激活搜索框，表现为「取消返回键盘又自动进入搜索状态」（真机实测）。
-    /// 上游作为 App 根时 LCAppListView 不重建所以没暴露；本仓经 UIHostingController +
-    /// TabView 承载会重建，故改为共享实例。
-    static let shared = SearchContext()
-
     @Published var debouncedQuery: String = ""
     @Published var isTyping: Bool = false
 
@@ -35,35 +18,9 @@ class SearchContext: ObservableObject {
 
     init() {
         $query
-            // 本仓适配 (M23b, 2026-11-13): 丢掉订阅时的首次发射（初值恒为空串）。
-            // 否则搜索栏刚激活就收到空值 → 立即 isPresented=false + resign，
-            // 表现为「还没点 X 搜索栏自己收回、键盘没调起、抖动两次」。
-            .dropFirst()
             .debounce(for: .seconds(0.2), scheduler: DispatchQueue.main)
             .sink { [weak self] value in
                 self?.isTyping = true
-// 本仓适配 (v0.3.816): 清空 query（点搜索栏的 X 取消）时**不走 isTyping 副作用**。
-                //
-                // 真机实测：直接点 X 会重新载入列表；先点键盘「完成」再点 X 不会。
-                // 原因：`.searchable` 把 query 置 "" 后，本 sink 仍置 `isTyping = true`
-                // → 视图重算 → SwiftUI 观察到搜索状态变化 → 重新激活搜索框。
-                // 清空是「取消」的终态，不该再产生任何「正在输入」信号。
-                guard !value.isEmpty else {
-                    self?.isTyping = false
-                    self?.debouncedQuery = ""
-                    // 只有「搜索栏确实开着」时才收起；已关闭时（用户点取消/首次进入）
-                    // 再 resign 会让 SwiftUI 重建视图，表现为抖动。
-                    if self?.isPresented == true {
-                        self?.isPresented = false
-                        DispatchQueue.main.async {
-                        UIApplication.shared.sendAction(
-                            #selector(UIResponder.resignFirstResponder),
-                            to: nil, from: nil, for: nil)
-                        }
-                    }
-                    return
-                }
-
                 self?.debouncedQuery = value
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
                     self?.isTyping = false
@@ -126,7 +83,7 @@ struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
     
     @State private var isViewAppeared = false
     
-    @ObservedObject var searchContext: SearchContext = .shared
+    @ObservedObject var searchContext: SearchContext = SearchContext()
     var sortedApps: [LCAppModel] {
         return sharedAppSortManager.sortedApps
     }
@@ -474,7 +431,7 @@ struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
                 Task { await installFromUrl(urlStr: installUrl.absoluteString) }
             }
         }
-        .searchable(text: $searchContext.query, isPresented: $searchContext.isPresented)
+        .searchable(text: $searchContext.query)
 
     }
     

@@ -451,9 +451,8 @@ struct LCSettingsView: View {
                 Button {
                     showLogPanel = true
                 } label: {
-                    Image(systemName: "terminal")
+                    Text("日志")
                 }
-                .accessibilityLabel("日志")
             }
         }
         .sheet(isPresented: $showLogPanel) {

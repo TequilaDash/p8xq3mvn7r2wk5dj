@@ -678,6 +678,12 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
     // (重放于 v0.3.840 合入上游 9d6ea09b05)
     const char *netBlockEnvAfter = getenv("TD_NET_BLOCK");
     if(netBlockEnvAfter && netBlockEnvAfter[0] == '1') {
+        // 访客镜像已 dlopen：优先按镜像重绑（chained fixups 下 fishhook 无效）.
+        struct mach_header_64 *guestHeader = LCGetLoadedImageHeader(0, appExecPath);
+        if (guestHeader) {
+            NetBlockApplyAfterGuestLoadWithImage(guestHeader);
+        }
+        // 兼容旧镜像（非 chained fixups）：fishhook 兜底.
         NetBlockApplyAfterGuestLoad();
     }
 

@@ -484,9 +484,7 @@ struct LCSourcesView: View {
     @StateObject private var viewModel = AltStoreSourcesViewModel()
     @State private var errorMessage: String?
     @State private var sourcePendingRemoval: AltStoreSourcesViewModel.SourceItem?
-    // 本仓适配 (M1c, 重放于 9d6ea09b05 合入): 共享实例——宿主 SwiftUI 重建该视图时
-    // 重新求值会拿到全新 SearchContext，搜索状态丢失
-    @ObservedObject public var searchContext: SearchContext = .shared
+    @ObservedObject public var searchContext: SearchContext = SearchContext()
     @State private var expandedSources: Set<URL> = []
     @State private var isManagingSources = false
     
@@ -609,7 +607,7 @@ struct LCSourcesView: View {
                 )
             }
         }
-        .searchable(text: $searchContext.query, isPresented: $searchContext.isPresented, placement: .navigationBarDrawer(displayMode: .always))
+        .searchable(text: $searchContext.query, placement: .navigationBarDrawer(displayMode: .always))
 
         .onAppear {
             expandedSources = []

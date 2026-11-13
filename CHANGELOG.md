@@ -1,3 +1,21 @@
+## [0.3.858] - 2026-11-13
+
+### 按 owner 反馈修正
+- **搜索栏**：撤销本仓全部改动（`SearchContext.shared`、`isPresented`、`dropFirst` 等），
+  `LCAppListView.swift` / `LCAltStoreSourcesView.swift` 恢复为上游原文；
+  对应守则 R-LC-4 停用。系统层面的自动收起不再由我们处理。
+- **exploit 长按**：行不再是 Button（Button 吞掉长按手势），改 `onTapGesture` + `onLongPressGesture`；
+  说明里增加「当前系统版本 + 该方案能力（列目录/取扩展/文件放置）」。
+- **日志面板**：只做日志 + 远程读取说明；删除 SSH 启停/复制命令等自作主张的按钮；
+  设置页按钮改为文字「日志」。
+- **禁止联网**：新增按**访客镜像**重绑（`litehook_rebind_symbol(header, ...)`）。
+  iOS 26+ 新二进制多为 chained fixups，fishhook 依赖 `__la_symbol_ptr`，对这类镜像根本改不动 ——
+  这是「开了完全没用」的最可能真因。安装/拦截/失败都会打日志。
+- **worse_query**：失败时打印 `[worse_query] 失败 code=… path=… groups=…`（限流 20 条），
+  便于从日志面板/SSH `logs` 直接定位。
+- **覆盖窗口**：容器 bounds 为空时用窗口 bounds 兜底，并打印 adopt 前后 superview/尺寸，
+  供下一次真机日志定位「白屏」。
+
 ## [0.3.857] - 2026-11-13
 
 ### 新增

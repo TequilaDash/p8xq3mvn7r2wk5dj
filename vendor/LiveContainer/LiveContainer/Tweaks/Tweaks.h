@@ -39,3 +39,5 @@ static void hook_do_nothing(void) {}
 // 本仓功能 (C7, 重放于 9d6ea09b05 合入): 联网禁用钩子声明
 void NetBlockGuestHooksInit(void);
 void NetBlockApplyAfterGuestLoad(void);
+// 本仓适配: 按**访客镜像**重绑（fishhook 对 chained fixups 无效，需要 litehook 按镜像地址改）.
+void NetBlockApplyAfterGuestLoadWithImage(const struct mach_header_64 *header);
