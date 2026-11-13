@@ -67,8 +67,14 @@ struct SandboxHostView: View {
 /// （会与宿主桥接头重复定义枚举，CI run 42657238035 实测），而 `LCTabView` 是 SwiftUI View，
 /// 不能用 `@_silgen_name`。反射拿不到就显示明确说明，不留空白页。
 struct LCUIHostView: View {
+    // 控制器只造一次：此前 body 每次求值都调 makeController()，
+    // 每帧新建一个 UIHostingController（旧的被 SwiftUI 丢弃但已成为 presented 链的祖先）
+    // → 控制器泄漏 + 同页多个 LCTabView 实例抢同一个 DataManager。
+    // 用 @StateObject 持有，生命周期跟随本视图。
+    @StateObject private var holder = LCUIHostControllerHolder()
+
     var body: some View {
-        if let controller = Self.makeController() {
+        if let controller = holder.controller {
             LCUIViewControllerView(controller: controller)
         } else {
             ContentUnavailableView(
@@ -79,7 +85,7 @@ struct LCUIHostView: View {
         }
     }
 
-    private static func makeController() -> UIViewController? {
+    static func makeController() -> UIViewController? {
         guard let cls = NSClassFromString("TDLCUIHost") as? NSObject.Type else { return nil }
         let sel = NSSelectorFromString("makeTabViewController")
         guard cls.responds(to: sel),
@@ -88,6 +94,11 @@ struct LCUIHostView: View {
         }
         return value
     }
+}
+
+/// 懒加载持有 LC 原生 UI 控制器（只造一次）.
+private final class LCUIHostControllerHolder: ObservableObject {
+    lazy var controller: UIViewController? = LCUIHostView.makeController()
 }
 
 /// UIViewController 承载（UIKit 生命周期交给 controller 自己）.

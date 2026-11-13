@@ -146,3 +146,19 @@
 - 正确做法：init 时捕获真实 IMP，hook 内直接调 IMP（不用 `[self hook_...]`）；iOS 26+ 另加不装该 swizzle
 - 检测方法：`.ips` 递归帧逐个查 `imageIndex` 对应 `usedImages[i].path`，看是不是访客 bundle
 - 关联规范：R-024
+
+## MEM-018 多任务「只有 UI」= SwiftUI 场景被 exclude（2026-11-13）
+
+- 现象：多任务模式只有 dock，访客窗口不出现，界面白屏
+- 我的错误动作：先怀疑 guest 进程没起来 / 扩展配置错误，去查 LiveProcess
+- 根因：原生窗口模式靠 `WindowGroup(id:"appView")`（`LiveContainerSwiftUIApp.swift:112`），而本仓 framework target **exclude** 了该文件 → `openWindow(id:)` 无场景可用
+- 正确做法：强制虚拟窗口路径（`DecoratedAppSceneViewController`），并显式记录忽略 `LCMultitaskMode`
+- 检测方法：`python -c` 读 project.yml 的 `LiveContainerSwiftUI.sources[0].excludes`，确认是否含 `App/LiveContainerSwiftUIApp.swift`
+- 关联规范：R-026
+
+## MEM-019 LC 会销毁宿主场景（2026-11-13）
+
+- 现象：从多任务返回后再次进入沙盒容器，整个界面消失
+- 根因：我们给 `SceneDelegate.window` 挂了真实 windowScene；LC 的 `closeDuplicatedWindow()`（LCTabView:149）与 `requestSceneDestruction()`（MultitaskAppWindow:226）会拿该 scene 的 session 调 `requestSceneSessionDestruction` → 销毁的是宿主自己的场景
+- 正确做法：转发窗口不给 windowScene（session 恒 nil），两处销毁变 no-op；dock/访客窗口走 `connectedScenes.first` 不受影响
+- 关联规范：R-027

@@ -116,3 +116,15 @@
 - 动作：init 时用 `method_getImplementation` 保存真实 IMP，hook 内用函数指针调用；`[self hook_...]` 依赖交换链，第三方再交换一次即成环
 - 验证：同进程存在第二份同类 hook 时仍不递归（.ips 无 recursionInfoArray）
 - 违反记录：MEM-017
+
+## R-026 移植上游 App 到 framework 时必须核对「被 exclude 的 App 入口文件里定义了什么」
+- 条件：把 SwiftUI App 迁到独立宿主，framework target exclude 其 `*App.swift`
+- 动作：逐项检查被排除文件中的 `WindowGroup(id:)` / `Scene` / `@main` 侧定义；凡被其他代码 `openWindow(id:)` 引用而本仓未声明者，必须改用自宿主可达路径并打日志
+- 验证：多任务/多窗口类功能能真正出现内容，不只剩外壳 UI
+- 违反记录：MEM-018
+
+## R-027 不要把宿主真实 UIWindowScene 交给第三方代码
+- 条件：给第三方 `SceneDelegate.window` 一类对象提供窗口
+- 动作：提供**无 windowScene** 的离屏转发窗口；否则第三方 `requestSceneSessionDestruction(session)` 会销毁宿主场景
+- 验证：反复进出相关页面，宿主场景 session 不被销毁（界面不消失）
+- 违反记录：MEM-019
