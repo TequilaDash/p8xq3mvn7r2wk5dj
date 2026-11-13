@@ -12,6 +12,8 @@
 #import "LCAppInfo.h"
 #import "DecoratedAppSceneViewController.h"  // 本仓适配: 裸名由 HEADER_SEARCH_PATHS 解析
 #import "TDGuestOverlay.h"
+
+extern void TDSandboxLogAppend(const char *message);
 #import "zsigner.h"  // 本仓适配: 裸名由 HEADER_SEARCH_PATHS 解析
 #import "LiveContainerSwiftUI-Swift.h"
 
@@ -127,6 +129,12 @@
             return;
         }
         [TDGuestOverlay adoptGuestHostingViews];
+        {
+            char buf[256];
+            snprintf(buf, sizeof(buf), "mount bundle=%s uuid=%s",
+                     bundleId.UTF8String ?: "-", dataUUID.UTF8String ?: "-");
+            TDSandboxLogAppend(buf);
+        }
         NSLog(@"[TD-Multitask] 覆盖窗口挂载 (bundleId=%@, dataUUID=%@, mode=%ld)",
               bundleId, dataUUID,
               (long)[NSUserDefaults.lcSharedDefaults integerForKey:@"LCMultitaskMode"]);

@@ -96,7 +96,7 @@
 | 8 | `LiveContainerSwiftUI/Utilities/LCUtilsExtensions.swift` | M9 | `signTweaks` 移除签名预校验 | v0.3.835 |
 | 8b | `LiveContainerSwiftUI/Views/AppList/LCAppListView.swift` | M30 | 左上角返回按钮（仅 `TDHostedSandbox` 时显示，通知宿主关闭沙盒容器） | v0.3.862 |
 | 9 | `LiveContainerSwiftUI/Views/AppList/AppSettings/LCAppSettingsView.swift` | M18 + M22 | 「实验性」段：巢中巢兼容 + 禁止联网 | v0.3.850 |
-| 12 | `LiveContainerSwiftUI/Views/Settings/LCSettingsView.swift` | M5 + M25 | 证书失败详情；右上角「日志」入口（自绘面板 + SSH 启停） | v0.3.857 |
+| 12 | `LiveContainerSwiftUI/Views/Settings/LCSettingsView.swift` | M5 + M25 + M32 | 证书失败详情；沙盒容器专属「日志」二级页（`Documents/sandbox.log`）与「实验性功能」二级页（呈现方式切换） | v0.3.866 |
 | 13 | `MultitaskSupport/AppSceneViewController.m` | M4r + M6r + M22 + M31 | bookmarks 判空 + userInfo 兜底 + 传 `tdNetBlock` + 多任务诊断日志（扩展 uuid/pid、hostingVC、scene） | v0.3.865 |
 
 ### 本仓新增文件（上游无，不算差异）

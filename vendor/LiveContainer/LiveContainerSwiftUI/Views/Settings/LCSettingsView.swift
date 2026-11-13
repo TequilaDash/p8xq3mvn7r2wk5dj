@@ -33,8 +33,7 @@ enum JITEnablerType : Int, CaseIterable, Identifiable {
 }
 
 struct LCSettingsView: View {
-    // 本仓新增 (M25, 2026-11-13): 右上角「日志」入口（面板自带 SSH 启停与连接命令）.
-    @State private var showLogPanel = false
+    // 本仓新增 (M25/M32, 2026-11-13): 沙盒容器专属日志 + 实验性功能（均为二级页，不用弹出）.
 
     @State var errorShow = false
     @State var errorInfo = ""
@@ -85,17 +84,17 @@ struct LCSettingsView: View {
     var body: some View {
         NavigationView {
             Form {
-                // 本仓新增 (M25): 「日志」入口放在表单顶部，避免依赖嵌套 NavigationView 的 toolbar
-                // （owner 实测右上角按钮没出现）。面板由主 App 提供，内含 SSH 读取说明.
+                // 本仓新增 (M25/M32): 两个入口都走 NavigationLink（二级页，不是弹出）.
                 Section {
-                    Button {
-                        showLogPanel = true
+                    NavigationLink {
+                        TDSandboxLogView()
                     } label: {
-                        HStack {
-                            Label("日志", systemImage: "terminal")
-                            Spacer()
-                            Image(systemName: "chevron.right").font(.footnote).foregroundColor(.secondary)
-                        }
+                        Label("日志", systemImage: "terminal")
+                    }
+                    NavigationLink {
+                        TDSandboxExperimentalView()
+                    } label: {
+                        Label("实验性功能", systemImage: "flask")
                     }
                 }
                 if sharedModel.multiLCStatus != 2 {
@@ -458,9 +457,6 @@ struct LCSettingsView: View {
                     certificateImportPasswordAlert.show = false
                 }
             )
-        }
-        .sheet(isPresented: $showLogPanel) {
-            TDLogPanelSheet()
         }
         .navigationViewStyle(StackNavigationViewStyle())
         .onAppear() {

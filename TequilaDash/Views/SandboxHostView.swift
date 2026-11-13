@@ -27,10 +27,16 @@ struct SandboxHostView: View {
         LCUIHostView()
             .ignoresSafeArea(edges: .bottom)
             .toolbar(.hidden, for: .tabBar)
+            .toolbar(.hidden, for: .navigationBar)
             .onReceive(NotificationCenter.default.publisher(
                 for: Notification.Name("TDCloseSandboxContainer"))) { _ in
+                SandboxLog.shared.log("通过 LC 返回键关闭沙盒容器")
                 dismiss()
             }
+            .onAppear {
+                SandboxLog.shared.log("沙盒容器出现（呈现方式=\(UserDefaults.standard.bool(forKey: "TDPresentSandboxAsSheet") ? "从下往上" : "原生平滑")）")
+            }
+            .onDisappear { SandboxLog.shared.log("沙盒容器消失") }
     }
 }
 

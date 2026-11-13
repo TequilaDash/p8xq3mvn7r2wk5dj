@@ -69,6 +69,7 @@ struct HomeView: View {
     @State private var pendingI4Advanced = false
     /// 沙盒容器：整屏宿主（自带独立底栏），不走 push —— push 进本栈底部仍是主 App 的 TabBar.
     @State private var showSandbox = false
+    @AppStorage("TDPresentSandboxAsSheet") private var presentSandboxAsSheet = false
 
     var body: some View {
         ScrollView {
@@ -190,10 +191,18 @@ struct HomeView: View {
         // 沙盒容器用整屏宿主：用户 2026-11-08 要求「这个界面底栏自己独立一个，
         // 不要用默认界面的底栏」—— 只有 fullScreenCover 能盖掉 RootView 的 TabView 底栏
         // （与 RootView.swift:75-80 模块宿主同一手段）.
-        // 本仓适配 (M30, 2026-11-13): 用 push 代替 fullScreenCover ——
-        // owner 要苹果原生的左滑返回；cover 没有交互式返回手势。
-        // 底栏由 SandboxHostView 内 `.toolbar(.hidden, for: .tabBar)` 隐藏.
-        .navigationDestination(isPresented: $showSandbox) {
+        // 本仓适配 (M30/M32): 呈现方式可在「沙盒容器 → 设置 → 实验性功能」切换.
+        // 默认原生平滑推入（push，支持左滑返回）；开启「从下往上呈现」时用 fullScreenCover.
+        .navigationDestination(isPresented: Binding(
+            get: { showSandbox && !presentSandboxAsSheet },
+            set: { if !$0 { showSandbox = false } }
+        )) {
+            SandboxHostView()
+        }
+        .fullScreenCover(isPresented: Binding(
+            get: { showSandbox && presentSandboxAsSheet },
+            set: { if !$0 { showSandbox = false } }
+        )) {
             SandboxHostView()
         }
         // 进入主页自动静默体检（灵动球分数即时显示）

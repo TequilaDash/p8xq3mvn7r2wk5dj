@@ -2,6 +2,8 @@
 #import "DecoratedAppSceneViewController.h"
 #import "LiveContainerSwiftUI-Swift.h"
 
+extern void TDSandboxLogAppend(const char *message);
+
 /// 透明覆盖窗口：只有落在访客窗口内的触摸才拦截，其余穿透给宿主.
 @interface TDGuestOverlayWindow : UIWindow
 @end
@@ -78,6 +80,13 @@ static UIViewController *gContainer = nil;
     NSLog(@"[TD-Multitask] adopt: container=%@ bounds=%@ window=%@",
           NSStringFromClass(container.class), NSStringFromCGRect(container.view.bounds),
           NSStringFromCGRect(gWindow.bounds));
+    {
+        char buf[256];
+        snprintf(buf, sizeof(buf), "adopt bounds=%.0fx%.0f window=%.0fx%.0f",
+                 container.view.bounds.size.width, container.view.bounds.size.height,
+                 gWindow.bounds.size.width, gWindow.bounds.size.height);
+        TDSandboxLogAppend(buf);
+    }
     // LC 的 dock 会把访客层 windowHostingView 塞进 keyWindow 的 rootVC.view.subviews.first，
     // 本仓沙盒容器在 fullScreenCover 里，那份 subviews.first 在封面之下 —— 访客画面因此
     // 不可见（owner 实测「只有 dock 没有内容」）。这里把它挪进覆盖窗口的容器。

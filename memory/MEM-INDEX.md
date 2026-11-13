@@ -252,3 +252,14 @@
      `insertDylibCommand` 补 NUL（M27）；`LCAppInfo.currentPatchRev` 7→8 强制重打已装访客（M28）
   2. `Documents/Tweaks/TweakLoader.dylibC` 兼容别名（M26），供无法重打的只读包
 - 关联规范：R-038
+
+## MEM-031 设备 SSH 可远程读日志（2026-11-13）
+
+- 设备：192.168.0.4:2222，用户 TequilaDash，密码 000000（owner 主动提供用于排障）
+- SSH 内置 shell 只支持受限命令：status/logs/tunnellog/caplog/ls/cat 等；`cat` 读 Documents 内数据
+- 坑：`logs` 只读 LoginLogger，看不到 NSLog；为此加了 `td-console.log`（NSLog 落盘）与 `exploit.log`
+- 坑2：NSLog 的 C 回调不带换行，落盘必须补 `
+`，否则整份数据是一行、grep 失效
+- 工具：`Resources/Scripts/td_device_logs.py`（paramiko，环境变量给凭据）
+- 真机实证：`worse_query` 对 `/var/containers/Bundle/Application` 返回 -6（内核拒签），这类路径只能 bad_query；
+  多任务 adopt 本身成功（bounds 393x852、after superview=UIView）
