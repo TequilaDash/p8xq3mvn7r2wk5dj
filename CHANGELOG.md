@@ -1,3 +1,13 @@
+## [0.3.873] - 2026-11-13
+
+### worse_query 补齐目录枚举（对照上游项目源码）
+- 上游 `forcequitOS/worse_query` 仓库里除 `worse_query.m` 外还有 **`pathleak.m`**
+  （重写版 bad_query_list：inode + fsgetpath 枚举）。我们此前只移植了 worse_query，
+  漏了 pathleak，导致「只开 worse_query 不能列目录」。
+- 现已把 pathleak 原样加入 `Engine/pathleak.{h,m}`，`WorseQueryExploit.paths` 优先用它
+  （不消费扩展），失败再退回「签扩展 + FileManager」。
+- `consumeExtension` 增加 `/private/var/... → /var/...` 归一化重试（参考项目均使用 `/var` 形式）。
+
 ## [0.3.872] - 2026-11-13
 
 ### 禁止联网：找到真正失效点

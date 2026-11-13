@@ -116,6 +116,7 @@
         [weakSelf.delegate appSceneVC:weakSelf didInitializeWithError:error];
     }];
     [_extension setRequestInterruptionBlock:^(NSUUID *uuid) {
+        NSLog(@"[TD-Multitask] 扩展进程中断（访客可能自退/被杀）bundle=%@", weakSelf.bundleId);
         [weakSelf appTerminationCleanUp];
     }];
     [_extension beginExtensionRequestWithInputItems:@[item] completion:^(NSUUID *identifier) {
@@ -214,6 +215,7 @@
         /// Lower iOS uses _UISceneHostingEventDeferringExtension, no further setup needed
         
         // Now it's time to get the initial settings from decorated VC
+        NSLog(@"[TD-Multitask] scene 已配置，准备激活 pid=%d", self.pid);
         [self.delegate appSceneVCWillActivateScene:self];
         [self addChildViewController:self.hostingController.sceneViewController];
         
