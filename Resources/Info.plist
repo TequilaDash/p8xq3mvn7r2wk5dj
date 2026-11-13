@@ -2,46 +2,24 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<key>NSAppTransportSecurity</key>
-	<dict>
-		<key>NSAllowsLocalNetworking</key>
-		<true/>
-		<key>NSExceptionDomains</key>
-		<dict>
-			<key>i4.cn</key>
-			<dict>
-				<key>NSExceptionAllowsInsecureHTTPLoads</key>
-				<true/>
-				<key>NSIncludesSubdomains</key>
-				<true/>
-			</dict>
-			<key>47.243.71.210</key>
-			<dict>
-				<key>NSExceptionAllowsInsecureHTTPLoads</key>
-				<true/>
-			</dict>
-			<key>124.222.32.246</key>
-			<dict>
-				<key>NSExceptionAllowsInsecureHTTPLoads</key>
-				<true/>
-			</dict>
-			<key>117.72.39.157</key>
-			<dict>
-				<key>NSExceptionAllowsInsecureHTTPLoads</key>
-				<true/>
-			</dict>
-			<key>nbtool8.com</key>
-			<dict>
-				<key>NSExceptionAllowsInsecureHTTPLoads</key>
-				<true/>
-				<key>NSIncludesSubdomains</key>
-				<true/>
-			</dict>
-		</dict>
-	</dict>
-	<key>CFBundleExecutable</key>
+	<key>CFBundleDisplayName</key>
 	<string>TequilaDash</string>
-	<key>CFBundleName</key>
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>iOS App</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>com.apple.itunes.ipa</string>
+			</array>
+		</dict>
+	</array>
+	<key>CFBundleExecutable</key>
 	<string>TequilaDash</string>
 	<key>CFBundleIcons</key>
 	<dict>
@@ -72,9 +50,38 @@
 			</array>
 		</dict>
 	</dict>
-	<!-- v0.3.203：体检 URL Scheme 探测（Reveil 同款白名单，canOpenURL 只认已声明 scheme） -->
-	<key>NSPhotoLibraryAddUsageDescription</key>
-	<string>用于把提取的应用图标与预览图保存到相册</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>TequilaDash</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0.3.870</string>
+	<key>CFBundleSignature</key>
+	<string>????</string>
+	<key>CFBundleSupportedPlatforms</key>
+	<array>
+		<string>iPhoneOS</string>
+	</array>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.tequila.dash.urlscheme</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>livecontainer</string>
+				<string>TequilaDash</string>
+			</array>
+		</dict>
+	</array>
+	<key>CFBundleVersion</key>
+	<string>1159</string>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>LSApplicationQueriesSchemes</key>
 	<array>
 		<string>cydia</string>
@@ -87,109 +94,67 @@
 		<string>itms-services</string>
 		<string>App-Prefs</string>
 		<string>prefs</string>
-		<!-- 2026-10-11：隧道方式「Shadowrocket 连接」的白名单登记（仅跳转目标）。
-		     `shadowrocket` 是 Shadowrocket 官方 wiki URL-Schemes 一节确证的 scheme
-		     （`shadowrocket://open` = 启动 VPN 隧道），见 TunnelProvider.ShadowrocketTunnel 注释。
-		     ⚠️ 本项**不再用于 canOpenURL 门控**：真机实测 canOpenURL 在 TrollStore / 越狱环境下会因
-		     lsd（LaunchServices）缓存未同步而假阴性（白名单与注册都正确仍偶发 false），故
-		     ShadowrocketTunnel.availability 恒可用，探测改由 open 回调承担。白名单保留仅为「已登记」事实。
-		     此前误用的 `sub` 已移除：`sub://` 是订阅导入用途，实测 canOpenURL 结果不可靠。 -->
 		<string>shadowrocket</string>
-		<!-- 2026-10-11：隧道方式「Surge 连接」「Loon 连接」的白名单登记（仅跳转目标）。
-		     Surge 官方 URL Scheme 文档（manual.nssurge.com/tools/url-scheme.html）列
-		     `surge:///start` = iOS 上以当前配置启动；Loon 官方 URL Scheme 文档
-		     （nsloon.app/docs/Scheme）列 `loon://on` = 开启 VPN。两者与 WrapPin 的
-		     TunnelHandoffApp.launchURL 一致。
-		     ⚠️ 同 Shadowrocket：open() 不要求白名单，本项仅为「已登记」事实，不做 canOpenURL 门控。 -->
 		<string>surge</string>
 		<string>loon</string>
-		<!-- 2026-10-10：隧道方式「LocalDevVPN」需 canOpenURL 探测是否已安装。
-		     此前漏登本项 ⇒ LocalDevVPN.isInstalled 恒 false ⇒ openOrInstall 永远跳 App Store。 -->
 		<string>localdevvpn</string>
-		<!-- v0.3.613：蜂窝隧道支持需要拉起「快捷指令」的 TurnOffData / TurnOnData
-		     （照 SideStore CellularRefreshManager 移植）。iOS 的 canOpenURL 对未登记
-		     scheme 返回 false，故必须在此登记，否则关/开蜂窝那步静默失败. -->
 		<string>shortcuts</string>
 	</array>
-	<key>CFBundleURLTypes</key>
-	<array>
-		<dict>
-			<key>CFBundleURLName</key>
-			<string>com.tequila.dash.urlscheme</string>
-			<key>CFBundleURLSchemes</key>
-			<array>
-				<!-- v0.3.802: [0] 必须是 "livecontainer" —— LC 的 SharedModel.updateMultiLCStatus
-				     (Utilities/Shared.swift:95-101) 判 `appUrlScheme() == "livecontainer"`,
-				     不等则 multiLCStatus = 2, LCTabView 会**隐藏 sources 与 tweaks 两个 tab**
-				     (Views/LCTabView.swift:29-46 的条件)。真机截图实测只剩 apps+settings 两个 tab.
-				     [1] 保留本仓身份 scheme: LiveProcessDebugLauncher / LCBootstrap 等价代码读 [0][0],
-				     但它们在 multiLCStatus 判定之后才用到, 且 LCSharedUtils.lcUrlSchemes 会读全部. -->
-				<string>livecontainer</string>
-				<string>TequilaDash</string>
-			</array>
-		</dict>
-	</array>
-	<!-- 必须用变量，不能写死：SideStore/AltStore 安装时会把主 App 改成
-	     `com.tequila.dash.<TEAMID>`，所有扩展的 bundle ID 必须与它同前缀
-	     （`<父ID>.LaunchAppExtension` 等），否则 iOS 报 IXErrorDomain Code=8
-	     "does not match required prefix of ... for parent"（owner 2026-11-11 实测）。
-	     上游 project.pbxproj:1619 同款写法：`$(PRODUCT_BUNDLE_IDENTIFIER)`。 -->
-	<key>CFBundleIdentifier</key>
-	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
-	<key>CFBundleInfoDictionaryVersion</key>
-	<string>6.0</string>
-	<key>CFBundlePackageType</key>
-	<string>APPL</string>
-	<key>CFBundleSignature</key>
-	<string>????</string>
-	<key>CFBundleSupportedPlatforms</key>
-	<array>
-		<string>iPhoneOS</string>
-	</array>
-	<key>CFBundleShortVersionString</key>
-	<string>0.3.869</string>
-	<key>CFBundleVersion</key>
-	<string>1158</string>
 	<key>LSRequiresIPhoneOS</key>
-	<true/>
-	<key>ITSAppUsesNonExemptEncryption</key>
-	<false/>
-	<key>NSFaceIDUsageDescription</key>
-	<string>使用 Face ID 验证沙盒容器锁定，保护已锁定的应用.</string>
-	<key>UIFileSharingEnabled</key>
 	<true/>
 	<key>LSSupportsOpeningDocumentsInPlace</key>
 	<true/>
-	<key>UISupportsDocumentBrowser</key>
-	<true/>
 	<key>MinimumOSVersion</key>
 	<string>18.0</string>
-	<key>CFBundleDisplayName</key>
-	<string>TequilaDash</string>
-	<key>UIRequiredDeviceCapabilities</key>
-	<array>
-		<string>arm64</string>
-	</array>
-	<key>UILaunchScreen</key>
+	<key>NFCReaderUsageDescription</key>
+	<string>The guest app is requesting for this permission.</string>
+	<key>NSAlarmKitUsageDescription</key>
+	<string>The guest app is requesting for this permission.</string>
+	<key>NSAppTransportSecurity</key>
 	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+		<key>NSExceptionDomains</key>
+		<dict>
+			<key>117.72.39.157</key>
+			<dict>
+				<key>NSExceptionAllowsInsecureHTTPLoads</key>
+				<true/>
+			</dict>
+			<key>124.222.32.246</key>
+			<dict>
+				<key>NSExceptionAllowsInsecureHTTPLoads</key>
+				<true/>
+			</dict>
+			<key>47.243.71.210</key>
+			<dict>
+				<key>NSExceptionAllowsInsecureHTTPLoads</key>
+				<true/>
+			</dict>
+			<key>i4.cn</key>
+			<dict>
+				<key>NSExceptionAllowsInsecureHTTPLoads</key>
+				<true/>
+				<key>NSIncludesSubdomains</key>
+				<true/>
+			</dict>
+			<key>nbtool8.com</key>
+			<dict>
+				<key>NSExceptionAllowsInsecureHTTPLoads</key>
+				<true/>
+				<key>NSIncludesSubdomains</key>
+				<true/>
+			</dict>
+		</dict>
 	</dict>
-	<key>UISupportedInterfaceOrientations</key>
-	<array>
-		<string>UIInterfaceOrientationPortrait</string>
-		<string>UIInterfaceOrientationLandscapeLeft</string>
-		<string>UIInterfaceOrientationLandscapeRight</string>
-	</array>
-	<key>UISupportedInterfaceOrientations~ipad</key>
-	<array>
-		<string>UIInterfaceOrientationPortrait</string>
-		<string>UIInterfaceOrientationPortraitUpsideDown</string>
-		<string>UIInterfaceOrientationLandscapeLeft</string>
-		<string>UIInterfaceOrientationLandscapeRight</string>
-	</array>
+	<key>NSAppleMusicUsageDescription</key>
+	<string>The guest app is requesting for this permission.</string>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>用于在两台设备之间通过蓝牙传输模拟定位坐标。</string>
+	<key>NSBluetoothPeripheralUsageDescription</key>
+	<string>The guest app is requesting for this permission.</string>
 	<key>NSBonjourServices</key>
 	<array>
-		<!-- v0.3.725：iOS 27.2 起 RPPairing 端口不再固定 49152，需用 Bonjour 发现设备真实端口 -->
-		<!-- v0.3.773：网络发现照搬 SideStore（AltStore/Info.plist 同款 69 项），缺型会被 iOS 本地网络权限拦掉 -->
 		<string>_altserver._tcp</string>
 		<string>_remotepairing-pairable-host._tcp</string>
 		<string>_remotepairing-manual-pairing._tcp</string>
@@ -260,8 +225,62 @@
 		<string>_airprint._tcp</string>
 		<string>_vnc._tcp</string>
 	</array>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>The guest app is requesting for this permission.</string>
+	<key>NSCalendarsWriteOnlyAccessUsageDescription</key>
+	<string>The guest app is requesting for this permission.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>The guest app is requesting for this permission.</string>
+	<key>NSContactsUsageDescription</key>
+	<string>The guest app is requesting for this permission.</string>
+	<key>NSFaceIDUsageDescription</key>
+	<string>使用 Face ID 验证沙盒容器锁定，保护已锁定的应用.</string>
+	<key>NSFallDetectionUsageDescription</key>
+	<string>The guest app is requesting for this permission.</string>
+	<key>NSGKFriendListUsageDescription</key>
+	<string>The guest app is requesting for this permission.</string>
+	<key>NSHealthClinicalHealthRecordsShareUsageDescription</key>
+	<string>The guest app is requesting for this permission.</string>
+	<key>NSHealthShareUsageDescription</key>
+	<string>The guest app is requesting for this permission.</string>
+	<key>NSHealthUpdateUsageDescription</key>
+	<string>The guest app is requesting for this permission.</string>
+	<key>NSHomeKitUsageDescription</key>
+	<string>The guest app is requesting for this permission.</string>
+	<key>NSIdentityUsageDescription</key>
+	<string>The guest app is requesting for this permission.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>本地网络权限用于无线配对广播（_remotepairing-pairable-host._tcp）与同一 Wi-Fi 下的 SSH 无线调试。仅局域网可达，可随时关闭。</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>开启位置更新可帮助 TequilaDash 在后台保持无线配对广播 alive，仅在配对期间按需使用。</string>
+	<key>NSLocationTemporaryUsageDescriptionDictionary</key>
+	<string>The guest app is requesting for this permission.</string>
+	<key>NSLocationUsageDescription</key>
+	<string>The guest app is requesting for this permission.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>开启位置更新可帮助 TequilaDash 在后台保持无线配对广播 alive，仅在配对期间按需使用。</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>The guest app is requesting for this permission.</string>
+	<key>NSMotionUsageDescription</key>
+	<string>The guest app is requesting for this permission.</string>
+	<key>NSNearbyInteractionAllowOnceUsageDescription</key>
+	<string>The guest app is requesting for this permission.</string>
+	<key>NSNearbyInteractionUsageDescription</key>
+	<string>The guest app is requesting for this permission.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>用于把提取的应用图标与预览图保存到相册</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>The guest app is requesting for this permission.</string>
+	<key>NSRemindersFullAccessUsageDescription</key>
+	<string>The guest app is requesting for this permission.</string>
+	<key>NSSensorKitUsageDescription</key>
+	<string>The guest app is requesting for this permission.</string>
+	<key>NSSiriUsageDescription</key>
+	<string>The guest app is requesting for this permission.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>The guest app is requesting for this permission.</string>
+	<key>NSUserTrackingUsageDescription</key>
+	<string>The guest app is requesting for this permission.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>
@@ -269,38 +288,40 @@
 		<string>bluetooth-peripheral</string>
 		<string>bluetooth-central</string>
 	</array>
-	<key>NSBluetoothAlwaysUsageDescription</key>
-	<string>用于在两台设备之间通过蓝牙传输模拟定位坐标。</string>
-	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>开启位置更新可帮助 TequilaDash 在后台保持无线配对广播 alive，仅在配对期间按需使用。</string>
-	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
-	<string>开启位置更新可帮助 TequilaDash 在后台保持无线配对广播 alive，仅在配对期间按需使用。</string>
-	<key>CFBundleDocumentTypes</key>
+	<key>UIFileSharingEnabled</key>
+	<true/>
+	<key>UILaunchScreen</key>
+	<dict/>
+	<key>UIRequiredDeviceCapabilities</key>
 	<array>
-		<dict>
-			<key>CFBundleTypeName</key>
-			<string>iOS App</string>
-			<key>CFBundleTypeRole</key>
-			<string>Viewer</string>
-			<key>LSHandlerRank</key>
-			<string>Alternate</string>
-			<key>LSItemContentTypes</key>
-			<array>
-				<string>com.apple.itunes.ipa</string>
-			</array>
-		</dict>
+		<string>arm64</string>
 	</array>
+	<key>UISupportedInterfaceOrientations</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+	<key>UISupportedInterfaceOrientations~ipad</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationPortraitUpsideDown</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+	<key>UISupportsDocumentBrowser</key>
+	<true/>
 	<key>UTImportedTypeDeclarations</key>
 	<array>
 		<dict>
-			<key>UTTypeIdentifier</key>
-			<string>com.apple.itunes.ipa</string>
-			<key>UTTypeDescription</key>
-			<string>iOS App</string>
 			<key>UTTypeConformsTo</key>
 			<array>
 				<string>public.data</string>
 			</array>
+			<key>UTTypeDescription</key>
+			<string>iOS App</string>
+			<key>UTTypeIdentifier</key>
+			<string>com.apple.itunes.ipa</string>
 			<key>UTTypeTagSpecification</key>
 			<dict>
 				<key>public.filename-extension</key>

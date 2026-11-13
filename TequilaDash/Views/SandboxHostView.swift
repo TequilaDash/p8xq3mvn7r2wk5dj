@@ -34,6 +34,7 @@ struct SandboxHostView: View {
         // 不再自绘顶栏 / 不再 safeAreaInset：返回键交给 LC 原生导航栏最左侧
         // （见 vendor/.../LCAppListView.swift 的 M30），返回事件由通知触发.
         LCUIHostView()
+            .background(Color(uiColor: .systemGroupedBackground).ignoresSafeArea())
             .ignoresSafeArea(edges: .bottom)
             .toolbar(.hidden, for: .tabBar)
             .toolbar(.hidden, for: .navigationBar)

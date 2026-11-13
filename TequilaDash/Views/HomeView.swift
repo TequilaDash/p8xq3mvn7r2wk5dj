@@ -205,6 +205,12 @@ struct HomeView: View {
         )) {
             SandboxHostView()
         }
+        // 返回/关闭时可靠地同步覆盖窗口（push 的 onDisappear 有时不触发）.
+        .onChange(of: showSandbox) { visible in
+            NotificationCenter.default.post(
+                name: Notification.Name(visible ? "TDShowSandboxOverlay" : "TDHideSandboxOverlay"),
+                object: nil)
+        }
         // 进入主页自动静默体检（灵动球分数即时显示）
         // task id 直接绑隧道就绪状态 —— VPN 一开，分数扫描立刻自动重跑
         //（未开时 provisioning 项被闸门秒回「待复检」，不会撞隧道，也不卡主线程）.

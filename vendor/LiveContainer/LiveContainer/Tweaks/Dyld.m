@@ -127,6 +127,9 @@ const char* hook_dyld_get_image_name(uint32_t image_index) {
 void hideLiveContainerImageCallback(const struct mach_header* header, intptr_t vmaddr_slide) {
     Dl_info info;
     dladdr(header, &info);
+    if (info.dli_fname && strstr(info.dli_fname, "LiveContainer")) {
+        NSLog(@"[hideLC] 检查镜像 %s (prefix=%s)", info.dli_fname, lcMainBundlePath);
+    }
     if(!strncmp(info.dli_fname, lcMainBundlePath, strlen(lcMainBundlePath)) || strstr(info.dli_fname, "/procursus/") != 0) {
         char fakePath[PATH_MAX];
         snprintf(fakePath, sizeof(fakePath), "/usr/lib/%p.dylib", header);
@@ -135,6 +138,7 @@ void hideLiveContainerImageCallback(const struct mach_header* header, intptr_t v
             os_thread_self_restrict_tpro_to_rw();
         }
         strcpy((char *)info.dli_fname, fakePath);
+        NSLog(@"[hideLC] 已改写为 %s", fakePath);
         if(ret != KERN_SUCCESS) {
             os_thread_self_restrict_tpro_to_ro();
         }
@@ -368,6 +372,8 @@ void DyldHooksInit(bool hideLiveContainer, bool hookDlopen, uint32_t spoofSDKVer
     }
     orig_dyld_get_image_header = _dyld_get_image_header;
     
+    NSLog(@"[hideLC] DyldHooksInit hide=%d liveProcess=%d path=%s", hideLiveContainer,
+          NSUserDefaults.isLiveProcess, lcMainBundlePath ?: "-");
     // hook dlsym to solve RTLD_MAIN_ONLY, hook other functions to hide LiveContainer itself
     litehook_rebind_symbol(LITEHOOK_REBIND_GLOBAL, dlsym, hook_dlsym, nil);
     if(hideLiveContainer) {

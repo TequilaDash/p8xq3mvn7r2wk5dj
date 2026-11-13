@@ -1,3 +1,22 @@
+## [0.3.870] - 2026-11-13
+
+### 权限对齐（对照上游）
+- `Resources/Info.plist` 补齐上游 27 个隐私用途说明（总计 33）：相机/麦克风/通讯录/日历/提醒/
+  照片/蓝牙/Local Network/Face ID/定位/运动/健康/HomeKit/NFC/附近交互等。
+  iOS 设置的「允许访问」列表现在与上游一致。entitlements 与上游无缺项（本仓另有 wifi 两项）。
+
+### 诊断
+- 禁止联网：访客镜像重绑后自检一次 `getaddrinfo("example.com")`，日志
+  `[NetBlock] 自检 getaddrinfo rc=…`（期望 EAI_AGAIN）。若 rc=0 → 重绑未生效。
+- 隐藏 LiveContainer：`[hideLC] DyldHooksInit hide=…`、`[hideLC] 检查镜像 …`、
+  `[hideLC] 已改写为 …`，用于确认该开关是否真正生效。
+
+### 修复
+- 覆盖窗口显隐改由 HomeView 监听 `showSandbox`（push 的 onDisappear 有时不触发），
+  返回上一级时可靠隐藏，避免残留访客窗口。
+- 沙盒容器背景改为 `systemGroupedBackground`，消除顶部突兀白条。
+- `worse_query` 失败日志对目录追加说明（目录枚举只能由 bad_query 提供）。
+
 ## [0.3.869] - 2026-11-13
 
 ### 修复

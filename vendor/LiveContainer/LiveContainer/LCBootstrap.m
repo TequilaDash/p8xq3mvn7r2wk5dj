@@ -708,6 +708,11 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
         }
         // 兼容旧镜像（非 chained fixups）：fishhook 兜底.
         NetBlockApplyAfterGuestLoad();
+        // 自检：直接发一次 DNS 查询，确认重绑真的生效（EAI_AGAIN 才算生效）.
+        struct addrinfo *tdSelfTest = NULL;
+        int tdRc = getaddrinfo("example.com", "443", NULL, &tdSelfTest);
+        if (tdSelfTest) freeaddrinfo(tdSelfTest);
+        NSLog(@"[NetBlock] 自检 getaddrinfo rc=%d (生效应为 EAI_AGAIN=%d)", tdRc, EAI_AGAIN);
     }
 
     appExecutableHandle = appHandle;
