@@ -10,6 +10,7 @@
 #include <objc/runtime.h>
 
 #include <dlfcn.h>
+#include <netdb.h>
 #include <execinfo.h>
 #include <signal.h>
 #include <sys/mman.h>
