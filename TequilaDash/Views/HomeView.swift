@@ -190,7 +190,10 @@ struct HomeView: View {
         // 沙盒容器用整屏宿主：用户 2026-11-08 要求「这个界面底栏自己独立一个，
         // 不要用默认界面的底栏」—— 只有 fullScreenCover 能盖掉 RootView 的 TabView 底栏
         // （与 RootView.swift:75-80 模块宿主同一手段）.
-        .fullScreenCover(isPresented: $showSandbox) {
+        // 本仓适配 (M30, 2026-11-13): 用 push 代替 fullScreenCover ——
+        // owner 要苹果原生的左滑返回；cover 没有交互式返回手势。
+        // 底栏由 SandboxHostView 内 `.toolbar(.hidden, for: .tabBar)` 隐藏.
+        .navigationDestination(isPresented: $showSandbox) {
             SandboxHostView()
         }
         // 进入主页自动静默体检（灵动球分数即时显示）

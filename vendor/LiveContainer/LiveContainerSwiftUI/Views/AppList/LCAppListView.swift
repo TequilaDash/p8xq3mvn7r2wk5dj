@@ -213,6 +213,18 @@ struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
             
             .navigationTitle("lc.appList.myApps".loc)
             .toolbar {
+                // 本仓适配 (M30, 2026-11-13): 由宿主承载时，在 LC 原生导航栏最左加「返回」，
+                // 与 LC 自己的 + / ? 并排，替代宿主自己那条顶栏（owner 明确要求）.
+                ToolbarItem(placement: .topBarLeading) {
+                    if UserDefaults.standard.bool(forKey: "TDHostedSandbox") {
+                        Button {
+                            NotificationCenter.default.post(
+                                name: Notification.Name("TDCloseSandboxContainer"), object: nil)
+                        } label: {
+                            Image(systemName: "chevron.backward")
+                        }
+                    }
+                }
                 ToolbarItem(placement: .topBarLeading) {
                     if sharedModel.multiLCStatus != 2 {
                         if !installprogressVisible {

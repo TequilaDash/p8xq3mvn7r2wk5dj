@@ -22,42 +22,15 @@ struct SandboxHostView: View {
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        // 返回按钮用 `safeAreaInset(edge: .top)` **插一条独立栏**，而不是 overlay 悬浮：
-        //   · overlay 放右上角会盖住 LC App 页的「搜索」图标（真机截图实测）
-        //   · 放左上角会盖住 LC 的「+ / ?」两个按钮
-        // 插一条 44pt 的栏，LC 的 LCTabView 整体下移，任何 LC 按钮都不会被遮挡，
-        // 返回按钮落在左上角，同时把原本空着的顶部安全区利用起来.
+        // 不再自绘顶栏 / 不再 safeAreaInset：返回键交给 LC 原生导航栏最左侧
+        // （见 vendor/.../LCAppListView.swift 的 M30），返回事件由通知触发.
         LCUIHostView()
-            .safeAreaInset(edge: .top, spacing: 0) {
-                backBar
-            }
             .ignoresSafeArea(edges: .bottom)
-    }
-
-    /// 顶部返回栏：左侧「返回」，右侧留白（不放任何东西，避免再次遮挡 LC 的按钮）.
-    private var backBar: some View {
-        HStack(spacing: 0) {
-            Button {
+            .toolbar(.hidden, for: .tabBar)
+            .onReceive(NotificationCenter.default.publisher(
+                for: Notification.Name("TDCloseSandboxContainer"))) { _ in
                 dismiss()
-            } label: {
-                HStack(spacing: 2) {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 17, weight: .semibold))
-                    Text("返回")
-                        .font(.system(size: 17))
-                }
-                .foregroundStyle(.tint)
-                .padding(.vertical, 8)
-                .padding(.trailing, 8)
-                .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("返回 tequiladash")
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, 12)
-        .frame(height: 44)
-        .background(.bar)
     }
 }
 

@@ -20,6 +20,8 @@ public final class TDLCUIHost: NSObject {
 
     /// 供宿主反射调用: 返回包好 LC 原生 UI 的 UIViewController.
     @objc public static func makeTabViewController() -> UIViewController {
+        // 标记「由本仓宿主承载」：LC 原生导航栏据此显示返回键（M30）.
+        UserDefaults.standard.set(true, forKey: "TDHostedSandbox")
         loadAppsIntoSharedModel()
 
         // 上游 LCTabView 还声明了 `@EnvironmentObject var sceneDelegate: SceneDelegate`

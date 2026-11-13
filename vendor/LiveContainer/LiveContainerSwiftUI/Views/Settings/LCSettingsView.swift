@@ -85,6 +85,19 @@ struct LCSettingsView: View {
     var body: some View {
         NavigationView {
             Form {
+                // 本仓新增 (M25): 「日志」入口放在表单顶部，避免依赖嵌套 NavigationView 的 toolbar
+                // （owner 实测右上角按钮没出现）。面板由主 App 提供，内含 SSH 读取说明.
+                Section {
+                    Button {
+                        showLogPanel = true
+                    } label: {
+                        HStack {
+                            Label("日志", systemImage: "terminal")
+                            Spacer()
+                            Image(systemName: "chevron.right").font(.footnote).foregroundColor(.secondary)
+                        }
+                    }
+                }
                 if sharedModel.multiLCStatus != 2 {
                     Section{
                         if !certificateDataFound {
@@ -445,15 +458,6 @@ struct LCSettingsView: View {
                     certificateImportPasswordAlert.show = false
                 }
             )
-        }
-        .toolbar {
-            ToolbarItem(placement: .navigationBarTrailing) {
-                Button {
-                    showLogPanel = true
-                } label: {
-                    Text("日志")
-                }
-            }
         }
         .sheet(isPresented: $showLogPanel) {
             TDLogPanelSheet()
