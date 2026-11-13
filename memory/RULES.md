@@ -128,3 +128,9 @@
 - 动作：提供**无 windowScene** 的离屏转发窗口；否则第三方 `requestSceneSessionDestruction(session)` 会销毁宿主场景
 - 验证：反复进出相关页面，宿主场景 session 不被销毁（界面不消失）
 - 违反记录：MEM-019
+
+## R-028 批量改名三条硬约束
+- 条件：对仓库做任何批量重命名
+- 动作：①词边界正则，不碰标识符内部子串 ②白名单排除语言标准库调用（如 `re.X(`）③只读镜像（vendor）与生成目录（target/scratch）不参与，误改后 `git checkout --` 还原
+- 验证：precommit 全绿；`git status` 中无 vendor/生成目录改动
+- 违反记录：MEM-020

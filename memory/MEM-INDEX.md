@@ -162,3 +162,10 @@
 - 根因：我们给 `SceneDelegate.window` 挂了真实 windowScene；LC 的 `closeDuplicatedWindow()`（LCTabView:149）与 `requestSceneDestruction()`（MultitaskAppWindow:226）会拿该 scene 的 session 调 `requestSceneSessionDestruction` → 销毁的是宿主自己的场景
 - 正确做法：转发窗口不给 windowScene（session 恒 nil），两处销毁变 no-op；dock/访客窗口走 `connectedScenes.first` 不受影响
 - 关联规范：R-027
+
+## MEM-020 全仓改名必须词边界 + 保护标准库调用（2026-11-13）
+
+- 现象：把旧工程名全局替换成本仓名称后，`re.<旧名>(...)` 被改成 `re.<新名>(...)`，多个守卫脚本 `AttributeError: module 're' has no attribute ...`；vendor 镜像也被改到，触发 LC 镜像守卫
+- 根因：直接字符串替换，没有区分「标识符内部子串 / Python 标准库调用 / 只读镜像」
+- 正确做法：`(?<![A-Za-z0-9_])OLD(?![A-Za-z0-9_])` 词边界；显式跳过 `re.OLD(`；os.walk 路径前缀要归一化（`./vendor` vs `.\\vendor`），vendor 一律 `git checkout --`
+- 验证：`swift_precommit_check.py` 全绿（含 LC 镜像/漂移守卫）
