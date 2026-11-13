@@ -90,7 +90,7 @@
 | 3 | `LiveContainer/Tweaks/NSFileManager+GuestHooks.m` | M16 + M17 | ①保存真实 IMP 防两套 hook 成环 ②iOS 26+ 不装 createDirectory swizzle ③`lcAppGroupPath` 判空 | v0.3.848 |
 | 4 | `LiveContainer/Tweaks/Tweaks.h` | C7 | `NetBlockGuestHooksInit` 声明（宿主联网拦截，上游无） | v0.3.840 |
 | 5 | `LiveContainerSwiftUI/Models/LCAppInfo.h` | M18 + M22 | `nestedLCCompat` / `netBlock` 属性 | v0.3.850 |
-| 6 | `LiveContainerSwiftUI/Models/LCAppInfo.m` | M18 + M22 | `nestedLCCompat`(键 LCNestedLCCompat) / `netBlock`(键 TDNetBlock) | v0.3.850 |
+| 6 | `LiveContainerSwiftUI/Models/LCAppInfo.m` | M18 + M22 + M28 | `nestedLCCompat` / `netBlock` / `currentPatchRev` 7→8（重写脏 load command） | v0.3.859 |
 | 7 | `LiveContainerSwiftUI/Models/LCAppModel.swift` | M18 + M22 | `uiNestedLCCompat`/`uiNetBlock`；runApp 写 `TDGuestNetBlock` | v0.3.850 |
 | 8 | `LiveContainerSwiftUI/Utilities/LCUtilsExtensions.swift` | M9 | `signTweaks` 移除签名预校验 | v0.3.835 |
 | 9 | `LiveContainerSwiftUI/Views/AppList/AppSettings/LCAppSettingsView.swift` | M18 + M22 | 「实验性」段：巢中巢兼容 + 禁止联网 | v0.3.850 |

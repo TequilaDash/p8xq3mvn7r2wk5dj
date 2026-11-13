@@ -328,7 +328,11 @@
     NSString *execPath = [NSString stringWithFormat:@"%@/%@", appPath, _infoPlist[@"CFBundleExecutable"]];
     
     // Update patch
-    int currentPatchRev = 7;
+    // 本仓适配 (M28, 2026-11-13): 7 -> 8。
+    // rev 7 的注入路径没写字符串 NUL，已装好的访客二进制里可能留下
+    // `TweakLoader.dylibC` 这种脏 load command；提升 rev 会在下次启动时
+    // 重新 patch 一次，把命令重写成干净路径。
+    int currentPatchRev = 8;
     bool needPatch = [info[@"LCPatchRevision"] intValue] < currentPatchRev;
     if (needPatch || forceSign) {
         // copy-delete-move to avoid EXC_BAD_ACCESS (SIGKILL - CODESIGNING)
