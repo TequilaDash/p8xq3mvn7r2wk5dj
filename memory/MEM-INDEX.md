@@ -177,3 +177,11 @@
 - 落地：`Engine/worse_query.{h,m}` + `Exploits/WorseQueryExploit.swift`，登记进 `ExploitRegistry`，默认启用，老用户一次性迁移
 - 关键约束：必须有已签名 `group.*`（否则 -1）；**只在宿主进程有效**，访客进程里 LC 的 app group hook 会改写路径 → -5/-6
 - 关联规范：R-029
+
+## MEM-022 @Published 在 init 里赋值不触发 didSet → 迁移只活在内存（2026-11-13）
+
+- 现象：老用户升级后 worse_query 当次可见，重启 App 又回到旧集合
+- 根因：`ExploitSettings.init` 里 `self.enabled = set` 不触发 didSet，UserDefaults 从未写入；迁移标记却写了 → 下次启动"已迁移"且集合仍旧
+- 正确做法：init 内所有需要持久化的状态显式 `UserDefaults.set`，不要依赖 didSet
+- 验证：安装后重启两次，macOS 上读 container 里的 plist 确认 `ExploitSettings.enabled.rawValues` 含新值
+- 关联规范：R-030

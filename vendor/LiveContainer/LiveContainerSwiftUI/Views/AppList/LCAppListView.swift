@@ -35,6 +35,10 @@ class SearchContext: ObservableObject {
 
     init() {
         $query
+            // 本仓适配 (M23b, 2026-11-13): 丢掉订阅时的首次发射（初值恒为空串）。
+            // 否则搜索栏刚激活就收到空值 → 立即 isPresented=false + resign，
+            // 表现为「还没点 X 搜索栏自己收回、键盘没调起、抖动两次」。
+            .dropFirst()
             .debounce(for: .seconds(0.2), scheduler: DispatchQueue.main)
             .sink { [weak self] value in
                 self?.isTyping = true
@@ -47,12 +51,15 @@ class SearchContext: ObservableObject {
                 guard !value.isEmpty else {
                     self?.isTyping = false
                     self?.debouncedQuery = ""
-                    // 取消搜索的终态：收起搜索栏并主动 resign，避免 SwiftUI 抢回焦点。
-                    self?.isPresented = false
-                    DispatchQueue.main.async {
+                    // 只有「搜索栏确实开着」时才收起；已关闭时（用户点取消/首次进入）
+                    // 再 resign 会让 SwiftUI 重建视图，表现为抖动。
+                    if self?.isPresented == true {
+                        self?.isPresented = false
+                        DispatchQueue.main.async {
                         UIApplication.shared.sendAction(
                             #selector(UIResponder.resignFirstResponder),
                             to: nil, from: nil, for: nil)
+                        }
                     }
                     return
                 }

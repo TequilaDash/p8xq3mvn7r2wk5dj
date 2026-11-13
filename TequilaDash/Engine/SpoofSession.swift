@@ -741,7 +741,7 @@ final class SpoofSession: ObservableObject {
 
 extension Notification.Name {
     /// 从其他 App 分享 .gpx 到 TequilaDash 时投递（内容为 URL）.
-    static let escapeImportGPX = Notification.Name("escapeImportGPX")
+    static let TequilaDashImportGPX = Notification.Name("TequilaDashImportGPX")
     /// 沙盒容器清单在后台变化时投递 (外部 IPA 打开导入完成后), 列表页据此重扫.
-    static let sandboxAppsDidChange = Notification.Name("escapeSandboxAppsDidChange")
+    static let sandboxAppsDidChange = Notification.Name("TequilaDashSandboxAppsDidChange")
 }

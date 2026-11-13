@@ -76,7 +76,7 @@ struct EscapeHostAPI {
     var moduleDir: @convention(c) () -> UnsafeMutablePointer<CChar>?
 }
 
-/// 便利入口：模块愿意 `dlsym(RTLD_DEFAULT, "escape_host_call")` 时用这个.
+/// 便利入口：模块愿意 `dlsym(RTLD_DEFAULT, "TequilaDash_host_call")` 时用这个.
 ///
 /// 注意这条路径**不保证可用**（主可执行文件符号不一定导出），主路径是
 /// `TequilaDash_module_init` 拿函数表. 这里只是顺手提供一个，能用就用.
@@ -84,10 +84,10 @@ struct EscapeHostAPI {
 /// - Parameters:
 ///   - capability: 能力名（如 `fs.read`）
 ///   - jsonArgs: JSON 对象字符串；不需要参数时传 `{}` 或 nil
-///   - outJson: 输出 JSON 字符串（`strdup` 分配，调用方用 `escape_host_free` 释放）
+///   - outJson: 输出 JSON 字符串（`strdup` 分配，调用方用 `TequilaDash_host_free` 释放）
 /// - Returns: 0 成功；非 0 失败（失败时 `outJson` 里也有 `{"ok":false,"error":...}`）
-@_cdecl("escape_host_call")
-func escape_host_call(_ capability: UnsafePointer<CChar>?,
+@_cdecl("TequilaDash_host_call")
+func TequilaDash_host_call(_ capability: UnsafePointer<CChar>?,
                       _ jsonArgs: UnsafePointer<CChar>?,
                       _ outJson: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?) -> Int32 {
     let cap = capability.map { String(cString: $0) } ?? ""
@@ -98,8 +98,8 @@ func escape_host_call(_ capability: UnsafePointer<CChar>?,
 }
 
 /// 释放宿主返回的字符串（C 侧便利入口）
-@_cdecl("escape_host_free")
-func escape_host_free(_ p: UnsafeMutablePointer<CChar>?) {
+@_cdecl("TequilaDash_host_free")
+func TequilaDash_host_free(_ p: UnsafeMutablePointer<CChar>?) {
     if let p { free(p) }
 }
 

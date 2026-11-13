@@ -38,19 +38,12 @@ struct LCAppSettingsView: View {
     @State private var errorInfo = ""
     @State private var selectUnusedContainerSheetShow = false
 
-    // 本仓新增 (M2, 重放于 9d6ea09b05 合入): 联网禁用开关
-    @State private var netBlockEnabled = false
-    
     @EnvironmentObject private var sharedModel : SharedModel
     
     init(model: LCAppModel) {
         self.appInfo = model.appInfo
         self._model = ObservedObject(wrappedValue: model)
 
-        // 本仓新增 (M2, 重放于 9d6ea09b05 合入): 初值取 defaults.
-        // 键口径与 HostGuestEntry.m 一致: TDNetBlock-<relativeBundlePath>.
-        let netBlockKey = "TDNetBlock-" + (model.appInfo.relativeBundlePath ?? "")
-        _netBlockEnabled = State(initialValue: UserDefaults.standard.bool(forKey: netBlockKey))
     }
     
     var body: some View {
@@ -250,20 +243,6 @@ struct LCAppSettingsView: View {
                 }
             }
 
-            // 本仓新增 (M2, 重放于 9d6ea09b05 合入): 联网禁用. LC 上游没有此功能.
-            Section {
-                Toggle(isOn: $netBlockEnabled) {
-                    Text("禁止联网")
-                }
-                .onChange(of: netBlockEnabled, perform: { newValue in
-                    let key = "TDNetBlock-" + (model.appInfo.relativeBundlePath ?? "")
-                    UserDefaults.standard.set(newValue, forKey: key)
-                })
-            } footer: {
-                Text("开启后该 App 在访客进程里无法发起对外连接（TCP connect 返回 EPERM）。"
-                     + "对 UDP 与 DNS 暂不生效。下次启动该 App 时生效。")
-            }
-            
             if #available(iOS 16.0, *) {
                 Section {
                     Picker(selection: $model.uiIsMultitaskModeSpecificed) {
@@ -345,16 +324,13 @@ struct LCAppSettingsView: View {
             }
             
             Section {
-                Toggle(isOn: $model.uiNestedLCCompat) {
-                    Text("lc.appSettings.nestedLCCompat".loc)
-                }
                 Toggle(isOn: $model.uiNetBlock) {
                     Text("lc.appSettings.netBlock".loc)
                 }
             } header: {
                 Text("lc.appSettings.experimental".loc)
             } footer: {
-                Text("lc.appSettings.nestedLCCompatDesc".loc)
+                Text("lc.appSettings.netBlockDesc".loc)
             }
             
             if SharedModel.isPhone {

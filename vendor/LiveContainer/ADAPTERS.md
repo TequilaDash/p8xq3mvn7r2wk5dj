@@ -191,6 +191,7 @@ python Resources/Scripts/lc_mirror_guard.py --write   # 重新生成 .upstream-m
 | C2 | `LCMachOUtils.m` | ①头文件直取 LCMachOUtils.h/litehook.h ②验签失败诊断日志 | 搬运集不含 LCUtils.h；诊断定位签名问题 | ①保留 ②上游若加诊断则删 |
 | C3 | `Tweaks/NetworkBlock.m` | 本仓新增文件 | 联网禁用实现 | 保留 |
 | C4 | `Tweaks/NSExtension+GuestHooks.m` | 仅注释中的旧工程名改为本仓名称 | 命名统一，逻辑零改动 | 上游若改名则随上游 |
+| C5 | `LCBootstrap.m` | 巢中巢兼容标记注释补充「UI 已移除，仅保留代码开关」 | 与 M16/M17 配套，避免后来者误以为开关还在界面 | 上游若自带同类判断则删 |
 | C4 | Tweaks.h（接口声明补丁已落 vendor，见 MIRROR-DELTAS C7；副本随 vendor） | — | — | vendor 侧维护 |
 
 （旧 C1 面包屑/getenv 防护/writeLCAppInfoIfNeeded、C3-C7 头文件路径差异已被上游

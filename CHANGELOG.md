@@ -1,3 +1,26 @@
+## [0.3.853] - 2026-11-13
+
+### 修复
+- **多任务启动崩溃（SIGABRT）**：`DecoratedAppSceneViewController` 在 init 里
+  `[rootVC addChildViewController:self]`；上一版把 SwiftUI 的 `PresentationHostingController`
+  当 rootVC，UIKit 层级检查抛
+  「child view controller ... should have parent ... but requested parent is ...」。
+  改为**独立覆盖窗口**承载（`TDGuestOverlay`）：容器是普通 UIViewController，窗口比宿主高一层，
+  hitTest 只拦截落在访客窗口内的触摸，其余穿透；同时把 LC dock 的 `windowHostingView`
+  挪进该窗口，解决「只有 dock 没有画面」。
+- **搜索栏未点 X 就自动收起/抖两次**：查询流订阅时会立刻收到一次空串，
+  旧逻辑据此 `isPresented=false + resign`。改为 `.dropFirst()` 忽略首次发射，
+  且仅当搜索栏确实开着时才收起。
+- **禁止联网有两套**：删除 LC App 设置里的旧开关（`TDNetBlock-<bundleId>` 口径），
+  只保留「实验性 → 禁止联网」；`HostGuestEntry` 直接读访客自己的 `LCAppInfo.plist`
+  的 `TDNetBlock`，任何启动入口都不会漏。
+- **巢中巢兼容开关**：zcontainer 已能直接进入（M16/M17 生效），界面开关移除，
+  仅在代码里保留人工排查用的 `LCNestedLCCompat` 判定。
+- **exploit 迁移尊重用户选择**：只在集合仍为旧默认 `[bad_query]` 时补 `worse_query`；
+  用户清空或自定义过就不动。
+- **标识符前缀改名**：`<旧前缀>Target` / `<旧前缀>_host_call` / `<旧前缀>_host_free`
+  等我们自有的标识符统一改成本仓前缀（JSON/ABI 同步）。
+
 ## [0.3.852] - 2026-11-13
 
 ### 优化
@@ -8091,7 +8114,7 @@ Pass C 的 `../../../../` 落在根外 ⇒ 拒）。这条口径已写进结论�
 - 查「**解析后必须落在解压根内**」⇒ 绝对路径也会被拒 ⇒ 这条路彻底死；
 - 查「**不许 `..` 逃逸**」⇒ **绝对路径能绕过去** ⇒ 整条链可能成立。
 
-`StageZipMode` 新增 `.escapeLinkAbsolute`：与 `.escapeLinkOnly` 条目完全相同，
+`StageZipMode` 新增 `.TequilaDashLinkAbsolute`：与 `.TequilaDashLinkOnly` 条目完全相同，
 只把 `p0/p1/p2/out` 的**内容**从 `../../../../` 换成 **`/var/mobile/Media/Books`**
 （绝对路径、**指向 Media 内部**的一个真目录）—— 内容里**一个 `..` 都没有**，这正是与 C 的唯一区别。
 
@@ -8150,8 +8173,8 @@ Pass B 是**整包被拒**（四种格式全 `ObjectNotFound`、连 `link` 都�
 | mode | zip 内容 |
 |---|---|
 | `.control` | 没有任何 symlink **逃出**解压根（**不是**「一个 `..` 都没有」—— 见下） |
-| `.escapeWrite` | 逃逸 symlink + **写穿**它的文件条目（原 Pass B） |
-| `.escapeLinkOnly` | **只放**逃逸 symlink，**不写穿**（Pass C） |
+| `.TequilaDashWrite` | 逃逸 symlink + **写穿**它的文件条目（原 Pass B） |
+| `.TequilaDashLinkOnly` | **只放**逃逸 symlink，**不写穿**（Pass C） |
 
 **Pass C 的第三条判据（关键）**：若 `out` 确实是 `S_IFLNK`，就用 **AFC 主动写穿它**
 （`<source>/p0/p1/p2/out/<probe>`，**纯相对路径、无 `..`**；`..` 在 symlink 内容里），
@@ -8171,7 +8194,7 @@ Pass A 真机通过**正好证明**：**设备允许不逃逸的 `..`**。
 
 `A✅+B❌` 原来只写一句「逃逸条目被单独拒/跳过」；现在按 `passB.linkPresent` 拆开：
 - `linkPresent == false` ⇒ **整包被拒**
-- `linkPresent == true` 而 `escapePresent == false` ⇒ **只有逃逸条目被跳过**
+- `linkPresent == true` 而 `TequilaDashPresent == false` ⇒ **只有逃逸条目被跳过**
 
 自检：`_tools_paren_scan.py` → 最终深度 +0、无负行、无「参数列表少逗号」可疑位置；
 另用离线脚本 `_tmp_verify_stage_zip.py` 把三种 mode 的 zip 都跑了一遍

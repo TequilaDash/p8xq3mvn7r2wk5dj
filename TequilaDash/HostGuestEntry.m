@@ -97,15 +97,21 @@ int main(int argc, char *argv[]) {
             [defaults setDouble:now forKey:@"TDGuestBootAt"];
 
             // 联网管理开关 (联网管理页写入, 键随容器)
-            // 联网管理 (M22): 首选 LCAppModel.runApp 写入的 TDGuestNetBlock（按 App 勾选），
-            // 兼容旧的按 bundleId 键（TDNetBlock-<bundleId>）。
+            // 联网管理 (M22): 只看 LCAppModel.runApp 写入的 TDGuestNetBlock（按 App 勾选）.
+            // 旧的 TDNetBlock-<bundleId> 口径已移除（owner 2026-11-13 要求只保留一套）.
             BOOL netBlock = [defaults boolForKey:@"TDGuestNetBlock"];
-            NSString *bundleId = [defaults stringForKey:@"TDLastGuestBundleId"];
-            NSString *legacyKey = [NSString stringWithFormat:@"TDNetBlock-%@", bundleId ?: selected];
-            if ([defaults objectForKey:legacyKey]) {
-                netBlock = [defaults boolForKey:legacyKey];
+            // 以访客自己的 LCAppInfo.plist 为准：不论从 LC 列表、搜索结果还是外部
+            // URL 启动，勾选状态都落在这个 plist 里（键 TDNetBlock）。
+            // 只信 standardUserDefaults 的话，任何绕过 LCAppModel.runApp 的入口都会漏.
+            NSString *guestInfoPath = [[[NSHomeDirectory() stringByAppendingPathComponent:@"Documents"]
+                                        stringByAppendingPathComponent:selected]
+                                       stringByAppendingPathComponent:@"LCAppInfo.plist"];
+            NSDictionary *guestInfo = [NSDictionary dictionaryWithContentsOfFile:guestInfoPath];
+            if (guestInfo[@"TDNetBlock"]) {
+                netBlock = [guestInfo[@"TDNetBlock"] boolValue];
             }
             setenv("TD_NET_BLOCK", netBlock ? "1" : "0", 1);
+            NSLog(@"[TD-NetBlock] selected=%@ enabled=%d (plist=%@)", selected, netBlock, guestInfoPath);
 
             // LC_HOME_PATH = **HOME（容器根）**，不是 Documents！
             // 上游 LCBootstrap.m:341 自己拼 `[NSString stringWithFormat:@"%s/Documents",

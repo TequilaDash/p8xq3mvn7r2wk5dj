@@ -120,7 +120,7 @@ struct MapHomeView: View {
         .onChange(of: session.pin?.latitude) { _, newValue in
             if newValue == nil { pinSelected = false }
         }
-        .onReceive(NotificationCenter.default.publisher(for: .escapeImportGPX)) { note in
+        .onReceive(NotificationCenter.default.publisher(for: .TequilaDashImportGPX)) { note in
             guard let url = note.object as? URL else { return }
             importGPX(url)
         }

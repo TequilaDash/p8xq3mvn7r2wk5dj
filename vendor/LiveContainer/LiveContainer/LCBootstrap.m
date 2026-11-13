@@ -582,7 +582,10 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
     if (!isLiveProcess && [guestAppInfo[@"helperProcessesSupport"] boolValue]) {
         NSExtensionGuestHooksInit(appBundle.bundleURL, [NSURL fileURLWithPath:newHomePath isDirectory:YES]);
     }
-    // 本仓适配 (M18, 2026-11-13): 巢中巢兼容（实验性开关，默认关）。
+    // 本仓适配 (M18, 2026-11-13): 巢中巢兼容（**仅保留代码开关，UI 已移除**）。
+    // 说明：M16（保存真实 IMP）与 M17（lcAppGroupPath 判空）落地后，zcontainer 这类
+    // 「访客自带 LiveContainer」的 App 已能正常进入，不再需要用户手动开兼容；
+    // 这个标记只在需要人工排查时用 defaults 写 LCNestedLCCompat=YES。
     // 访客 App 自身是另一个 LiveContainer 时，两套 NSFileManager hooks 会互相成环。
     // 开启后跳过本仓的 NSFMGuestHooksInit，交给访客自带的那套（它会在自己 main 里装）。
     BOOL nestedLCCompat = [guestAppInfo[@"LCNestedLCCompat"] boolValue];

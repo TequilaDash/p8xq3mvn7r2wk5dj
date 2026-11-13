@@ -4,8 +4,8 @@ import SwiftUI
 /// 移植 mond-main MDM 绕过：5 层沙盒逃逸策略 + 描述文件备份/清空/还原.
 /// 仅个人测试用途；iOS 26.5+ 侧载环境可能被沙盒策略拦截（结果如实显示）.
 struct MDMManageView: View {
-    @State private var escapeMethod: String?
-    @State private var escapeTarget: String?
+    @State private var TequilaDashMethod: String?
+    @State private var TequilaDashTarget: String?
     @State private var probing = false
     @State private var fileStates: [(name: String, present: Bool)] = []
     @State private var hasBackups = false
@@ -24,9 +24,9 @@ struct MDMManageView: View {
                     if probing {
                         // 区块级加载行收口到共享 AppLoadingRow（.block 档）.
                         AppLoadingRow(title: "正在逐层尝试逃逸策略…", level: .block)
-                    } else if let m = escapeMethod {
+                    } else if let m = TequilaDashMethod {
                         Text("逃逸成功：\(m)").font(.caption.weight(.semibold)).foregroundStyle(AppTheme.success)
-                        Text(escapeTarget ?? "").font(.caption2.monospaced()).foregroundStyle(.secondary)
+                        Text(TequilaDashTarget ?? "").font(.caption2.monospaced()).foregroundStyle(.secondary)
                     } else {
                         Text("未逃逸（点击下方「检测逃逸」尝试 5 层策略）")
                             .font(.caption).foregroundStyle(AppTheme.pending)
@@ -67,7 +67,7 @@ struct MDMManageView: View {
                 } label: {
                     Label("备份并清空 MDM 配置（绕过）", systemImage: "arrow.uturn.backward.badge.trash")
                 }
-                .disabled(probing || escapeMethod == nil)
+                .disabled(probing || TequilaDashMethod == nil)
 
                 Button {
                     restoreAction()
@@ -115,12 +115,12 @@ struct MDMManageView: View {
             await MainActor.run {
                 probing = false
                 if let r = result {
-                    escapeMethod = r.method
-                    escapeTarget = r.targetPath
+                    TequilaDashMethod = r.method
+                    TequilaDashTarget = r.targetPath
                     refreshFiles(target: r.targetPath)
                 } else {
-                    escapeMethod = nil
-                    escapeTarget = nil
+                    TequilaDashMethod = nil
+                    TequilaDashTarget = nil
                     alertTitle = "逃逸失败"
                     alertBody = "5 层策略均未通过 Darwin.open 实测.\n" +
                         "提示：侧载（LiveContainer）环境下系统沙盒策略可能拦截 ConfigurationProfiles；" +
@@ -144,7 +144,7 @@ struct MDMManageView: View {
     }
 
     private func neuterAction() {
-        guard let target = escapeTarget else { return }
+        guard let target = TequilaDashTarget else { return }
         probing = true
         Task.detached(priority: .userInitiated) {
             var written = 0
@@ -181,7 +181,7 @@ struct MDMManageView: View {
     }
 
     private func restoreAction() {
-        guard let target = escapeTarget else { return }
+        guard let target = TequilaDashTarget else { return }
         probing = true
         Task.detached(priority: .userInitiated) {
             let r = MDMBypass.restoreAll(targetDir: target)

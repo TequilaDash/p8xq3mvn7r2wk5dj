@@ -11,6 +11,7 @@
 #import "LCSharedUtils.h"  // 本仓适配: 裸名由 HEADER_SEARCH_PATHS 解析
 #import "LCAppInfo.h"
 #import "DecoratedAppSceneViewController.h"  // 本仓适配: 裸名由 HEADER_SEARCH_PATHS 解析
+#import "TDGuestOverlay.h"
 #import "zsigner.h"  // 本仓适配: 裸名由 HEADER_SEARCH_PATHS 解析
 #import "LiveContainerSwiftUI-Swift.h"
 
@@ -105,43 +106,35 @@
             }
         }
         
-        // 本仓适配 (M19, 2026-11-13): 挂载点必须是**当前最顶层可见控制器**。
-        // 上游取 `scene.keyWindow.rootViewController` —— 本仓沙盒容器在
-        // `fullScreenCover` 里，宿主 rootVC 已 present 了一层，直接把访客窗口
-        // addSubview 到 rootVC.view 会落在 cover **下面**（表现为「多任务只有 UI 没内容」）。
-        UIWindowScene *hostScene = nil;
-        for (id sc in UIApplication.sharedApplication.connectedScenes) {
-            if (![sc isKindOfClass:UIWindowScene.class]) continue;
-            UIWindowScene *ws = (UIWindowScene *)sc;
-            if (hostScene == nil) hostScene = ws;
-            if (ws.activationState == UISceneActivationStateForegroundActive) { hostScene = ws; break; }
-        }
-        UIViewController *rootVC = hostScene.keyWindow.rootViewController;
-        if (!rootVC) {
-            for (UIWindow *w in hostScene.windows) {
-                if (w.rootViewController) { rootVC = w.rootViewController; break; }
-            }
-        }
-        UIViewController *topVC = rootVC;
-        while (topVC.presentedViewController) {
-            topVC = topVC.presentedViewController;
-        }
-        if (!topVC) {
-            NSLog(@"[TD-Multitask] 找不到可挂载的 rootVC，放弃启动 %@", displayName);
+        // 本仓适配 (M19/M24, 2026-11-13): 用**独立覆盖窗口**承载访客浮窗.
+        //
+        // 为什么不挂 SwiftUI 控制器：LC 的 DecoratedAppSceneViewController 在 init 里
+        // 会 `[rootVC addChildViewController:self]`；把 SwiftUI 的
+        // PresentationHostingController 当 rootVC，UIKit 层级检查会抛
+        // 「child view controller ... should have parent ... but requested parent is ...」
+        // （owner 2026-11-13 16:02 四个 .ips 同一处，SIGABRT）。
+        // 为什么不用 keyWindow.rootVC：本仓沙盒容器在 fullScreenCover 里，
+        // 挂上去落在封面之下 → 只见 dock 不见画面。
+        // 覆盖窗口方案两者都避开：容器是普通 UIViewController，窗口比宿主高一层，
+        // 且 hitTest 只拦截落在访客窗口内的触摸，其余穿透。
+        UIViewController *container = [TDGuestOverlay guestHostController];
+        if (!container) {
+            NSLog(@"[TD-Multitask] 无法创建覆盖窗口（无 windowScene），放弃启动 %@", displayName);
             if (completionHandler) {
                 completionHandler(nil, [NSError errorWithDomain:@"TDMultitask" code:3
-                    userInfo:@{NSLocalizedDescriptionKey: @"找不到可挂载的界面（宿主窗口未就绪）"}]);
+                    userInfo:@{NSLocalizedDescriptionKey: @"宿主窗口未就绪"}]);
             }
             return;
         }
-        NSLog(@"[TD-Multitask] 挂载到 %@ (bundleId=%@, dataUUID=%@, mode=%ld)",
-              NSStringFromClass(topVC.class), bundleId, dataUUID,
+        [TDGuestOverlay adoptGuestHostingViews];
+        NSLog(@"[TD-Multitask] 覆盖窗口挂载 (bundleId=%@, dataUUID=%@, mode=%ld)",
+              bundleId, dataUUID,
               (long)[NSUserDefaults.lcSharedDefaults integerForKey:@"LCMultitaskMode"]);
-        DecoratedAppSceneViewController *launcherView = [[DecoratedAppSceneViewController alloc] initWindowName:displayName bundleId:bundleId dataUUID:dataUUID rootVC:topVC];
+        DecoratedAppSceneViewController *launcherView = [[DecoratedAppSceneViewController alloc] initWindowName:displayName bundleId:bundleId dataUUID:dataUUID rootVC:container];
         // Wire PID callback
         launcherView.pidAvailableHandler = completionHandler;
         launcherView.view.autoresizingMask = UIViewAutoresizingFlexibleTopMargin | UIViewAutoresizingFlexibleLeftMargin | UIViewAutoresizingFlexibleRightMargin | UIViewAutoresizingFlexibleBottomMargin;
-        launcherView.view.center = rootVC.view.center;
+        launcherView.view.center = container.view.center;
     });
 }
 

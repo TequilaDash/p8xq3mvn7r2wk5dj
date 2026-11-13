@@ -42,7 +42,7 @@ enum LockdownFailure: Equatable {
         case .userDeniedPairing: return "设备已拒绝信任，可在「设置 - 通用 - 传输或还原 TequilaDash - 还原 - 还原位置与隐私」后重新配对."
         case .invalidHostID: return "本机配对记录与设备不匹配，请删除配对文件后重新配对."
         case .developerModeDisabled: return "设备未开启开发者模式，请在「设置 - 隐私与安全性 - 开发者模式」打开后重试."
-        case .startServiceDeclined: return "设备拒绝了该服务的启动请求，可能是escapeOS版本限制或未安装对应服务."
+        case .startServiceDeclined: return "设备拒绝了该服务的启动请求，可能是TequilaDashOS版本限制或未安装对应服务."
         case .other: return nil
         }
     }
