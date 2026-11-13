@@ -102,6 +102,11 @@ static int TequilaDashLiveProcessMain(int argc, char *argv[]) {
     NSString *mappedHostScheme = appInfo[TDLPHostSchemeKey] ?: appInfo[@"hostUrlScheme"];
     NSString *mappedGuestName  = appInfo[TDLPGuestFolderNameKey] ?: appInfo[@"selected"];
     NSString *mappedContainer  = appInfo[TDLPContainerUUIDKey] ?: appInfo[@"selectedContainer"];
+    // 联网管理 (M22): 多任务路径经 userInfo 传标记，扩展进程里落成环境变量.
+    if (appInfo[@"tdNetBlock"]) {
+        setenv("TD_NET_BLOCK", [appInfo[@"tdNetBlock"] boolValue] ? "1" : "0", 1);
+        NSLog(@"[TequilaDashLiveProcess] TD_NET_BLOCK=%s", getenv("TD_NET_BLOCK"));
+    }
     if (mappedHostScheme) {
         [defaults setObject:mappedHostScheme forKey:@"hostUrlScheme"];
     }

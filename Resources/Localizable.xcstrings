@@ -2028,6 +2028,50 @@
         }
       }
     },
+    "lc.appSettings.netBlock": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Block network access"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "禁止联网"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "禁止連網"
+          }
+        }
+      }
+    },
+    "lc.appSettings.netBlockDesc": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Blocks TCP/UDP egress and DNS resolution for this app. TCP/UDP 全部出口与 DNS 解析都会被拒绝（IPv4/IPv6）。"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "拦截该 App 的 TCP/UDP 出口与 DNS 解析（IPv4/IPv6 都拦）。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "攔截該 App 的 TCP/UDP 出口與 DNS 解析（IPv4/IPv6 都攔）。"
+          }
+        }
+      }
+    },
     "lc.appSettings.newDataFolder": {
       "extractionState": "manual",
       "localizations": {

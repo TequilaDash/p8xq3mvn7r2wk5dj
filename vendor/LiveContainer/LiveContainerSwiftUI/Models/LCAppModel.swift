@@ -52,6 +52,13 @@ class LCAppModel: ObservableObject, Hashable {
         }
     }
     // 本仓适配 (M18): 巢中巢兼容开关（实验性）
+    // 本仓功能 (M22): 禁止联网
+    @Published var uiNetBlock : Bool {
+        didSet {
+            appInfo.netBlock = uiNetBlock
+        }
+    }
+
     @Published var uiNestedLCCompat : Bool {
         didSet {
             appInfo.nestedLCCompat = uiNestedLCCompat
@@ -199,6 +206,7 @@ class LCAppModel: ObservableObject, Hashable {
         self.uiIsMultitaskModeSpecificed = appInfo.multitaskSpecified
         self.uiUseLCBundleId = appInfo.doUseLCBundleId
         self.uiNestedLCCompat = appInfo.nestedLCCompat
+        self.uiNetBlock = appInfo.netBlock
         self.uiFixFilePickerNew = appInfo.fixFilePickerNew
         self.uiFixLocalNotification = appInfo.fixLocalNotification
         self.uiFixBackgroundTaskIdentifiers = appInfo.fixBackgroundTaskIdentifiers
@@ -351,6 +359,10 @@ class LCAppModel: ObservableObject, Hashable {
             UserDefaults.standard.setValue(urlStr, forKey: "launchAppUrlScheme")
         }
         UserDefaults.standard.set(uiSelectedContainer?.folderName, forKey: "selectedContainer")
+        // 本仓功能 (M22): 把「禁止联网」带给访客进程。
+        // 全屏路径由 HostGuestEntry 读 TDGuestNetBlock 写 TD_NET_BLOCK 环境变量；
+        // 多任务路径由 AppSceneViewController 塞进 extension userInfo。
+        UserDefaults.standard.set(appInfo.netBlock, forKey: "TDGuestNetBlock")
         
         var jitNeeded = appInfo.isJITNeeded || appInfo.is32bit
         if let forceJIT {
@@ -579,6 +591,7 @@ class LCAppModel: ObservableObject, Hashable {
         toAppInfo.dontLoadTweakLoader = fromApp.appInfo.dontLoadTweakLoader
         toAppInfo.doUseLCBundleId = fromApp.appInfo.doUseLCBundleId
         toAppInfo.nestedLCCompat = fromApp.appInfo.nestedLCCompat
+        toAppInfo.netBlock = fromApp.appInfo.netBlock
         toAppInfo.fixFilePickerNew = fromApp.appInfo.fixFilePickerNew
         toAppInfo.fixLocalNotification = fromApp.appInfo.fixLocalNotification
         toAppInfo.fixBackgroundTaskIdentifiers = fromApp.appInfo.fixBackgroundTaskIdentifiers

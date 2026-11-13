@@ -348,6 +348,9 @@ struct LCAppSettingsView: View {
                 Toggle(isOn: $model.uiNestedLCCompat) {
                     Text("lc.appSettings.nestedLCCompat".loc)
                 }
+                Toggle(isOn: $model.uiNetBlock) {
+                    Text("lc.appSettings.netBlock".loc)
+                }
             } header: {
                 Text("lc.appSettings.experimental".loc)
             } footer: {

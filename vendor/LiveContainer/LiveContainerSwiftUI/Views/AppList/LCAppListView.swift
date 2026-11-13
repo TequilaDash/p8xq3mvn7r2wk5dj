@@ -11,6 +11,12 @@ import UniformTypeIdentifiers
 
 class SearchContext: ObservableObject {
     @Published var query: String = ""
+    /// 本仓适配 (v0.3.850): 搜索栏呈现状态。
+    /// 真机实测: 键盘还在时点搜索栏的 X，`.searchable` 自己收起后又会把焦点抢回来
+    /// （表现为「点 X 关闭后又自动进入搜索」；先点键盘完成再点 X 则不出现）。
+    /// 绑定 isPresented 后在清空(query=="")时显式置 false 并 resignFirstResponder，
+    /// 才能把「取消」这个终态钉住。
+    @Published var isPresented: Bool = false
 /// 本仓适配 (v0.3.809): 共享实例.
     ///
     /// 上游两处声明都是 `@ObservedObject var searchContext = SearchContext()`
@@ -41,6 +47,13 @@ class SearchContext: ObservableObject {
                 guard !value.isEmpty else {
                     self?.isTyping = false
                     self?.debouncedQuery = ""
+                    // 取消搜索的终态：收起搜索栏并主动 resign，避免 SwiftUI 抢回焦点。
+                    self?.isPresented = false
+                    DispatchQueue.main.async {
+                        UIApplication.shared.sendAction(
+                            #selector(UIResponder.resignFirstResponder),
+                            to: nil, from: nil, for: nil)
+                    }
                     return
                 }
 
@@ -454,7 +467,7 @@ struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
                 Task { await installFromUrl(urlStr: installUrl.absoluteString) }
             }
         }
-        .searchable(text: $searchContext.query)
+        .searchable(text: $searchContext.query, isPresented: $searchContext.isPresented)
 
     }
     

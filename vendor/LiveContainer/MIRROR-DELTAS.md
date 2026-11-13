@@ -88,15 +88,15 @@
 | 2 | `LiveContainer/LCSharedUtils.m` | M7 | `lcMainBundle` nil 兜底 | v0.3.833 |
 | 3 | `LiveContainer/Tweaks/NSFileManager+GuestHooks.m` | M16 + M17 | ①保存真实 IMP 防两套 hook 成环 ②iOS 26+ 不装 createDirectory swizzle ③`lcAppGroupPath` 判空 | v0.3.848 |
 | 4 | `LiveContainer/Tweaks/Tweaks.h` | C7 | `NetBlockGuestHooksInit` 声明（宿主联网拦截，上游无） | v0.3.840 |
-| 5 | `LiveContainerSwiftUI/Models/LCAppInfo.h` | M18 | `nestedLCCompat` 属性 | v0.3.848 |
-| 6 | `LiveContainerSwiftUI/Models/LCAppInfo.m` | M18 | `nestedLCCompat` getter/setter（键 `LCNestedLCCompat`） | v0.3.848 |
-| 7 | `LiveContainerSwiftUI/Models/LCAppModel.swift` | M18 | `uiNestedLCCompat` 发布属性 + reload/copy 同步 | v0.3.848 |
+| 5 | `LiveContainerSwiftUI/Models/LCAppInfo.h` | M18 + M22 | `nestedLCCompat` / `netBlock` 属性 | v0.3.850 |
+| 6 | `LiveContainerSwiftUI/Models/LCAppInfo.m` | M18 + M22 | `nestedLCCompat`(键 LCNestedLCCompat) / `netBlock`(键 TDNetBlock) | v0.3.850 |
+| 7 | `LiveContainerSwiftUI/Models/LCAppModel.swift` | M18 + M22 | `uiNestedLCCompat`/`uiNetBlock`；runApp 写 `TDGuestNetBlock` | v0.3.850 |
 | 8 | `LiveContainerSwiftUI/Utilities/LCUtilsExtensions.swift` | M9 | `signTweaks` 移除签名预校验 | v0.3.835 |
-| 9 | `LiveContainerSwiftUI/Views/AppList/AppSettings/LCAppSettingsView.swift` | M18 | 新增「实验性」段 + 巢中巢兼容开关 | v0.3.848 |
-| 10 | `LiveContainerSwiftUI/Views/AppList/LCAppListView.swift` | M1 | `SearchContext.shared` | v0.3.809 |
-| 11 | `LiveContainerSwiftUI/Views/LCAltStoreSourcesView.swift` | M1c | 同 M1 | v0.3.809 |
+| 9 | `LiveContainerSwiftUI/Views/AppList/AppSettings/LCAppSettingsView.swift` | M18 + M22 | 「实验性」段：巢中巢兼容 + 禁止联网 | v0.3.850 |
+| 10 | `LiveContainerSwiftUI/Views/AppList/LCAppListView.swift` | M1 + M23 | `SearchContext.shared`；`isPresented` 绑定修「点 X 又自动进搜索」 | v0.3.850 |
+| 11 | `LiveContainerSwiftUI/Views/LCAltStoreSourcesView.swift` | M1c + M23 | 同 M1；同 `isPresented` 绑定 | v0.3.850 |
 | 12 | `LiveContainerSwiftUI/Views/Settings/LCSettingsView.swift` | M5 | 证书失败详情 | v0.3.832 |
-| 13 | `MultitaskSupport/AppSceneViewController.m` | M4r + M6r | bookmarks 判空 + userInfo 兜底 | v0.3.846 |
+| 13 | `MultitaskSupport/AppSceneViewController.m` | M4r + M6r + M22 | bookmarks 判空 + userInfo 兜底 + 传 `tdNetBlock` | v0.3.850 |
 
 ### 本仓新增文件（上游无，不算差异）
 - `LiveContainer/Tweaks/NSExtension+GuestHooks.m`

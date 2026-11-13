@@ -97,11 +97,15 @@ int main(int argc, char *argv[]) {
             [defaults setDouble:now forKey:@"TDGuestBootAt"];
 
             // 联网管理开关 (联网管理页写入, 键随容器)
-            NSString *netBlockKey = [NSString stringWithFormat:@"TDNetBlock-%@", selected];
+            // 联网管理 (M22): 首选 LCAppModel.runApp 写入的 TDGuestNetBlock（按 App 勾选），
+            // 兼容旧的按 bundleId 键（TDNetBlock-<bundleId>）。
+            BOOL netBlock = [defaults boolForKey:@"TDGuestNetBlock"];
             NSString *bundleId = [defaults stringForKey:@"TDLastGuestBundleId"];
-            if (bundleId) netBlockKey = [NSString stringWithFormat:@"TDNetBlock-%@", bundleId];
-            setenv("TD_NET_BLOCK",
-                   [defaults boolForKey:netBlockKey] ? "1" : "0", 1);
+            NSString *legacyKey = [NSString stringWithFormat:@"TDNetBlock-%@", bundleId ?: selected];
+            if ([defaults objectForKey:legacyKey]) {
+                netBlock = [defaults boolForKey:legacyKey];
+            }
+            setenv("TD_NET_BLOCK", netBlock ? "1" : "0", 1);
 
             // LC_HOME_PATH = **HOME（容器根）**，不是 Documents！
             // 上游 LCBootstrap.m:341 自己拼 `[NSString stringWithFormat:@"%s/Documents",

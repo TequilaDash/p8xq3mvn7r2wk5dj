@@ -75,6 +75,10 @@
         @"lcHomePath": NSHomeDirectory(),
     }.mutableCopy;
     
+    // 本仓功能 (M22): 多任务走扩展进程，环境变量不会从宿主继承，
+    // 必须经 userInfo 传「禁止联网」标记（扩展 main.m 读到后 setenv TD_NET_BLOCK）。
+    userInfo[@"tdNetBlock"] = @([NSUserDefaults.standardUserDefaults boolForKey:@"TDGuestNetBlock"]);
+    
     NSString* launchAppUrlScheme = [NSUserDefaults.standardUserDefaults stringForKey:@"launchAppUrlScheme"];
     [NSUserDefaults.lcUserDefaults removeObjectForKey:@"launchAppUrlScheme"];
     if(launchAppUrlScheme) {

@@ -70,18 +70,36 @@ struct LCUIHostView: View {
     // 控制器只造一次：此前 body 每次求值都调 makeController()，
     // 每帧新建一个 UIHostingController（旧的被 SwiftUI 丢弃但已成为 presented 链的祖先）
     // → 控制器泄漏 + 同页多个 LCTabView 实例抢同一个 DataManager。
-    // 用 @StateObject 持有，生命周期跟随本视图。
-    @StateObject private var holder = LCUIHostControllerHolder()
+    //
+    // 用 @State + .task 而不是 @StateObject + lazy var：
+    // Swift 6（SWIFT_APPROACHABLE_CONCURRENCY=YES）下，`@MainActor` 隔离的
+    // lazy 默认值在 nonisolated 上下文求值会编译失败
+    // （CI run 43374392039：`main actor-isolated default value in a nonisolated context`）。
+    // `.task` 本身在 MainActor 上跑，创建 UIKit 控制器天然安全。
+    @State private var controller: UIViewController?
+    @State private var unavailable = false
 
     var body: some View {
-        if let controller = holder.controller {
-            LCUIViewControllerView(controller: controller)
-        } else {
-            ContentUnavailableView(
-                "沙盒容器不可用",
-                systemImage: "exclamationmark.triangle",
-                description: Text("LiveContainerSwiftUI framework 未链接到本构建")
-            )
+        Group {
+            if let controller {
+                LCUIViewControllerView(controller: controller)
+            } else if unavailable {
+                ContentUnavailableView(
+                    "沙盒容器不可用",
+                    systemImage: "exclamationmark.triangle",
+                    description: Text("LiveContainerSwiftUI framework 未链接到本构建")
+                )
+            } else {
+                ProgressView()
+            }
+        }
+        .task {
+            guard controller == nil, !unavailable else { return }
+            if let made = Self.makeController() {
+                controller = made
+            } else {
+                unavailable = true
+            }
         }
     }
 
@@ -96,10 +114,6 @@ struct LCUIHostView: View {
     }
 }
 
-/// 懒加载持有 LC 原生 UI 控制器（只造一次）.
-private final class LCUIHostControllerHolder: ObservableObject {
-    lazy var controller: UIViewController? = LCUIHostView.makeController()
-}
 
 /// UIViewController 承载（UIKit 生命周期交给 controller 自己）.
 private struct LCUIViewControllerView: UIViewControllerRepresentable {

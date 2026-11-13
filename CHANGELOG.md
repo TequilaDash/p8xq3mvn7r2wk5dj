@@ -1,3 +1,19 @@
+## [0.3.850] - 2026-11-13
+
+### 修复
+- **搜索栏点 X 又自动进入搜索**（owner 真机：不先收起键盘就复现）
+  修（M23）：`SearchContext` 增加 `isPresented`，`.searchable(text:isPresented:)` 双向绑定；
+  query 变空时显式 `isPresented = false` + `resignFirstResponder`，把「取消」终态钉住。
+- **CI 修复（0.3.849 未出包）**：`LCUIHostControllerHolder` 的 `@MainActor` 懒加载默认值
+  在 nonisolated 上下文求值 → Swift 6 编译失败。改用 `@State + .task` 创建控制器
+  （`.task` 在 MainActor，天然安全）。
+- **禁止联网无效**（owner 真机）：此前没有任何 UI 写入 `TDNetBlock-<bundleId>`，
+  开关形同不存在。修（M22）：App 设置「实验性」新增「禁止联网」（存 `LCAppInfo.plist`
+  的 `TDNetBlock`）；启动时写 `TDGuestNetBlock`，全屏路径由 `HostGuestEntry` 读，
+  多任务路径经 `AppSceneViewController` userInfo → 扩展 `main.m` setenv。
+- **禁止联网只拦 TCP**：`NetworkBlock` 扩展到 `sendto`/`sendmsg`（UDP/QUIC）与
+  `getaddrinfo`（DNS 直接失败），并用 fishhook 对访客镜像延迟绑定补钩。
+
 ## [0.3.849] - 2026-11-13
 
 ### 修复（多任务三项，均为本仓宿主结构问题，不是上游逻辑问题）

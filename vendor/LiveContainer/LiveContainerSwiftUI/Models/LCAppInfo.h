@@ -42,6 +42,8 @@ typedef NS_ENUM(NSInteger, MultitaskSpecified){
 // 访客 App 自身是另一个 LiveContainer 时，两套 NSFileManager hooks 会互相成环；
 // 打开后跳过本仓的 guest hooks，交给访客自带的那套处理。
 @property bool nestedLCCompat;
+// 本仓功能 (M22, 2026-11-13): 禁止访客联网（按 App 存，LCAppInfo.plist 键 TDNetBlock）.
+@property bool netBlock;
 @property NSString* selectedLanguage;
 @property NSString* dataUUID;
 @property NSString* tweakFolder;

@@ -163,6 +163,16 @@
     [self save];
 }
 
+// 本仓功能 (M22): 禁止联网开关
+- (bool)netBlock {
+    return [_info[@"TDNetBlock"] boolValue];
+}
+
+- (void)setNetBlock:(bool)netBlock {
+    _info[@"TDNetBlock"] = @(netBlock);
+    [self save];
+}
+
 - (NSString*)selectedLanguage {
     return _info[@"LCSelectedLanguage"];
 }

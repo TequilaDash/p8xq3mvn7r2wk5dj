@@ -609,7 +609,7 @@ struct LCSourcesView: View {
                 )
             }
         }
-        .searchable(text: $searchContext.query, placement: .navigationBarDrawer(displayMode: .always))
+        .searchable(text: $searchContext.query, isPresented: $searchContext.isPresented, placement: .navigationBarDrawer(displayMode: .always))
 
         .onAppear {
             expandedSources = []
