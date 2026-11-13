@@ -60,6 +60,8 @@ settings:
     HEADER_SEARCH_PATHS:
       - "$(SRCROOT)/TequilaDash"
       - "$(SRCROOT)/TequilaDash/Engine"
+      # vroot (Tier A): LCBootstrap.m #import "TDVRootConfig.h" (主 App + 扩展共用).
+      - "$(SRCROOT)/TequilaDashLCUIAdapters/VRoot"
       - "$(SRCROOT)/TequilaDash/Tunnel"
       # ZSign 引擎（v0.3.101）+ CI 预编译的 OpenSSL 头文件
       - "$(SRCROOT)/ZSign"
@@ -257,6 +259,9 @@ targets:
       - path: TequilaDashLiveProcess/LC
         excludes:
           - "main.c"
+      # vroot (Tier A): LCBootstrap.m 同时编进主 App, 这两个符号必须同样可链.
+      # 主 App 进程 TD_VROOT 未设置 => shim 停用; interpose 表也不会影响已装载的宿主自身镜像.
+      - path: TequilaDashLCUIAdapters/VRoot
       # litehook / fishhook（v0.3.783）：与 LiveContainer 同源同版本，
       # 只做 dyld_shared_cache 符号解析 / GOT 重绑 / 函数分支改写，无其它依赖。
       # 注意 litehook.c 会 #include "dyld_cache_format.h"，靠上面的 HEADER_SEARCH_PATHS 找到。
