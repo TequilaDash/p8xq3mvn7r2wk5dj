@@ -1,3 +1,11 @@
+## [0.3.863] - 2026-11-13
+
+### 新增
+- 「更多 → exploit」右上角新增「日志」按钮：打开 exploit 专用日志面板
+  （最近 300 行、刷新、清空），记录 bad_query / worse_query 的成功与失败码、consume 全失败汇总。
+- 日志文件独立为 `Documents/exploit.log`（512KB 轮转），SSH 可 `cat Documents/exploit.log`；
+  不再混进通用 `td-console.log`.
+
 ## [0.3.862] - 2026-11-13
 
 ### 按 owner 要求调整沙盒容器外壳

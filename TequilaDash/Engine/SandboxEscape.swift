@@ -98,6 +98,8 @@ final class SandboxEscape {
 
         guard let raw else {
             // 没有任何已启用的漏洞利用能给出句柄（用户全关 / 全被内核拒绝）.
+            let kinds = ExploitRegistry.enabled().map(\.kind.title).joined(separator: ",")
+            ExploitLogger.shared.log("consume 全部失败 path=\(path) enabled=[\(kinds)]")
             throw SandboxEscapeError.kernelRejected
         }
 
