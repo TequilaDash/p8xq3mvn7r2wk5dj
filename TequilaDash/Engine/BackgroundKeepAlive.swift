@@ -1,4 +1,5 @@
 import CoreLocation
+import UIKit
 import Foundation
 
 /// 轻量后台定位（移植自 locus-ZH）：虚拟定位激活期间保持轻量 GPS 会话，
@@ -19,11 +20,20 @@ final class BackgroundKeepAlive: NSObject, CLLocationManagerDelegate {
         manager.distanceFilter = kCLDistanceFilterNone
         manager.activityType = .otherNavigation
         manager.pausesLocationUpdatesAutomatically = false
-        manager.allowsBackgroundLocationUpdates = true
+        // ⚠️ 不能在 init 里设 allowsBackgroundLocationUpdates：CoreLocation 断言
+        // `!stayUp || CLClientIsBackgroundable(...)` —— 进程处于后台/非活跃时设置会 SIGABRT
+        // （owner 2026-11-13 18:16 .ips：MoreView → SpoofSession.shared → BackgroundKeepAlive.init）。
+        // 改成在 start() 里、且仅在 App 活跃时设置。
         manager.showsBackgroundLocationIndicator = false
     }
 
     func start() {
+        // 非活跃状态不启动定位（后台被拉起 / 访客失败回壳时都会命中）.
+        guard UIApplication.shared.applicationState == .active else {
+            waitForActiveThenStart()
+            return
+        }
+        manager.allowsBackgroundLocationUpdates = true
         switch manager.authorizationStatus {
         case .notDetermined:
             manager.requestAlwaysAuthorization()
@@ -36,6 +46,21 @@ final class BackgroundKeepAlive: NSObject, CLLocationManagerDelegate {
         }
         manager.startUpdatingLocation()
         manager.requestLocation()
+    }
+
+    private var activeObserver: NSObjectProtocol?
+    private func waitForActiveThenStart() {
+        guard activeObserver == nil else { return }
+        activeObserver = NotificationCenter.default.addObserver(
+            forName: UIApplication.didBecomeActiveNotification,
+            object: nil, queue: .main) { [weak self] _ in
+            guard let self else { return }
+            if let token = self.activeObserver {
+                NotificationCenter.default.removeObserver(token)
+                self.activeObserver = nil
+            }
+            self.start()
+        }
     }
 
     func stop() {

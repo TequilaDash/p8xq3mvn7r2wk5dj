@@ -124,11 +124,17 @@ int main(int argc, char *argv[]) {
 
             int ret = LiveContainerMain(argc, argv);
 
-            // 走到这 = 访客没起来: 清键回宿主 UI, 不变砖 (错误串在 defaults "error").
+            // 走到这 = 访客没起来（或访客 main 已返回）。
+            // ⚠️ 此时进程已被 LCBootstrap 改写：NSBundle / NSUserDefaults / execPath 都被换成
+            // 访客的，且**不会回滚**。再跑宿主 UI 会读到访客的 defaults 与缺失的本地化表，
+            // 表现为「应用全没了、界面变成变量名、悬浮球变黑」（owner 2026-11-13 真机实测）。
+            // 正确做法：直接结束本进程，让用户重新打开 App；宿主在干净进程里启动，
+            // 并由 GuestLaunchError 依据 defaults 里的 "error" 弹出失败详情。
+            NSLog(@"[TDHost] guest 返回(%d)，进程已被 LC 改写，直接退出以避免脏状态 UI", ret);
             [defaults removeObjectForKey:@"selected"];
             [defaults removeObjectForKey:@"selectedContainer"];
-            TDHostBoot();
-            return ret;
+            [defaults synchronize];
+            exit(0);
         }
 
         TDHostBoot();

@@ -1,5 +1,15 @@
 ## [0.3.858] - 2026-11-13
 
+### 追加（18:16 / 18:24 两个 .ips）
+- **访客启动失败后不再回到脏进程 UI**：`LCBootstrap` 会把 NSBundle / NSUserDefaults / execPath
+  改写成访客的且不回滚；此前失败后继续 `TDHostBoot()` 会看到「应用全没了、界面变变量名、
+  悬浮球变黑」。现在访客 `main` 返回即 `exit(0)`，用户重开 App 在干净进程里看到错误详情。
+- **BackgroundKeepAlive 崩溃**：`CLLocationManager.allowsBackgroundLocationUpdates`
+  不能在 init/后台状态下设置（CoreLocation 断言 `!stayUp || CLClientIsBackgroundable`，
+  18:16 .ips 的 SIGABRT 就是它）。改为 `start()` 内、且仅在 App 活跃时设置；
+  非活跃时等 `didBecomeActive` 再启动。
+
+
 ### 按 owner 反馈修正
 - **搜索栏**：撤销本仓全部改动（`SearchContext.shared`、`isPresented`、`dropFirst` 等），
   `LCAppListView.swift` / `LCAltStoreSourcesView.swift` 恢复为上游原文；
