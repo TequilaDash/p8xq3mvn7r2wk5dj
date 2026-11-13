@@ -1,3 +1,10 @@
+## [0.3.856] - 2026-11-13
+
+### 修复
+- 禁止联网补上 `connectx` 拦截（Network.framework / `nw_connection` 走这条 syscall，
+  只钩 `connect` 的版本对这类 App 形同无效），并加一次性日志便于确认：
+  `[NetBlock] hooks 已安装 (...)` 与 `[NetBlock] 已拦截 connectx`.
+
 ## [0.3.855] - 2026-11-13
 
 ### 适配
