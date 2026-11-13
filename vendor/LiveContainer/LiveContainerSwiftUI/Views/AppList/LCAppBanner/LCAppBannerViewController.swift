@@ -232,7 +232,13 @@ final class LCAppBannerViewController: UIViewController, UIContextMenuInteractio
     }
 
     private func openSettings() {
-        delegate.openNavigationView(view: AnyView(LCAppSettingsView(model: configuration.model)))
+        // 本仓适配 (M35): 宿主以 UIKit 导航承载时 Menu 内容闭包会丢失 EnvironmentObject，
+        // 显式注入，避免 LCAppSettingsView 内 sharedModel 断言（SIGTRAP / EnvironmentObject.error）。
+        delegate.openNavigationView(view: AnyView(
+            LCAppSettingsView(model: configuration.model)
+                .environmentObject(DataManager.shared.model)
+                .environmentObject(LCAppSortManager.shared)
+        ))
     }
 
     private func openDataFolder() {

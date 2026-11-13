@@ -17,7 +17,6 @@
 
 **M7 同步上游时**：上游若已给 `lcMainBundle` 做兜底 → 删除本仓改动。
 
-| M1c | `LiveContainerSwiftUI/Views/LCAltStoreSourcesView.swift` | :487 SearchContext .shared | 同 M1（宿主 SwiftUI 重建视图丢搜索状态） | v0.3.809 | ✅ 已重放 |
 | M5 | `LiveContainerSwiftUI/Views/Settings/LCSettingsView.swift` | `:571-585`（`importCertificate` 失败分支） | 失败弹窗里附带 ZSign 的具体失败原因（`ZSigner.lastZSignLogs`），不再笼统显示「验证证书失败」 | owner 2026-11-11 真机：导入普通证书报「验证证书失败」但不知根因，需要直接看到原因而不是去翻日志 | v0.3.832 | ⏳ 待真机 |
 
 **M5 是诊断增强，不改变导入逻辑。同步上游时：**
@@ -96,6 +95,7 @@
 | 7 | `LiveContainerSwiftUI/Models/LCAppModel.swift` | M18 + M22 | `uiNestedLCCompat`/`uiNetBlock`；runApp 写 `TDGuestNetBlock` | v0.3.850 |
 | 8 | `LiveContainerSwiftUI/Utilities/LCUtilsExtensions.swift` | M9 | `signTweaks` 移除签名预校验 | v0.3.835 |
 | 8b | `LiveContainerSwiftUI/Views/AppList/LCAppListView.swift` | M30 | 左上角返回按钮（仅 `TDHostedSandbox` 时显示，通知宿主关闭沙盒容器） | v0.3.862 |
+| 8c | `LiveContainerSwiftUI/Views/AppList/LCAppBanner/LCAppBannerViewController.swift` | M35 | 打开 App 设置时显式注入 `SharedModel`/`LCAppSortManager`（Menu 内容闭包丢失 EnvironmentObject 导致 SIGTRAP `EnvironmentObject.error()`） | v0.3.875 |
 | 9 | `LiveContainerSwiftUI/Views/AppList/AppSettings/LCAppSettingsView.swift` | M18 + M22 | 「实验性」段：巢中巢兼容 + 禁止联网 | v0.3.850 |
 | 12 | `LiveContainerSwiftUI/Views/Settings/LCSettingsView.swift` | M5 + M25 + M32 | 证书失败详情；沙盒容器专属「日志」二级页（`Documents/sandbox.log`）与「实验性功能」二级页（呈现方式切换） | v0.3.866 |
 | 13 | `MultitaskSupport/AppSceneViewController.m` | M4r + M6r + M22 + M31 | bookmarks 判空 + userInfo 兜底 + 传 `tdNetBlock` + 多任务诊断日志（扩展 uuid/pid、hostingVC、scene） | v0.3.865 |
