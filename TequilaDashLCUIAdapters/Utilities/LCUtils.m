@@ -84,7 +84,20 @@
     
     dispatch_async(dispatch_get_main_queue(), ^{
         if (@available(iOS 16.1, *)) {
-            if(UIApplication.sharedApplication.supportsMultipleScenes && [NSUserDefaults.lcSharedDefaults integerForKey:@"LCMultitaskMode"] == 1) {
+            // 本仓适配 (M20, 2026-11-13): 原生多窗口模式在本仓不可用。
+            // 上游的多任务装窗靠 SwiftUI 场景 `WindowGroup(id: "appView", for: String.self)`
+            // （App/LiveContainerSwiftUIApp.swift:112），而本仓 framework target 把该文件
+            // **exclude** 了（宿主入口在 HostGuestEntry.m，不是 SwiftUI App）→
+            // MultitaskWindowManager 的 openWindow(id:"appView") 找不到任何场景，
+            // 结果只剩 dock 图标、没有访客窗口 = owner 反馈的「多任务根本没起来只是个 UI 功能」。
+            // 因此这里强制走虚拟窗口路径（DecoratedAppSceneViewController 直接挂到宿主顶层 VC）。
+            static BOOL loggedMultitaskFallback = NO;
+            if (!loggedMultitaskFallback) {
+                loggedMultitaskFallback = YES;
+                NSLog(@"[TD-Multitask] 本仓无 appView SwiftUI 场景，强制虚拟窗口模式（忽略 LCMultitaskMode=%ld）",
+                      (long)[NSUserDefaults.lcSharedDefaults integerForKey:@"LCMultitaskMode"]);
+            }
+            if(NO && UIApplication.sharedApplication.supportsMultipleScenes && [NSUserDefaults.lcSharedDefaults integerForKey:@"LCMultitaskMode"] == 1) {
                 [MultitaskWindowManager openAppWindowWithDisplayName:displayName dataUUID:dataUUID bundleId:bundleId pidCallback:completionHandler];
                 MultitaskDockManager *dock = [MultitaskDockManager shared];
                 [dock addRunningApp:displayName appUUID:dataUUID view:nil];
@@ -92,8 +105,39 @@
             }
         }
         
-        UIViewController *rootVC = ((UIWindowScene *)UIApplication.sharedApplication.connectedScenes.anyObject).keyWindow.rootViewController;
-        DecoratedAppSceneViewController *launcherView = [[DecoratedAppSceneViewController alloc] initWindowName:displayName bundleId:bundleId dataUUID:dataUUID rootVC:rootVC];
+        // 本仓适配 (M19, 2026-11-13): 挂载点必须是**当前最顶层可见控制器**。
+        // 上游取 `scene.keyWindow.rootViewController` —— 本仓沙盒容器在
+        // `fullScreenCover` 里，宿主 rootVC 已 present 了一层，直接把访客窗口
+        // addSubview 到 rootVC.view 会落在 cover **下面**（表现为「多任务只有 UI 没内容」）。
+        UIWindowScene *hostScene = nil;
+        for (id sc in UIApplication.sharedApplication.connectedScenes) {
+            if (![sc isKindOfClass:UIWindowScene.class]) continue;
+            UIWindowScene *ws = (UIWindowScene *)sc;
+            if (hostScene == nil) hostScene = ws;
+            if (ws.activationState == UISceneActivationStateForegroundActive) { hostScene = ws; break; }
+        }
+        UIViewController *rootVC = hostScene.keyWindow.rootViewController;
+        if (!rootVC) {
+            for (UIWindow *w in hostScene.windows) {
+                if (w.rootViewController) { rootVC = w.rootViewController; break; }
+            }
+        }
+        UIViewController *topVC = rootVC;
+        while (topVC.presentedViewController) {
+            topVC = topVC.presentedViewController;
+        }
+        if (!topVC) {
+            NSLog(@"[TD-Multitask] 找不到可挂载的 rootVC，放弃启动 %@", displayName);
+            if (completionHandler) {
+                completionHandler(nil, [NSError errorWithDomain:@"TDMultitask" code:3
+                    userInfo:@{NSLocalizedDescriptionKey: @"找不到可挂载的界面（宿主窗口未就绪）"}]);
+            }
+            return;
+        }
+        NSLog(@"[TD-Multitask] 挂载到 %@ (bundleId=%@, dataUUID=%@, mode=%ld)",
+              NSStringFromClass(topVC.class), bundleId, dataUUID,
+              (long)[NSUserDefaults.lcSharedDefaults integerForKey:@"LCMultitaskMode"]);
+        DecoratedAppSceneViewController *launcherView = [[DecoratedAppSceneViewController alloc] initWindowName:displayName bundleId:bundleId dataUUID:dataUUID rootVC:topVC];
         // Wire PID callback
         launcherView.pidAvailableHandler = completionHandler;
         launcherView.view.autoresizingMask = UIViewAutoresizingFlexibleTopMargin | UIViewAutoresizingFlexibleLeftMargin | UIViewAutoresizingFlexibleRightMargin | UIViewAutoresizingFlexibleBottomMargin;

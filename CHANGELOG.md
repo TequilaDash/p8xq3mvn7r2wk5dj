@@ -1,3 +1,21 @@
+## [0.3.849] - 2026-11-13
+
+### 修复（多任务三项，均为本仓宿主结构问题，不是上游逻辑问题）
+
+1. **多任务「只有 UI 没有内容」**
+   原生窗口模式依赖上游 SwiftUI 场景 `WindowGroup(id:"appView")`（`App/LiveContainerSwiftUIApp.swift:112`），
+   本仓 framework target **exclude** 了该文件 → `openWindow(id:)` 找不到场景，只剩 dock。
+   修（M20）：强制走虚拟窗口路径 `DecoratedAppSceneViewController`。
+
+2. **多任务窗口挂在封面之下（白屏）**
+   上游取 `scene.keyWindow.rootViewController`；本仓沙盒容器在 `fullScreenCover` 里，
+   直接 addSubview 会落在封面下面。修（M19）：取最顶层 presentedViewController 作挂载点。
+
+3. **返回后再进沙盒容器界面消失**
+   `SceneDelegate.window` 曾给真实 windowScene → LC 的 `closeDuplicatedWindow()`（LCTabView:149）
+   与 `requestSceneDestruction()`（MultitaskAppWindow:226）会销毁**宿主自己的场景**。
+   修：转发窗口改为无 windowScene 的离屏窗口（session 恒 nil，两处销毁 no-op）。
+
 ## [0.3.848] - 2026-11-13
 
 ### 修复（`132227.ips`，0.3.847 上的新崩溃）

@@ -58,23 +58,21 @@ public final class TDLCUIHost: NSObject {
     /// LC 的 `sceneDelegate.window?.rootViewController?.present(...)` 会走到代理，
     /// 代理再转给当前最顶层可见控制器。代理不调用 super，因此不需要真实窗口层级。
     private static func makePresenterWindow() -> UIWindow {
-        let scene = hostWindowScene()
-        // 用真实 windowScene 构造：LC 的 LCTabView.swift:149 与 MultitaskAppWindow.swift:226
-        // 都写 `sceneDelegate.window?.windowScene?.session`，离屏 window 若没有 windowScene
-        // 这两处会静默返回 —— mainWindowOpened 标记不设、多任务原生窗口拿不到 session。
-        let window = scene.map { UIWindow(windowScene: $0) } ?? UIWindow(frame: .zero)
+        // ⚠️ 故意**不挂 windowScene**（真机实测 2026-11-13）：
+        // LC 有两处拿 `sceneDelegate.window?.windowScene?.session` 去「销毁场景」：
+        //   · LCTabView.swift:149 `closeDuplicatedWindow()` —— 本页每次出现都会跑，
+        //     mainWindowOpened 为 true 时直接 requestSceneSessionDestruction。
+        //   · MultitaskAppWindow.swift:226 `requestSceneDestruction()`。
+        // 本仓只有 TD 这一个 scene；一旦把宿主 scene 的 session 交出去，这两处销毁的
+        // 就是宿主自己的场景 → 表现为「再次进入沙盒容器界面整个消失」/「多任务只有 UI 没内容」。
+        // 上游能这么做是因为 LC 自己是 App 本体、其 window 就是主场景。
+        // 因此这里给一个**无 scene** 的离屏窗口：session 恒 nil，两处销毁都变成静默 no-op。
+        // 多任务的 dock 与 guest 窗口走 `UIApplication.shared.connectedScenes.first`
+        // （MultitaskDockView.swift:592/775），不依赖本窗口的 windowScene。
+        let window = UIWindow(frame: .zero)
         window.frame = .zero
         window.rootViewController = PresenterProxyViewController()
         return window
-    }
-
-    /// 宿主当前活跃的 UIWindowScene（用于给离屏窗口挂真实 scene）.
-    private static func hostWindowScene() -> UIWindowScene? {
-        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
-        for scene in scenes where scene.activationState == .foregroundActive {
-            return scene
-        }
-        return scenes.first
     }
 
     /// 顶层可 present 的控制器（沿 presentedViewController 链向下走到底）.
