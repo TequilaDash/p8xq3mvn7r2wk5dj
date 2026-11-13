@@ -148,7 +148,26 @@ static UIViewController *gContainer = nil;
             [c.view addSubview:h];
             NSLog(@"[TD-Multitask] adopt(1.5s): re-homed to %@", NSStringFromClass(c.view.class));
         }
+        // 诊断 (0.3.877): 白屏时需要知道 scene 内容是否真的挂进窗口、尺寸/可见性如何。
+        NSMutableString *tree = [NSMutableString string];
+        [self dumpTree:h depth:0 into:tree];
+        NSLog(@"[TD-Multitask] tree: %@", tree);
+        NSLog(@"[TD-Multitask] window: key=%d hidden=%d level=%.0f bounds=%@",
+              (int)gWindow.isKeyWindow, (int)gWindow.isHidden, (double)gWindow.windowLevel,
+              NSStringFromCGRect(gWindow.bounds));
     });
+}
+
++ (void)dumpTree:(UIView *)view depth:(NSUInteger)depth into:(NSMutableString *)out {
+    if (depth > 3) return;
+    NSMutableString *pad = [NSMutableString string];
+    for (NSUInteger i = 0; i < depth; i++) [pad appendString:@"  "];
+    [out appendFormat:@"\n%@%@ frame=%@ hidden=%d alpha=%.2f",
+        pad, NSStringFromClass(view.class), NSStringFromCGRect(view.frame),
+        (int)view.isHidden, (double)view.alpha];
+    for (UIView *sub in view.subviews) {
+        [TDGuestOverlay dumpTree:sub depth:depth + 1 into:out];
+    }
 }
 
 + (void)tearDown {

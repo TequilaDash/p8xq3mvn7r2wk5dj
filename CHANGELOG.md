@@ -1,3 +1,22 @@
+## [0.3.877] - 2026-11-14
+
+### worse_query 目录枚举重写：对齐 WQFiles 的生产级 inode 扫描
+- 上游 forcequit 的 `pathleak` 是**单线程** O(probe) `fsgetpath`，真机 inode 数千万级
+  一次要几十秒，且经常在调用超时前命中 0 —— 这才是「只开 worse_query 不能列目录」
+  在 0.3.874/876 仍失败的根因（0.3.876 的 inode 基线只修了上限，没修吞吐）。
+- 新增 `Engine/TDInodeScan.{h,m}`（参考 kolbicz/WQFiles `WQAccess.m`）：
+  多线程分块 `fsgetpath` + 临时文件探测 inode 水位（`+100000` 余量）+
+  **磁盘缓存**（临时目录 plist，按 fsid/水位增量扫描）+ 缓存条目复核。
+- `WorseQueryExploit.paths` 改走 `td_wq_enumerate`，日志字段改为
+  `probe/scanned/命中数`；失败仍回落「签扩展 + FileManager」。
+- 收益：Application / PluginKitPlugin / InternalDaemon 容器根的**首次**枚举
+  （多线程，秒级），之后增量几乎零开销；PluginKitPlugin 这类签不到扩展的目录
+  也能列出（纯 fsgetpath 前缀匹配，不需要 sandbox extension）。
+
+### 多任务白屏诊断
+- `TDGuestOverlay` 在 1.5s 二次搬迁后输出覆盖窗口树（类/尺寸/hidden/alpha 深度 3）
+  与窗口 key/hidden/level/bounds，`td-console.log` 可直接判定白屏在 scene 渲染层还是挂载层。
+
 ## [0.3.876] - 2026-11-14
 
 ### worse_query 目录枚举：改用上游的 inode 基线
