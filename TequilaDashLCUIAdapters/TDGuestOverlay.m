@@ -52,6 +52,20 @@ static UIViewController *gContainer = nil;
     gContainer = [UIViewController new];
     gContainer.view.backgroundColor = UIColor.clearColor;
     gWindow.rootViewController = gContainer;
+
+    // 回到前台时若窗口被系统隐掉，重新亮出来（多任务窗口「返回后消失」的兜底）.
+    static id activeObserver = nil;
+    if (!activeObserver) {
+        activeObserver = [NSNotificationCenter.defaultCenter
+            addObserverForName:UIApplicationDidBecomeActiveNotification
+                        object:nil queue:NSOperationQueue.mainQueue
+                    usingBlock:^(NSNotification * _Nonnull note) {
+            if (gWindow && gWindow.hidden) {
+                gWindow.hidden = NO;
+                NSLog(@"[TD-Multitask] 覆盖窗口在回到前台时重新显示");
+            }
+        }];
+    }
     return gContainer;
 }
 
