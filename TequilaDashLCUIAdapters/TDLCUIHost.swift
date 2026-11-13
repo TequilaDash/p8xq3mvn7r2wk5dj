@@ -46,6 +46,7 @@ public final class TDLCUIHost: NSObject {
             .environmentObject(sceneDelegate)
         let controller = UIHostingController(rootView: root)
         controller.title = "沙盒容器"
+        controller.view.backgroundColor = UIColor.systemGroupedBackground
         return controller
     }
 

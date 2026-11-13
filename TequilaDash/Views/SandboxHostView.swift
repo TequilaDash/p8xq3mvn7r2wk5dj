@@ -35,7 +35,7 @@ struct SandboxHostView: View {
         // （见 vendor/.../LCAppListView.swift 的 M30），返回事件由通知触发.
         LCUIHostView()
             .background(Color(uiColor: .systemGroupedBackground).ignoresSafeArea())
-            .ignoresSafeArea(edges: .bottom)
+            .ignoresSafeArea(edges: [.top, .bottom])
             .toolbar(.hidden, for: .tabBar)
             .toolbar(.hidden, for: .navigationBar)
             .onReceive(NotificationCenter.default.publisher(

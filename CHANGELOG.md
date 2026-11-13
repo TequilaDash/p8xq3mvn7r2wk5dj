@@ -1,3 +1,21 @@
+## [0.3.872] - 2026-11-13
+
+### 禁止联网：找到真正失效点
+- `NetBlockApplyAfterGuestLoad` 里 `rebind_symbols` 被当成**两参数**调用（无原型、隐式声明），
+  实际把字符串指针当 `struct rebinding[]`、把 hook 当个数传进去 → 什么都没绑。
+  真机自检 `[NetBlock] 自检 getaddrinfo rc=0` 即由此而来。
+- 改为 fishhook 正确 API（`struct rebinding` 数组），并在访客镜像里**校验**：
+  `[NetBlock] 已按访客镜像重绑 …（校验 connect=N dns=M）`。
+- 之前 `-` 的日志保留，可区分「绑定成功但 App 走别的通道」与「绑定失败」。
+
+### worse_query 目录枚举
+- 目录本身签不到（-6）时，改签容器内 `.com.apple.mobile_container_manager.metadata.plist`
+  （扩展通常覆盖整个容器），再读目录。成功/失败都写 exploit.log.
+
+### 白色顶栏
+- 沙盒容器改为 `.ignoresSafeArea(edges: [.top, .bottom])`，并给 LC 承载控制器设
+  `systemGroupedBackground` 背景，彻底消除顶部白色分层条.
+
 ## [0.3.871] - 2026-11-13
 
 ### 调整

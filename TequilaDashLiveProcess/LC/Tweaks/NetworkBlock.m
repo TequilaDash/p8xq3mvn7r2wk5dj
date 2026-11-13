@@ -25,6 +25,8 @@
 #import <errno.h>
 #import "litehook.h"
 #import "fishhook.h"
+#import <mach-o/loader.h>
+#import <mach-o/getsect.h>
 
 static void log_blocked_once(const char *what) {
     static dispatch_once_t once;
@@ -87,13 +89,23 @@ void NetBlockGuestHooksInit(void) {
     NSLog(@"[NetBlock] hooks 已安装 (connect/sendto/sendmsg/getaddrinfo/connectx)");
 }
 
+static void fishhook_one(const char *name, void *hook) {
+    struct rebinding rb = { (char *)name, hook, NULL };
+    rebind_symbols(&rb, 1);
+}
+
 /// dlopen 访客**之后**调用: fishhook 补访客镜像的延迟绑定.
+///
+/// 注意：这里必须用 fishhook 的**结构体数组** API。之前写成
+/// `rebind_symbols((char*)"connect", hook_connect)` 没有原型（隐式声明），
+/// 实际把字符串指针当成 `struct rebinding[]`、把 hook 当成个数传进去，
+/// 等于什么都没做 —— 真机日志 `[NetBlock] 自检 rc=0` 即由此而来.
 void NetBlockApplyAfterGuestLoad(void) {
-    rebind_symbols((char *)"connect", hook_connect);
-    rebind_symbols((char *)"sendto", hook_sendto);
-    rebind_symbols((char *)"sendmsg", hook_sendmsg);
-    rebind_symbols((char *)"getaddrinfo", hook_getaddrinfo);
-    rebind_symbols((char *)"connectx", hook_connectx);
+    fishhook_one("connect", (void *)hook_connect);
+    fishhook_one("sendto", (void *)hook_sendto);
+    fishhook_one("sendmsg", (void *)hook_sendmsg);
+    fishhook_one("getaddrinfo", (void *)hook_getaddrinfo);
+    fishhook_one("connectx", (void *)hook_connectx);
 }
 
 /// 访客镜像 dlopen 完成后调用：按**该镜像**的加载地址重绑.
@@ -101,6 +113,34 @@ void NetBlockApplyAfterGuestLoad(void) {
 /// 为什么不用 fishhook：iOS 26+ 的新二进制多是 chained fixups，fishhook 依赖
 /// `__la_symbol_ptr` 改写，对这类镜像不生效 —— 表现就是「禁止联网开了但完全没用」。
 /// litehook 直接在镜像里按导入表地址替换，能覆盖 chained fixups.
+static int count_pointers_equal(const struct mach_header_64 *header, void *value) {
+    if (!header) return 0;
+    int found = 0;
+    struct load_command *lcp = (void *)((uintptr_t)header + sizeof(struct mach_header_64));
+    for (int i = 0; i < header->ncmds; i++) {
+        if (lcp->cmd == LC_SEGMENT_64) {
+            struct segment_command_64 *seg = (struct segment_command_64 *)lcp;
+            if (!strncmp(seg->segname, "__DATA_CONST", 16) || !strncmp(seg->segname, "__DATA", 16) ||
+                !strncmp(seg->segname, "__AUTH_CONST", 16)) {
+                struct section_64 *sect = (struct section_64 *)((uintptr_t)lcp + sizeof(struct segment_command_64));
+                for (uint32_t j = 0; j < seg->nsects; j++) {
+                    uint32_t type = sect[j].flags & 0xff;
+                    if (type != S_LAZY_SYMBOL_POINTERS && type != S_NON_LAZY_SYMBOL_POINTERS) continue;
+                    unsigned long size = 0;
+                    uint8_t *start = getsectiondata(header, seg->segname, sect[j].sectname, &size);
+                    if (!start) continue;
+                    void **ptrs = (void **)start;
+                    for (unsigned long k = 0; k < size / sizeof(void *); k++) {
+                        if (ptrs[k] == value) found++;
+                    }
+                }
+            }
+        }
+        lcp = (struct load_command *)((uintptr_t)lcp + lcp->cmdsize);
+    }
+    return found;
+}
+
 void NetBlockApplyAfterGuestLoadWithImage(const struct mach_header_64 *header) {
     if (!header) return;
     litehook_rebind_symbol((const mach_header_u *)header, connect, hook_connect, nil);
@@ -111,5 +151,8 @@ void NetBlockApplyAfterGuestLoadWithImage(const struct mach_header_64 *header) {
     if (connectxSym) {
         litehook_rebind_symbol((const mach_header_u *)header, connectxSym, (void *)hook_connectx, nil);
     }
-    NSLog(@"[NetBlock] 已按访客镜像重绑 connect/connectx/sendto/sendmsg/getaddrinfo");
+    int cConnect = count_pointers_equal(header, (void *)hook_connect);
+    int cDNS = count_pointers_equal(header, (void *)hook_getaddrinfo);
+    NSLog(@"[NetBlock] 已按访客镜像重绑 connect/connectx/sendto/sendmsg/getaddrinfo（校验 connect=%d dns=%d）",
+          cConnect, cDNS);
 }
