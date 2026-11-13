@@ -188,6 +188,7 @@ python Resources/Scripts/lc_mirror_guard.py --write   # 重新生成 .upstream-m
 | # | 文件 | 差异 | 原因 | 同步上游时 |
 |---|---|---|---|---|
 | C1 | （联网禁用补丁落在 vendor 的 Bootstrap，见 MIRROR-DELTAS） | 适配副本与上游一致 | 联网禁用 | vendor 侧维护 |
+| C6 | `LCMachOUtils.m` | `LCPatchExecSlice` 里修正 `...TweakLoader.dylibC` 脏 load command 名 | 第三方签名工具写坏名字，原版 LC 也无法启动该访客 | v0.3.859 |
 | C2 | `LCMachOUtils.m` | ①头文件直取 LCMachOUtils.h/litehook.h ②验签失败诊断日志 ③`insertDylibCommand` 补字符串 NUL 终止 | ①搬运集不含 LCUtils.h ②诊断 ③无 NUL 时 dyld 会读进旧数据，生成 `TweakLoader.dylibC` 这类脏路径（上游 bug） | ①保留 ②上游若加诊断则删 ③上游修了则删 |
 | C3 | `Tweaks/NetworkBlock.m` | 本仓新增文件 | 联网禁用实现 | 保留 |
 | C4 | `Tweaks/NSExtension+GuestHooks.m` | 仅注释中的旧工程名改为本仓名称 | 命名统一，逻辑零改动 | 上游若改名则随上游 |

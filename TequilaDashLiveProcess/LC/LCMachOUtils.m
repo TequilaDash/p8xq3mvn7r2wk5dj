@@ -225,6 +225,17 @@ int LCPatchExecSlice(const char *path, struct mach_header_64 *header, bool doInj
             case LC_REEXPORT_DYLIB:
             case LC_LOAD_UPWARD_DYLIB: {
                 char* loadPath =  (void *)command2 + ((struct dylib_command*)command2)->dylib.name.offset;
+                // 本仓适配 (M29, 2026-11-13): 第三方重签工具会把 TweakLoader 的
+                // LC_LOAD_DYLIB 名字写坏成 `.../TweakLoader.dylibC`（末尾多一个 C），
+                // dyld 直接报 no such file，原版与本站都无法启动该访客。
+                // 这里把它就地改回 `.../TweakLoader.dylib`（只动这一种已知脏名）。
+                {
+                    size_t lpLen = strlen(loadPath);
+                    if (lpLen > 1 && loadPath[lpLen - 1] == 'C' &&
+                        strstr(loadPath, "/TweakLoader.dylibC") != NULL) {
+                        loadPath[lpLen - 1] = '\0';
+                    }
+                }
                 for ( int i = 0; i < depCount; ++i ) {
                     if ( strcmp(loadPath, depPaths[i]) == 0 ) {
                         // replace this duplicated dylib command with an invalid command number
