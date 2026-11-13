@@ -109,3 +109,30 @@
 - 正确做法：zh-Hans/zh-Hant 的 `stringUnit.state` 一律置 `translated`；plural 变体要逐 case 检查
 - 检测方法：`lc_i18n_guard.py`（已加 `_is_translated()`，把非 translated 视为「缺本地化」）输出「缺本地化 0」
 - 关联规范：R-020
+
+## MEM-014 删补丁只看「架构新旧」，不看上游该 bug 是否还在（2026-11-13，二次犯）
+
+- 现象：0.3.845 全模式启动闪退，5 个 .ips 里 4 个是 `insertObject:atIndex: object cannot be nil`
+- 我的错误动作：合入 9d6ea09b05 时把 M4（bookmarks addObject 判空）归为「旧架构补丁」删除，只保留了 M6r 的字典判空
+- 根因：判断「补丁是否作废」时只看架构描述，没有逐处核对上游该 bug 的具体代码是否仍存在（上游 4 处 addObject 只判空 1 处，另 3 处原封不动）
+- 正确做法：删除任何补丁前，`grep` 上游该 bug 的全部出现点（不是抽一处），每个出现点都要判断；M4 有 4 处，我只看了 1 处
+- 检测方法：`grep -c 'bookmarks addObject' 上游文件` = 4，其中带 `if (` 保护的必须 = 4
+- 关联规范：R-015
+
+## MEM-015 iOS 26+ Foundation Swift 桥导致 swizzle 无限递归（2026-11-13）
+
+- 现象：SIGSEGV at stack guard，`recursionInfoArray depth 10678`，栈全是 `hook_createDirectoryAtPath + 92`
+- 我的错误动作：把崩溃当成普通 nil/布局问题查，没读 `recursionInfoArray`
+- 根因：iOS 26+ Foundation 的 `-createDirectoryAtPath:...` 真实实现是 Swift 桥 `_NSFileManagerBridge.createDirectory(at:)`，桥又回调 ObjC selector → hook → 原实现 → 桥 → 无限递归
+- 正确做法：iOS 26+ 跳过该 swizzle（该 hook 只为修老 WebKit cookie 问题）
+- 检测方法：`.ips` 里出现 `recursionInfoArray` 且 depth > 1000 即判「无限递归」，直接看栈里被重复的 symbol
+- 关联规范：R-022
+
+## MEM-016 宿主进程没有 uncaught exception handler（2026-11-13）
+
+- 现象：崩溃后再次进入 App，**一个报错弹窗都不弹**
+- 我的错误动作：以为 M13 双写已覆盖所有崩溃；实际 M13 只在 guest 的 exceptionHandler 生效
+- 根因：上游 `NSSetUncaughtExceptionHandler` 装在 `LiveContainerMain`；宿主走 `TDHostBoot` 从不经过它 → 宿主进程崩溃不写任何 error 键
+- 正确做法：`TDInitLCGlobals()` 里也装宿主自己的 handler（写 standard + app group 双份 + uptime）
+- 检测方法：`grep -c TDUncaughtExceptionHandler 宿主入口文件` ≥ 2；多任务崩溃后重启 App 必见弹窗
+- 关联规范：R-018

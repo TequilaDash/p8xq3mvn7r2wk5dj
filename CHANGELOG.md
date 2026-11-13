@@ -1,3 +1,23 @@
+## [0.3.847] - 2026-11-13
+
+### 修复（递归的真实成因：巢中巢 LC）
+- `.ips` 决定性证据：递归 10678 帧的 `imageIndex` 全部指向 **访客自带**的
+  `LiveContainerShared.framework`（`app.reiko.zcontainer.app`），本仓只有 1 帧。
+  即用户测试的访客 App 本身就是一个 LiveContainer 变体。
+- 机制：同一进程内两套 LC 各 swizzle 一次
+  `-[NSFileManager createDirectoryAtPath:...]`，两边 category 的同名方法互相当「原实现」
+  → 彼此指向对方 → 无限递归 → 撞栈保护页。
+- 原版 LC 不炸的原因：SideStore 安装路径下 `if(!isSideStore)` 整块跳过
+  `NSFMGuestHooksInit`；本仓非 SideStore，必然装上，于是双份叠加。
+- 修法（M16 重写）：①`NSFMGuestHooksInit` 捕获该 selector 的**真实 IMP**，
+  hook 内直接调用它（而不是 `[self hook_...]`），任何后续交换都不会成环；
+  ②iOS 26+ 不装该 swizzle（Swift 桥另有单 hook 自递归风险，且该 hook 仅服务老 WebKit
+  cookie 问题 issues/888）。
+
+### 澄清
+- `vendor/LiveContainer/LiveContainer/Tweaks/NSFileManager+GuestHooks.m` 与上游
+  `9d6ea09b05` **逐字节一致**（`diff` 仅本仓 M16 块），上游本身无任何 iOS 26 guard。
+
 ## [0.3.846] - 2026-11-13
 
 ### 修复（五个 .ips 实证的两类真根因）

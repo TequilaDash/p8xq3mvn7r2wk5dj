@@ -7,6 +7,9 @@
 #include <dlfcn.h>
 
 BOOL isolateAppGroup = NO;
+// 本仓适配 (M16): 真实 createDirectoryAtPath 实现（防巢中巢双层 hook 互指成环）
+typedef BOOL (*TDCreateDirectoryIMP)(id, SEL, NSString *, BOOL, NSDictionary<NSFileAttributeKey,id> *, NSError **);
+static TDCreateDirectoryIMP gOrigCreateDirectoryIMP = NULL;
 static NSString *extensionParentContainerPath;
 void* webKitHeader = 0;
 void NSFMGuestExtensionHooksInit(NSString *parentContainerPath) {
@@ -34,17 +37,25 @@ void NSFMGuestHooksInit(void) {
         saveCachedSymbol(@"webKitHeader", dscPtr, webKitHeader-dscPtr);
     }
     
-    // 本仓适配 (M14, 2026-11-13): iOS 26+ 禁止 hook createDirectoryAtPath。
-    // 原因：iOS 26+ Foundation 的 -createDirectoryAtPath:... 真实实现是 Swift 桥
-    // `_NSFileManagerBridge.createDirectory(at:)`，而该桥又回调 ObjC selector →
-    // hook → 原实现 → 桥 → …无穷递归（owner 2026-11-13 .ips 实测 10678 层
-    // recursionInfo 后撞栈保护页 SIGSEGV）。
-    // 该 hook 只为修 WebKit 保存 Cookie 的老问题（上游注释 issues/888），
-    // 老系统上才需要；iOS 26+ 装上必然崩溃，直接跳过。
-    if (@available(iOS 26.0, *)) {
-        NSLog(@"[NSFMGuestHooks] iOS 26+ 跳过 createDirectoryAtPath hook (Swift bridge 递归)");
-    } else {
-        swizzle(NSFileManager.class, @selector(createDirectoryAtPath:withIntermediateDirectories:attributes:error:), @selector(hook_createDirectoryAtPath:withIntermediateDirectories:attributes:error:));
+    // 本仓适配 (M16, 2026-11-13): 保存 createDirectoryAtPath 的**真实**实现，
+    // hook 内直接调用该 IMP，而不是 [self hook_...]。
+    // 根因（owner .ips 实证）：访客 App 自身若是另一个 LiveContainer（巢中巢），
+    // 它会在这之后再次 method_exchangeImplementations 同一个 selector。两套 category
+    // 同名方法互相当「原实现」→ 彼此指向对方 → 无限递归（depth 10678，递归帧
+    // imageIndex 全是访客的 LiveContainerShared）。持有真实 IMP 后链条必然终止。
+    {
+        Method origMethod = class_getInstanceMethod(NSFileManager.class, @selector(createDirectoryAtPath:withIntermediateDirectories:attributes:error:));
+        if (origMethod) {
+            gOrigCreateDirectoryIMP = (TDCreateDirectoryIMP)method_getImplementation(origMethod);
+        }
+        // iOS 26+ 的另一重风险：该 selector 的真实实现是 Swift 桥，
+        // 桥可能回调同一 selector 造成单 hook 自递归。该 hook 只服务老 WebKit
+        // cookie 问题（issues/888），iOS 26+ 直接不装，稳定性优先。
+        if (@available(iOS 26.0, *)) {
+            NSLog(@"[NSFMGuestHooks] iOS 26+ 跳过 createDirectoryAtPath hook");
+        } else {
+            swizzle(NSFileManager.class, @selector(createDirectoryAtPath:withIntermediateDirectories:attributes:error:), @selector(hook_createDirectoryAtPath:withIntermediateDirectories:attributes:error:));
+        }
     }
 }
 
@@ -69,7 +80,12 @@ void NSFMGuestHooksInit(void) {
 }
 
 - (bool)hook_createDirectoryAtPath:(NSString *)path withIntermediateDirectories:(BOOL)createIntermediates attributes:(NSDictionary<NSFileAttributeKey,id> *)attributes error:(NSError *__autoreleasing  _Nullable *)error {
-    bool ans = [self hook_createDirectoryAtPath:path withIntermediateDirectories:createIntermediates attributes:attributes error:error];
+    bool ans;
+    if (gOrigCreateDirectoryIMP) {
+        ans = gOrigCreateDirectoryIMP(self, _cmd, path, createIntermediates, attributes, error);
+    } else {
+        ans = [self hook_createDirectoryAtPath:path withIntermediateDirectories:createIntermediates attributes:attributes error:error];
+    }
     void* callerAddr = __builtin_return_address(0);
     if(callerAddr > webKitHeader && callerAddr < (webKitHeader + (32 << 20) )) {
         if([path hasSuffix:@"Library/Cookies"]) {

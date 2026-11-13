@@ -92,3 +92,15 @@
 - 动作：`stringUnit.state` 必须是 `translated`（plural 变体逐 case 检查）；`needs_review`/`new` 等同未翻译
 - 验证：`python Resources/Scripts/lc_i18n_guard.py .` 输出「缺本地化 0」
 - 违反记录：MEM-013
+
+## R-022 看到 recursionInfoArray 即判无限递归，先看被重复的 symbol
+- 条件：.ips 出现 `recursionInfoArray` 或 `SIGSEGV` at stack guard
+- 动作：读 `recursionInfoArray[0].depth` 与 `keyFrame.symbol`；若 depth > 1000，判定为无限递归，不要去查 nil/布局
+- 验证：修复后该 .ips 不再出现，或 depth 归零
+- 违反记录：MEM-015
+
+## R-023 iOS 26+ 禁止 swizzle Foundation 的 Swift 桥方法
+- 条件：要对 Foundation 类（NSFileManager/NSURLSession 等）做 `method_exchangeImplementations`
+- 动作：先用 `if (@available(iOS 26.0, *))` 跳过，或在 hook 内做 thread-local 重入保护；已知 Swift 桥会回调 ObjC selector 造成互相递归的 selector 清单要记录在 MIRROR-DELTAS
+- 验证：真机上该功能不崩；`.ips` 无 recursionInfoArray
+- 违反记录：MEM-015
