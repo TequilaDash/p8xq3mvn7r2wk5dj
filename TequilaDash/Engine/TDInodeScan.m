@@ -104,8 +104,7 @@ static void TDSaveCache(fsid_t fsid, int64_t probe,
 
 /// 复核缓存条目：fsgetpath(ino) 必须还落在同一 base 下；否则丢弃该条目。
 static void TDVerifyCache(fsid_t fsid,
-                          NSMutableDictionary<NSString *, NSMutableDictionary<NSString *, NSNumber *> *> *roots,
-                          NSMutableDictionary<NSString *, NSNumber *> *target) {
+                          NSMutableDictionary<NSString *, NSMutableDictionary<NSString *, NSNumber *> *> *roots) {
     char buf[1200];
     for (NSString *base in roots) {
         NSMutableDictionary<NSString *, NSNumber *> *map = roots[base];
@@ -124,7 +123,6 @@ static void TDVerifyCache(fsid_t fsid,
             for (NSString *p in stale) [map removeObjectForKey:p];
             NSLog(@"[TDInodeScan] cache verify: dropped %lu stale entries", (unsigned long)stale.count);
         }
-        if ([base isEqualToString:target]) *target = map;
     }
 }
 
@@ -205,12 +203,12 @@ NSArray<NSString *> *td_wq_enumerate(NSString *dir, int64_t *outScanned, int64_t
 
     int64_t scanned = 0;
     if (cachedProbe <= 0 || cachedProbe > probeInode) {
-        TDVerifyCache(fsid, roots, target);
+        TDVerifyCache(fsid, roots);
         TDScanRange(fsid, 1, limit, roots, &scanned);
         NSLog(@"[TDInodeScan] full scan 1..%lld scanned=%lld roots=%lu why=%@",
               (long long)limit, (long long)scanned, (unsigned long)roots.count, whyFull ?: @"first");
     } else {
-        TDVerifyCache(fsid, roots, target);
+        TDVerifyCache(fsid, roots);
         if (cachedProbe + 1 <= probeInode) {
             TDScanRange(fsid, cachedProbe + 1, limit, roots, &scanned);
         }
