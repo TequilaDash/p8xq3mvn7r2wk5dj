@@ -22,6 +22,17 @@ public final class TDLCUIHost: NSObject {
     @objc public static func makeTabViewController() -> UIViewController {
         // 标记「由本仓宿主承载」：LC 原生导航栏据此显示返回键（M30）.
         UserDefaults.standard.set(true, forKey: "TDHostedSandbox")
+        // 本仓适配 (M34, 2026-11-13): LC 各页的导航栏背景一律透明 ——
+        // 否则顶部会出现一条与内容分层明显的白色/材质条（owner 明确要求永久移除）.
+        // 只改 UINavigationBar 外观，不动按钮与布局.
+        let clear = UINavigationBarAppearance()
+        clear.configureWithTransparentBackground()
+        clear.shadowColor = .clear
+        clear.backgroundColor = .clear
+        UINavigationBar.appearance().standardAppearance = clear
+        UINavigationBar.appearance().scrollEdgeAppearance = clear
+        UINavigationBar.appearance().compactAppearance = clear
+        UINavigationBar.appearance().isTranslucent = true
         loadAppsIntoSharedModel()
 
         // 上游 LCTabView 还声明了 `@EnvironmentObject var sceneDelegate: SceneDelegate`

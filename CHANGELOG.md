@@ -1,3 +1,9 @@
+## [0.3.874] - 2026-11-13
+
+### 去除顶部白色分层条（彻底）
+- LC 承载时把 `UINavigationBar` 外观改为**全透明**（standard/scrollEdge/compact + 阴影清除 +
+  isTranslucent），只保留按钮，不再有白色/材质底条；配合容器的 `.ignoresSafeArea(top)`.
+
 ## [0.3.873] - 2026-11-13
 
 ### worse_query 补齐目录枚举（对照上游项目源码）
