@@ -7,6 +7,8 @@ import UIKit
 /// 所以这里用 `NSClassFromString("TDLogPanelHost")` 反射取主 App 提供的控制器；
 /// 取不到就显示明确说明，不留空白页.
 struct TDLogPanelSheet: View {
+    @Environment(\.dismiss) private var dismiss
+
     var body: some View {
         Group {
             if let controller = Self.makeController() {
@@ -20,6 +22,10 @@ struct TDLogPanelSheet: View {
             }
         }
         .ignoresSafeArea(edges: .bottom)
+        .onReceive(NotificationCenter.default.publisher(
+            for: Notification.Name("TDLogPanelCloseRequested"))) { _ in
+            dismiss()
+        }
     }
 
     private static func makeController() -> UIViewController? {

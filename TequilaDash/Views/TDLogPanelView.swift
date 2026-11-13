@@ -12,7 +12,6 @@ import UIKit
 @MainActor
 struct TDLogPanelView: View {
     @ObservedObject private var ssh = SSHServerService.shared
-    @Environment(\.dismiss) private var dismiss
     @State private var logText = ""
 
     private var sshCommand: String {
@@ -75,7 +74,10 @@ struct TDLogPanelView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .confirmationAction) {
-                Button("关闭") { dismiss() }
+                Button("关闭") {
+                    NotificationCenter.default.post(
+                        name: Notification.Name("TDLogPanelCloseRequested"), object: nil)
+                }
             }
         }
         .task {
