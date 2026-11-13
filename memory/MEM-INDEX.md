@@ -205,3 +205,10 @@
 - 正确做法：只保留一套 UI；HostGuestEntry 直接读访客 `LCAppInfo.plist` 的 TDNetBlock；hook 覆盖 connect/sendto/sendmsg/getaddrinfo/**connectx**，并打印一次安装/拦截日志
 - 已知边界：WebKit 网络进程（com.apple.WebKit.Networking）是系统进程，guest 内 hook 管不到
 - 关联规范：R-032
+
+## MEM-025 LC 设置页接宿主能力用「宿主提供控制器 + 反射」（2026-11-13）
+
+- 需求：沙盒容器（LC 原生 SwiftUI，在框架 target）里加「日志」入口，面板要能读主 App 的 LoginLogger、启停 SSH
+- 约束：框架不能 import 主 App 类型
+- 做法：主 App 提供 `@objc(TDLogPanelHost).makeViewController()`；框架侧 `NSClassFromString` + `perform` 取 VC，用 UIViewControllerRepresentable 放进 sheet
+- 坑：面板跑在独立 UIHostingController 里，`@Environment(\.dismiss)` 拿不到外层 SwiftUI sheet → 关闭按钮改发 `NotificationCenter` 通知，由 sheet 容器 `dismiss()`

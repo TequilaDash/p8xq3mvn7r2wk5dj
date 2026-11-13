@@ -97,6 +97,7 @@ struct TDLogPanelView: View {
 
 /// 供 LiveContainerSwiftUI 框架用 `NSClassFromString("TDLogPanelHost")` 反射调用.
 @objc(TDLogPanelHost)
+@MainActor
 public final class TDLogPanelHost: NSObject {
     @objc public static func makeViewController() -> UIViewController {
         UIHostingController(rootView: NavigationStack { TDLogPanelView() })
