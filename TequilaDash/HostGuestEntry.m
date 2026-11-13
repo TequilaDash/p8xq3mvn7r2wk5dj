@@ -16,6 +16,7 @@
 //
 
 #import <Foundation/Foundation.h>
+#import "Engine/TDConsoleLog.h"
 #import <UIKit/UIKit.h>
 
 extern int LiveContainerMain(int argc, char *argv[]);
@@ -75,6 +76,7 @@ void TDInitLCGlobals(void) {
 }
 
 int main(int argc, char *argv[]) {
+    TDConsoleLogInstall();
     @autoreleasepool {
         // 本仓适配 (v0.3.834): 所有路径（宿主/访客/失败回落）都需要 LC 全局初始化.
         // 访客路径 LiveContainerMain 里会再赋一遍（幂等），这里先保证宿主路径非 nil.
@@ -84,17 +86,29 @@ int main(int argc, char *argv[]) {
         NSString *selected = [defaults stringForKey:@"selected"];
 
         if (selected) {
-            // 防循环守卫: 15 秒内第二次尝试进访客 = 上一次崩了, 清键回壳不变砖.
+            // 防循环守卫（改：窗口内计数，不清键）.
+            // 旧逻辑「15 秒内第二次启动就回宿主 UI」会把**访客自己 abort**（例如全能签
+            // 检测到注入后自退）后的快速重试误判成崩溃循环，表现为「第二次启动进主界面」。
+            // 现在同一 30 秒窗口内最多连试 4 次，超过才回壳；前几次仍然正常进访客。
             double now = NSProcessInfo.processInfo.systemUptime;
-            double last = [defaults doubleForKey:@"TDGuestBootAt"];
-            if (last > 0 && (now - last) < 15.0) {
+            double windowStart = [defaults doubleForKey:@"TDGuestBootWindowStart"];
+            NSInteger attempts = [defaults integerForKey:@"TDGuestBootAttempts"];
+            if (windowStart <= 0 || (now - windowStart) > 30.0) {
+                windowStart = now;
+                attempts = 0;
+            }
+            attempts += 1;
+            [defaults setDouble:windowStart forKey:@"TDGuestBootWindowStart"];
+            [defaults setInteger:attempts forKey:@"TDGuestBootAttempts"];
+            if (attempts > 4) {
+                NSLog(@"[TDHost] 30 秒内连续 %ld 次启动访客均失败，回宿主 UI", (long)attempts);
                 [defaults removeObjectForKey:@"selected"];
                 [defaults removeObjectForKey:@"selectedContainer"];
-                [defaults removeObjectForKey:@"TDGuestBootAt"];
+                [defaults removeObjectForKey:@"TDGuestBootAttempts"];
+                [defaults removeObjectForKey:@"TDGuestBootWindowStart"];
                 TDHostBoot();
                 return 0;
             }
-            [defaults setDouble:now forKey:@"TDGuestBootAt"];
 
             // 联网管理开关 (联网管理页写入, 键随容器)
             // 联网管理 (M22): 只看 LCAppModel.runApp 写入的 TDGuestNetBlock（按 App 勾选）.
