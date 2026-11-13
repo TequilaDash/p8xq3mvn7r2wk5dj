@@ -35,6 +35,10 @@ static void td_log_write(const char *cstr, unsigned len, BOOL withTime) {
             fprintf(gFile, "%02d:%02d:%02d ", tmv.tm_hour, tmv.tm_min, tmv.tm_sec);
         }
         fwrite(cstr, 1, len, gFile);
+        // NSLog 的 C 回调不保证带换行：不补的话整个文件是一行，SSH `cat` 里无法按行过滤.
+        if (len == 0 || cstr[len - 1] != '\n') {
+            fputc('\n', gFile);
+        }
         fflush(gFile);
     }
     pthread_mutex_unlock(&gLock);
@@ -52,6 +56,16 @@ void TDConsoleLogInstall(void) {
     NSString *docs = [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES) firstObject];
     if (docs) {
         snprintf(gPath, sizeof(gPath), "%s/td-console.log", docs.fileSystemRepresentation);
+    }
+
+    // 安装时写一条分隔标记：旧版本可能把整份文件写成一行，标记能把历史与本次运行分开.
+    if (gPath[0]) {
+        FILE *f = fopen(gPath, "a+");
+        if (f) {
+            fprintf(f, "\n==== TDConsoleLog install ====\n");
+            fflush(f);
+            fclose(f);
+        }
     }
 
     typedef void (*SetLogFn)(void (*)(const char *, unsigned, BOOL));

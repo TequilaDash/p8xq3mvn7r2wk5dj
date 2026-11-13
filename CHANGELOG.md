@@ -1,3 +1,11 @@
+## [0.3.864] - 2026-11-13
+
+### 修复
+- `td-console.log` 之前整份文件是一行：NSLog 的 C 回调不保证带换行，落盘时未补 `\n`。
+  现在每条日志都单独一行，SSH `cat` / grep 可按行过滤（多任务诊断依赖这一点）。
+- 新增 `Resources/Scripts/td_device_logs.py`：一键通过设备 SSH 读取
+  `td-console.log` / `exploit.log` / `logs` / 任意命令（环境变量给凭据）.
+
 ## [0.3.863] - 2026-11-13
 
 ### 新增
