@@ -136,3 +136,13 @@
 - 正确做法：`TDInitLCGlobals()` 里也装宿主自己的 handler（写 standard + app group 双份 + uptime）
 - 检测方法：`grep -c TDUncaughtExceptionHandler 宿主入口文件` ≥ 2；多任务崩溃后重启 App 必见弹窗
 - 关联规范：R-018
+
+## MEM-017 巢中巢：访客自身是另一个 LiveContainer（2026-11-13）
+
+- 现象：`hook_createDirectoryAtPath` 无限递归 depth 10678，SIGSEGV at stack guard
+- 我的错误动作：先判成「iOS 26 Swift 桥单 hook 自递归」，只加 @available 跳过
+- 根因：读 .ips 的 `imageIndex` 才知道递归帧全在访客自带的 `LiveContainerShared.framework`（`app.reiko.zcontainer.app`），本仓仅 1 帧 → 两套 LC 同进程，各 swizzle 一次同一 selector，两套 category 同名方法互当「原实现」→ 成环
+- 原版为何不炸：SideStore 安装时 `if(!isSideStore)` 整块跳过 `NSFMGuestHooksInit`，本仓非 SideStore 必装
+- 正确做法：init 时捕获真实 IMP，hook 内直接调 IMP（不用 `[self hook_...]`）；iOS 26+ 另加不装该 swizzle
+- 检测方法：`.ips` 递归帧逐个查 `imageIndex` 对应 `usedImages[i].path`，看是不是访客 bundle
+- 关联规范：R-024

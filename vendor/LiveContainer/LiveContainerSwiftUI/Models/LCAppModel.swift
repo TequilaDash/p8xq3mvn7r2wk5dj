@@ -51,6 +51,13 @@ class LCAppModel: ObservableObject, Hashable {
             appInfo.doSymlinkInbox = uiDoSymlinkInbox
         }
     }
+    // 本仓适配 (M18): 巢中巢兼容开关（实验性）
+    @Published var uiNestedLCCompat : Bool {
+        didSet {
+            appInfo.nestedLCCompat = uiNestedLCCompat
+        }
+    }
+
     @Published var uiUseLCBundleId : Bool {
         didSet {
             appInfo.doUseLCBundleId = uiUseLCBundleId
@@ -191,6 +198,7 @@ class LCAppModel: ObservableObject, Hashable {
         self.uiOrientationLock = appInfo.orientationLock
         self.uiIsMultitaskModeSpecificed = appInfo.multitaskSpecified
         self.uiUseLCBundleId = appInfo.doUseLCBundleId
+        self.uiNestedLCCompat = appInfo.nestedLCCompat
         self.uiFixFilePickerNew = appInfo.fixFilePickerNew
         self.uiFixLocalNotification = appInfo.fixLocalNotification
         self.uiFixBackgroundTaskIdentifiers = appInfo.fixBackgroundTaskIdentifiers
@@ -570,6 +578,7 @@ class LCAppModel: ObservableObject, Hashable {
         toAppInfo.hideLiveContainer = fromApp.appInfo.hideLiveContainer
         toAppInfo.dontLoadTweakLoader = fromApp.appInfo.dontLoadTweakLoader
         toAppInfo.doUseLCBundleId = fromApp.appInfo.doUseLCBundleId
+        toAppInfo.nestedLCCompat = fromApp.appInfo.nestedLCCompat
         toAppInfo.fixFilePickerNew = fromApp.appInfo.fixFilePickerNew
         toAppInfo.fixLocalNotification = fromApp.appInfo.fixLocalNotification
         toAppInfo.fixBackgroundTaskIdentifiers = fromApp.appInfo.fixBackgroundTaskIdentifiers

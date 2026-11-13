@@ -38,6 +38,10 @@ typedef NS_ENUM(NSInteger, MultitaskSpecified){
 @property bool fixLocalNotification;
 @property bool fixBackgroundTaskIdentifiers;
 @property bool doUseLCBundleId;
+// 本仓适配 (M18, 2026-11-13): 巢中巢兼容开关（实验性）。
+// 访客 App 自身是另一个 LiveContainer 时，两套 NSFileManager hooks 会互相成环；
+// 打开后跳过本仓的 guest hooks，交给访客自带的那套处理。
+@property bool nestedLCCompat;
 @property NSString* selectedLanguage;
 @property NSString* dataUUID;
 @property NSString* tweakFolder;

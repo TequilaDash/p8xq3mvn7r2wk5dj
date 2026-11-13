@@ -344,6 +344,16 @@ struct LCAppSettingsView: View {
                 Text("lc.appSettings.useLCBundleIdDesc".loc)
             }
             
+            Section {
+                Toggle(isOn: $model.uiNestedLCCompat) {
+                    Text("lc.appSettings.nestedLCCompat".loc)
+                }
+            } header: {
+                Text("lc.appSettings.experimental".loc)
+            } footer: {
+                Text("lc.appSettings.nestedLCCompatDesc".loc)
+            }
+            
             if SharedModel.isPhone {
                 Section {
                     Picker(selection: $model.uiOrientationLock) {

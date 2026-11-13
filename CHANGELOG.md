@@ -1,3 +1,25 @@
+## [0.3.848] - 2026-11-13
+
+### 修复（`132227.ips`，0.3.847 上的新崩溃）
+- `hook_containerURLForSecurityApplicationGroupIdentifier` 首个分支直接
+  `[NSURL fileURLWithPath: NSUserDefaults.lcAppGroupPath]`；巢中巢场景下访客的
+  `LCSharedUtils.appGroupID` 会调本 hook，而本进程没有 app group → `lcAppGroupPath=nil`
+  → `+[NSURL fileURLWithPath:nil]` 抛 NSInvalidArgumentException → SIGABRT。
+- 修（M17）：判空，nil 时落到原有兜底分支。
+
+### 新增（实验性开关，owner 要求）
+- App 设置 →「实验性 / Experimental」新增 **巢中巢兼容**（`LCNestedLCCompat`，默认关）。
+- 开启后访客进程跳过本仓 `NSFMGuestHooksInit`，交给访客自带的 LiveContainer 那套 hooks，
+  避免两套 `NSFileManager` hooks 互相成环。关着但检测到访客自带 LiveContainer 时会打日志提示。
+- 适配点：`LCAppInfo.h/.m`（属性）、`LCAppModel.swift`（`uiNestedLCCompat`）、
+  `LCAppSettingsView.swift`（开关）、`LCBootstrap.m`（安装点分流）。全部登记 MIRROR-DELTAS（M18）。
+
+### 守卫修复
+- `vendor/LiveContainer/.upstream-manifest.json` 曾被误用「当前文件哈希」重建，导致
+  `lc_mirror_delta_guard.py` 恒判 0 差异（失效）。已改为按上游 9d6ea09b05 原始树
+  （zip + fishhook/litehook 子模块）重建：283 文件 / 13 处真实差异 / 13 条登记 / 0 问题。
+- 顺带把 `.github/workflows/build.yml` 恢复成上游版本（此前漏同步，属真实漂移）。
+
 ## [0.3.847] - 2026-11-13
 
 ### 修复（递归的真实成因：巢中巢 LC）

@@ -1500,6 +1500,28 @@
         }
       }
     },
+    "lc.appSettings.experimental": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Experimental"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "实验性"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "實驗性"
+          }
+        }
+      }
+    },
     "lc.appSettings.fixBackgroundTaskIdentifiers": {
       "extractionState": "manual",
       "localizations": {
@@ -1958,6 +1980,50 @@
           "stringUnit": {
             "state": "translated",
             "value": "鎖定 App"
+          }
+        }
+      }
+    },
+    "lc.appSettings.nestedLCCompat": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nested container compatibility"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "巢中巢兼容（访客本身是容器应用）"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "巢中巢相容（訪客本身是容器 App）"
+          }
+        }
+      }
+    },
+    "lc.appSettings.nestedLCCompatDesc": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "For guest apps that are themselves container apps (e.g. another LiveContainer build). Skips this app's file hooks so the two hook sets do not recurse."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "为「访客本身也是容器」的应用准备（例如另一个 LiveContainer 版本）。开启后本仓跳过访客进程的文件 hooks，避免两套 hooks 互相递归。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "為「訪客本身也是容器」的 App 準備（例如另一個 LiveContainer 版本）。開啟後本倉跳過訪客程序的檔案 hooks，避免兩套 hooks 互相遞迴。"
           }
         }
       }

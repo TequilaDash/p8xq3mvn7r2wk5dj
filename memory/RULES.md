@@ -104,3 +104,15 @@
 - 动作：先用 `if (@available(iOS 26.0, *))` 跳过，或在 hook 内做 thread-local 重入保护；已知 Swift 桥会回调 ObjC selector 造成互相递归的 selector 清单要记录在 MIRROR-DELTAS
 - 验证：真机上该功能不崩；`.ips` 无 recursionInfoArray
 - 违反记录：MEM-015
+
+## R-024 判断崩溃归属必须逐帧查 imageIndex → usedImages[i].path
+- 条件：分析 .ips 的 threads[].frames
+- 动作：对关键帧取 `imageIndex`，映射到 `usedImages[imageIndex].path`，区分「本仓二进制 / 访客 bundle / 系统库」；只看 symbol 名会误判归属
+- 验证：结论里每个关键帧都标注了所属 image 路径
+- 违反记录：MEM-017
+
+## R-025 swizzle 后不得用 `[self hook_xxx]` 作为「原实现」
+- 条件：写/移植 method swizzling hook
+- 动作：init 时用 `method_getImplementation` 保存真实 IMP，hook 内用函数指针调用；`[self hook_...]` 依赖交换链，第三方再交换一次即成环
+- 验证：同进程存在第二份同类 hook 时仍不递归（.ips 无 recursionInfoArray）
+- 违反记录：MEM-017

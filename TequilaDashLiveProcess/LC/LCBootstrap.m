@@ -582,9 +582,23 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
     if (!isLiveProcess && [guestAppInfo[@"helperProcessesSupport"] boolValue]) {
         NSExtensionGuestHooksInit(appBundle.bundleURL, [NSURL fileURLWithPath:newHomePath isDirectory:YES]);
     }
+    // 本仓适配 (M18, 2026-11-13): 巢中巢兼容（实验性开关，默认关）。
+    // 访客 App 自身是另一个 LiveContainer 时，两套 NSFileManager hooks 会互相成环。
+    // 开启后跳过本仓的 NSFMGuestHooksInit，交给访客自带的那套（它会在自己 main 里装）。
+    BOOL nestedLCCompat = [guestAppInfo[@"LCNestedLCCompat"] boolValue];
+    BOOL guestIsContainerApp =
+        [[NSFileManager defaultManager] fileExistsAtPath:[appBundle.bundleURL.path stringByAppendingPathComponent:@"Frameworks/LiveContainerShared.framework"]] ||
+        [[NSFileManager defaultManager] fileExistsAtPath:[appBundle.bundleURL.path stringByAppendingPathComponent:@"LiveContainer"]];
+    if (guestIsContainerApp && !nestedLCCompat) {
+        NSLog(@"[LC] 检测到访客自带 LiveContainer；若启动异常，请在 App 设置里开启「巢中巢兼容」");
+    }
     if(!isSideStore) {
         SecItemGuestHooksInit();
-        NSFMGuestHooksInit();
+        if (nestedLCCompat) {
+            NSLog(@"[LC] 巢中巢兼容已开启，跳过 NSFMGuestHooksInit");
+        } else {
+            NSFMGuestHooksInit();
+        }
         initDead10ccFix();
     }
     if(isLiveProcess) {

@@ -39,6 +39,8 @@
 | # | 文件 | 改动 | 原因 | 引入版本 | 真机验证 |
 |---|---|---|---|---|---|
 | M4r | `MultitaskSupport/AppSceneViewController.m` | :86-104（bookmarks 三处 addObject） | `bookmarkDataWithOptions` 返回值判空后再 addObject | 上游 4 处 addObject 只有 containerBookmark 一处判空，另 3 处 nil 即 `insertObject:atIndex:` 崩溃（owner 2026-11-13 五个 .ips 中四个都是它）。合入 9d6ea09b05 时被误删，现已重放 | v0.3.846 | ⏳ 待真机 |
+| M17 | `LiveContainer/Tweaks/NSFileManager+GuestHooks.m` | `hook_containerURLForSecurityApplicationGroupIdentifier` 第一个分支 | `lcAppGroupPath` 判空，nil 时不再调 `fileURLWithPath:` | 巢中巢下访客 LCSharedUtils 调用本 hook，而本进程无 app group entitlement → `lcAppGroupPath` nil → `+[NSURL fileURLWithPath:nil]` 抛 NSInvalidArgumentException → SIGABRT（owner 2026-11-13 132227.ips） | v0.3.848 | ⏳ 待真机 |
+
 | M16 | `LiveContainer/Tweaks/NSFileManager+GuestHooks.m` | 全局 IMP 变量 + `NSFMGuestHooksInit` + `hook_createDirectoryAtPath` 体内 | ①hook 内直接调用 init 时保存的真实 IMP，而非 `[self hook_...]`；②iOS 26+ 不装该 swizzle | 巢中巢：访客自身若为另一个 LiveContainer，会二次交换同一 selector，两套 category 同名方法互当「原实现」→ 无限递归（.ips depth=10678，递归帧 imageIndex 全是访客 LiveContainerShared，本仓仅 1 帧）。持真实 IMP 使链条必然终止；iOS 26+ Swift 桥另有单 hook 自递归风险 | v0.3.846 | ⏳ 待真机 |
 | M13 | `LiveContainer/LCBootstrap.m` | `exceptionHandler`（:740-760） | 崩溃时**双写** error 到 lcUserDefaults + lcSharedDefaults（lastGuestLaunchError/Uptime），扩展上下文照旧 | 上游只在 `!isLiveProcess` 时写 error 键；`isLiveProcess` 分支交给 NSExtensionContext，宿主读不到 → owner 实测「闪退后下次启动不弹报错，且有无弹窗毫无规律」 | v0.3.843 | ⏳ 待真机 |
 | M6r | `MultitaskSupport/AppSceneViewController.m` | :64-83 userInfo 字典 | hostUrlScheme/_bundleId/_dataUUID 全部 nil 兜底 | 上游原文 `@{@"hostUrlScheme": lcAppUrlScheme, ...}` 任一 nil 即 insert-nil 崩溃；宿主 TDHostBoot 不经过 LiveContainerMain 时 lcAppUrlScheme=nil（owner 2026-11-12 .ips 实证，多任务闪退） | v0.3.843 | ⏳ 待真机 |
@@ -74,3 +76,29 @@
 
 以下都在 `TequilaDashLCUIAdapters/`、`TequilaDashLiveProcess/LC/`、`project.yml`，
 **不属于镜像改动**，详见 `ADAPTERS.md` 第 1-19 条。
+
+## 逐文件差异登记（机器可读，`lc_mirror_delta_guard.py` 按此核对）
+
+> 只登记与上游 `9d6ea09b05` 存在字节差异的文件；**路径必须与 manifest 中的相对路径完全一致**。
+> 合并上游后若某行变成 WARN「登记过期」，说明该差异已消失，应删除该行。
+
+| # | 文件 | 差异编号 | 说明 | 引入版本 |
+|---|---|---|---|---|
+| 1 | `LiveContainer/LCBootstrap.m` | M13 + M18 | 崩溃双写 error；巢中巢兼容开关跳过 `NSFMGuestHooksInit` | v0.3.848 |
+| 2 | `LiveContainer/LCSharedUtils.m` | M7 | `lcMainBundle` nil 兜底 | v0.3.833 |
+| 3 | `LiveContainer/Tweaks/NSFileManager+GuestHooks.m` | M16 + M17 | ①保存真实 IMP 防两套 hook 成环 ②iOS 26+ 不装 createDirectory swizzle ③`lcAppGroupPath` 判空 | v0.3.848 |
+| 4 | `LiveContainer/Tweaks/Tweaks.h` | C7 | `NetBlockGuestHooksInit` 声明（宿主联网拦截，上游无） | v0.3.840 |
+| 5 | `LiveContainerSwiftUI/Models/LCAppInfo.h` | M18 | `nestedLCCompat` 属性 | v0.3.848 |
+| 6 | `LiveContainerSwiftUI/Models/LCAppInfo.m` | M18 | `nestedLCCompat` getter/setter（键 `LCNestedLCCompat`） | v0.3.848 |
+| 7 | `LiveContainerSwiftUI/Models/LCAppModel.swift` | M18 | `uiNestedLCCompat` 发布属性 + reload/copy 同步 | v0.3.848 |
+| 8 | `LiveContainerSwiftUI/Utilities/LCUtilsExtensions.swift` | M9 | `signTweaks` 移除签名预校验 | v0.3.835 |
+| 9 | `LiveContainerSwiftUI/Views/AppList/AppSettings/LCAppSettingsView.swift` | M18 | 新增「实验性」段 + 巢中巢兼容开关 | v0.3.848 |
+| 10 | `LiveContainerSwiftUI/Views/AppList/LCAppListView.swift` | M1 | `SearchContext.shared` | v0.3.809 |
+| 11 | `LiveContainerSwiftUI/Views/LCAltStoreSourcesView.swift` | M1c | 同 M1 | v0.3.809 |
+| 12 | `LiveContainerSwiftUI/Views/Settings/LCSettingsView.swift` | M5 | 证书失败详情 | v0.3.832 |
+| 13 | `MultitaskSupport/AppSceneViewController.m` | M4r + M6r | bookmarks 判空 + userInfo 兜底 | v0.3.846 |
+
+### 本仓新增文件（上游无，不算差异）
+- `LiveContainer/Tweaks/NSExtension+GuestHooks.m`
+- `TweakLoader/BackgroundTasks.m`
+

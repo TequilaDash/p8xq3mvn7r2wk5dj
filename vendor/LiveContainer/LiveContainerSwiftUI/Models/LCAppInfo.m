@@ -153,6 +153,16 @@
     [self save];
 }
 
+// 本仓适配 (M18): 巢中巢兼容开关（实验性），落盘到 LCAppInfo.plist
+- (bool)nestedLCCompat {
+    return [_info[@"LCNestedLCCompat"] boolValue];
+}
+
+- (void)setNestedLCCompat:(bool)nestedLCCompat {
+    _info[@"LCNestedLCCompat"] = @(nestedLCCompat);
+    [self save];
+}
+
 - (NSString*)selectedLanguage {
     return _info[@"LCSelectedLanguage"];
 }

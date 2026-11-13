@@ -64,7 +64,15 @@ void NSFMGuestHooksInit(void) {
 
 - (nullable NSURL *)hook_containerURLForSecurityApplicationGroupIdentifier:(NSString *)groupIdentifier {
     if([groupIdentifier isEqualToString:[NSClassFromString(@"LCSharedUtils") appGroupID]]) {
-        return [NSURL fileURLWithPath: NSUserDefaults.lcAppGroupPath];
+        // 本仓适配 (M17, 2026-11-13): lcAppGroupPath 可能为 nil。
+        // 巢中巢场景（访客自带 LiveContainer）下访客的 LCSharedUtils 会调用本 hook，
+        // 而本进程没有 app group entitlement → lcAppGroupPath=nil →
+        // +[NSURL fileURLWithPath:nil] 抛 NSInvalidArgumentException → SIGABRT
+        // （owner 2026-11-13 132227.ips 实证，崩溃点在 fileURLWithPath: +32）。
+        NSString *appGroupPath = NSUserDefaults.lcAppGroupPath;
+        if (appGroupPath.length > 0) {
+            return [NSURL fileURLWithPath: appGroupPath];
+        }
     }
     NSURL *result;
     if(isolateAppGroup) {
