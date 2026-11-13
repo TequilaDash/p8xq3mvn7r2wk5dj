@@ -1,3 +1,12 @@
+## [0.3.875] - 2026-11-14
+
+### 修复沙盒容器「App 设置」一进即闪退
+- 真因（0.3.874 `.ips` 实证）：`LCAppSettingsView` 的 `Menu { Picker }` 内容闭包在宿主 UIKit 导航承载下
+  没有继承 `EnvironmentObject`，读取 `sharedModel.tweakFolderNames` 触发
+  `EnvironmentObject.error()` 断言（SIGTRAP）。
+- 在 `LCAppBannerViewController.openSettings()` 处显式注入
+  `DataManager.shared.model` 与 `LCAppSortManager.shared`，不再依赖继承链。
+
 ## [0.3.874] - 2026-11-13
 
 ### 去除顶部白色分层条（彻底）
