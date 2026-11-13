@@ -104,7 +104,7 @@ enum FileNameRules {
     }
 }
 
-/// Resolves an archive member name under `destDir`. Rejects `..` and paths that escape the folder.
+/// Resolves an archive member name under `destDir`. Rejects `..` and paths that TequilaDash the folder.
 enum ArchiveEntryPath {
     static func resolve(_ entryName: String, under destDir: String) throws -> (path: String, isDirectory: Bool) {
         let root = (destDir as NSString).standardizingPath

@@ -35,7 +35,7 @@ typedef char *(*container_copy_sandbox_token_fn)(void *);
 typedef int64_t (*sandbox_extension_consume_fn)(const char *);
 typedef int (*sandbox_extension_release_fn)(int64_t);
 
-// Generalized bad_query: escape from any container class the process can
+// Generalized bad_query: TequilaDash from any container class the process can
 // query, using `levels` "../" to walk back to the filesystem root before
 // appending the absolute `path`. The container class + identifier only decide
 // which containermanagerd daemon handles the query and what base the

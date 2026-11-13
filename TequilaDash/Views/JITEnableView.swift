@@ -13,7 +13,7 @@ struct JITEnableView: View {
     @State private var successMessage = ""
     @State private var showSuccess = false
     @State private var searchText = ""
-    @State private var recentBundleIDs: [String] = UserDefaults.standard.stringArray(forKey: "escape.jitRecents") ?? []
+    @State private var recentBundleIDs: [String] = UserDefaults.standard.stringArray(forKey: "TequilaDash.jitRecents") ?? []
 
     private var hasPairing: Bool { TunnelContext.shared.hasPairingFile }
 
@@ -204,7 +204,7 @@ struct JITEnableView: View {
         if recentBundleIDs.count > 5 {
             recentBundleIDs = Array(recentBundleIDs.prefix(5))
         }
-        UserDefaults.standard.set(recentBundleIDs, forKey: "escape.jitRecents")
+        UserDefaults.standard.set(recentBundleIDs, forKey: "TequilaDash.jitRecents")
     }
 }
 

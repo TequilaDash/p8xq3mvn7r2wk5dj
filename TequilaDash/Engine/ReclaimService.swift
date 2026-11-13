@@ -177,7 +177,7 @@ final class ReclaimService {
     static var sessionCategories: [ReclaimCategory] { categories.filter { $0.risk == .session } }
     static var keptCategories: [ReclaimCategory] { categories.filter { $0.risk == .kept } }
 
-    private let escape = SandboxEscape()
+    private let TequilaDash = SandboxEscape()
     private let files = FileService()
     private let maxNodes = 20_000
 
@@ -188,7 +188,7 @@ final class ReclaimService {
     /// Tab ranking only needs Safe folders. Skipping Documents/Preferences is much faster.
     func scan(app: InstalledApp, risks: Set<ReclaimRisk>) throws -> [ReclaimBucketStat] {
         let wanted = Self.categories.filter { risks.contains($0.risk) }
-        return try escape.withHandle(for: app.containerPath) { _ in
+        return try TequilaDash.withHandle(for: app.containerPath) { _ in
             wanted.map { category in
                 stat(category: category, container: app.containerPath)
             }
@@ -207,7 +207,7 @@ final class ReclaimService {
         var bytesFreed: Int64 = 0
         var skipped = 0
 
-        try escape.withHandle(for: app.containerPath) { _ in
+        try TequilaDash.withHandle(for: app.containerPath) { _ in
             for category in work {
                 let path = try resolve(category.relativePath, under: app.containerPath)
                 let before = stat(category: category, container: app.containerPath)
@@ -234,7 +234,7 @@ final class ReclaimService {
     @discardableResult
     func resetAppData(app: InstalledApp) throws -> Int {
         var skipped = 0
-        try escape.withHandle(for: app.containerPath) { _ in
+        try TequilaDash.withHandle(for: app.containerPath) { _ in
             for root in BackupService.backupRoots {
                 let path = try resolve(root, under: app.containerPath)
                 if files.isDirectory(at: path) {

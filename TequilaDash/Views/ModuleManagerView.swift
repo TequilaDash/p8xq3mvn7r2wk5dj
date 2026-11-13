@@ -268,7 +268,7 @@ struct ModuleManagerView: View {
             icon: "shippingbox",
             secondaryIcon: nil,
             title: "暂无模块",
-            message: "点击右上角导入 .zip 模块\n（规范 escape.module.v1）"
+            message: "点击右上角导入 .zip 模块\n（规范 TequilaDash.module.v1）"
         )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }

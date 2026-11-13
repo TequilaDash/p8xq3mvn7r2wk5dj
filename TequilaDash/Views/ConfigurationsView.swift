@@ -40,7 +40,7 @@ enum ConfigurationsStore {
     /// 故走的是真实 bad_query，与原版一致；不会误用「容器管理」专用的 LC 扩展.
     /// Swift 6 并发检查：`SandboxEscape` 非 Sendable，但它是无状态工具实例
     /// （`consume` 只做 bad_query syscall，不写实例字段），进程内共享同一实例无风险.
-    nonisolated(unsafe) private static let escape = SandboxEscape()
+    nonisolated(unsafe) private static let TequilaDash = SandboxEscape()
     /// Swift 6 并发检查：`heldHandle` 只在 `ensureAccess()` 首次成功时赋值一次，
     /// 之后进程内只读（`probe()` 只判非 nil）.访问方分别来自主线程（探测/写入）与
     /// 备份队列（`backupZip`）；最坏并发情形是重复 consume 一次扩展，
@@ -50,7 +50,7 @@ enum ConfigurationsStore {
     /// 确保持有配置目录的沙盒扩展（只消费一次，之后进程内一直持有）.
     private static func ensureAccess() throws {
         if heldHandle != nil { return }
-        heldHandle = try escape.consume(path: ConfigFSURL.configProfiles.path, isGroup: true)
+        heldHandle = try TequilaDash.consume(path: ConfigFSURL.configProfiles.path, isGroup: true)
     }
 
     /// 实测写入：在配置目录里写一个临时文件再删除.

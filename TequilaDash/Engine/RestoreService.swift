@@ -28,7 +28,7 @@ enum RestoreEligibility {
 /// Restores a backup archive into an installed app's Data container.
 final class RestoreService {
 
-    private let escape = SandboxEscape()
+    private let TequilaDash = SandboxEscape()
     private let files = FileService()
 
     // Safety limits live in `BackupLimits` and are resolved per call. The old
@@ -52,7 +52,7 @@ final class RestoreService {
             )
             var warnings: [String] = []
             do {
-                try escape.withHandle(for: app.containerPath) { _ in
+                try TequilaDash.withHandle(for: app.containerPath) { _ in
                     if !files.isDirectory(at: app.containerPath) {
                         throw BackupError.appNotInstalled(
                             "Container path is no longer reachable: \(app.containerPath)"
@@ -156,7 +156,7 @@ final class RestoreService {
         var filesRestored = 0
         var bytesWritten: Int64 = 0
 
-        try escape.withHandle(for: app.containerPath) { _ in
+        try TequilaDash.withHandle(for: app.containerPath) { _ in
             for entry in manifest {
                 if isCancelled() { throw BackupError.cancelled }
                 try validateRelativePath(entry.path)

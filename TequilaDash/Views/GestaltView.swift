@@ -3,7 +3,7 @@
 //  bad_query
 //
 //  MobileGestalt tweaking UI, ported from mond ContentView.
-//  Uses bad_query sandbox escape for file access.
+//  Uses bad_query sandbox TequilaDash for file access.
 //
 
 import SwiftUI

@@ -36,7 +36,7 @@ enum AppDataResetService {
         static let ssh = ["ssh.username", "ssh.password", "ssh.port", "ssh.hasSetPassword", "ssh.debugMode"]
         static let services = [
             "KeepAliveEnabled", "keepAliveAudio", "keepAliveLocation", "ProcessMemoryWatch",
-            "LogLimit.maxFileMB", "LogLimit.maxCatMB", "escape.onlineInstallEndpoint",
+            "LogLimit.maxFileMB", "LogLimit.maxCatMB", "TequilaDash.onlineInstallEndpoint",
             "DeveloperModeStatus", "pip.height", "IPCCInstallHistory",
         ]
         static let modules = [
@@ -47,9 +47,9 @@ enum AppDataResetService {
         static let uiState = [
             "AppStoreDisclaimerAccepted_v1",   
             "HasAcknowledgedLimits", "SignSource.HideAnnouncement", "VersionHistory.Source",
-            "mha_app_group_override", "escape.jitRecents", "escape.favorites", "escape.recents",
-            "escape.locationGuard", "escape.routeLoopEnabled", "escape.speedMultiplier",
-            "escape.bluetoothRole", "domainblocker_presets", "domainblocker_custom",
+            "mha_app_group_override", "TequilaDash.jitRecents", "TequilaDash.favorites", "TequilaDash.recents",
+            "TequilaDash.locationGuard", "TequilaDash.routeLoopEnabled", "TequilaDash.speedMultiplier",
+            "TequilaDash.bluetoothRole", "domainblocker_presets", "domainblocker_custom",
             "dialerThemeContainerPath", "dialerThemeCacheDirectory", "dialerThemeScanVersion",
             "CallRecordingTone.disabled", "CallRecordingTone.silencedWithoutBackup",
             "wallpaperTendies", "wallpaperPBContainerPath", "wallpaperHasShownFirstRunMsg", "mg_devicename",

@@ -1,5 +1,5 @@
 {
-  "spec": "escape.module.v1",
+  "spec": "TequilaDash.module.v1",
   "id": "com.tequila.locache",
   "name": "定位缓存清理",
   "icon": "location.slash.fill",

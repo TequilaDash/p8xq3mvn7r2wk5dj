@@ -152,7 +152,7 @@ final class FilePropertiesViewModel: ObservableObject {
     @Published var isExecutable = false
     @Published var symlinkDestination: String?
 
-    private let escape = SandboxEscape()
+    private let TequilaDash = SandboxEscape()
     private let files = FileService()
 
     func load(rootPath: String, item: FileItem) {
@@ -163,7 +163,7 @@ final class FilePropertiesViewModel: ObservableObject {
         DispatchQueue.global(qos: .utility).async {
             do {
                 // 一次扩展覆盖全部读取：属性、符号链接目标、文件内容（算哈希）.
-                let outcome = try self.escape.withHandle(for: rootPath) { _ -> FileAttributesSnapshot in
+                let outcome = try self.TequilaDash.withHandle(for: rootPath) { _ -> FileAttributesSnapshot in
                     let attrs = (try? self.files.attributes(at: item.path)) ?? [:]
                     let destination = item.kind == .symlink
                         ? try? FileManager.default.destinationOfSymbolicLink(atPath: item.path)

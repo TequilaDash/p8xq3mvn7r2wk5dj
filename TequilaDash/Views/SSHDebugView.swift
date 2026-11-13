@@ -4,7 +4,7 @@
 //
 //  SSH 无线调试页（更多 → SSH 调试）：
 //  展示连接命令/凭据、启停服务、重置密码.
-//  电脑侧: ssh escape@<IP> -p 2222，登录后输入 help 查看内置诊断命令.
+//  电脑侧: ssh TequilaDash@<IP> -p 2222，登录后输入 help 查看内置诊断命令.
 //
 
 import SwiftUI

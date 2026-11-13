@@ -142,7 +142,7 @@ final class FileViewerViewModel: ObservableObject {
     private var item: FileItem?
     /// 读进来的完整文件内容.plist 结构化编辑器直接复用它，避免二次读盘.
     private(set) var originalData = Data()
-    private let escape = SandboxEscape()
+    private let TequilaDash = SandboxEscape()
     private let files = FileService()
 
     var canSave: Bool {
@@ -156,7 +156,7 @@ final class FileViewerViewModel: ObservableObject {
         errorMessage = nil
         DispatchQueue.global(qos: .userInitiated).async {
             do {
-                let data = try self.escape.withHandle(for: rootPath) { _ in
+                let data = try self.TequilaDash.withHandle(for: rootPath) { _ in
                     try self.files.readFile(at: item.path)
                 }
                 let kind = FileContentKind.classify(name: item.name, isDirectory: false)
@@ -215,7 +215,7 @@ final class FileViewerViewModel: ObservableObject {
         let rootPath = self.rootPath
         DispatchQueue.global(qos: .userInitiated).async {
             do {
-                try self.escape.withHandle(for: rootPath) { _ in
+                try self.TequilaDash.withHandle(for: rootPath) { _ in
                     try self.files.writeFile(data: payload, to: item.path)
                 }
                 DispatchQueue.main.async {

@@ -211,7 +211,7 @@ static void LCConnectGuestContext(LCGuestExtensionContextState *state, Class con
 - (NSExtensionItem *)prepareRequest:(NSArray *)items listenerEndpoint:(NSXPCListenerEndpoint *)endpoint contextState:(LCGuestExtensionContextState **)stateOut error:(NSError **)errorOut {
     NSError *error = nil;
     // Bundle identifiers are metadata from an imported app. Encode them as one
-    // path component so a malformed identifier cannot escape the subcontainer.
+    // path component so a malformed identifier cannot TequilaDash the subcontainer.
     NSString *component = [self.bundle.bundleIdentifier stringByAddingPercentEncodingWithAllowedCharacters:NSCharacterSet.alphanumericCharacterSet];
     if (component.length == 0) {
         if (errorOut) *errorOut = LCGuestExtensionError(@"The extension has no bundle identifier");

@@ -2,7 +2,7 @@
 //  BQMobileGestalt.swift
 //  bad_query
 //
-//  MobileGestalt.plist tweaking engine built on the bad_query sandbox escape.
+//  MobileGestalt.plist tweaking engine built on the bad_query sandbox TequilaDash.
 //  Ported from mond's ContentView logic, using bad_query for sandbox access.
 //
 

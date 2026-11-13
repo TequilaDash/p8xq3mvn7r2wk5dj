@@ -413,7 +413,7 @@ final class ContainerInventoryModel: ObservableObject {
     @Published var roots: [ContainerRootStat] = []
     @Published var isLoading = false
 
-    private let escape = SandboxEscape()
+    private let TequilaDash = SandboxEscape()
     private let files = FileService()
 
     func load(app: InstalledApp) {
@@ -421,7 +421,7 @@ final class ContainerInventoryModel: ObservableObject {
         DispatchQueue.global(qos: .utility).async {
             var stats: [ContainerRootStat] = []
             do {
-                try self.escape.withHandle(for: app.containerPath) { _ in
+                try self.TequilaDash.withHandle(for: app.containerPath) { _ in
                     for name in BackupService.backupRoots {
                         let path = (app.containerPath as NSString).appendingPathComponent(name)
                         if !self.files.isDirectory(at: path) {
@@ -463,14 +463,14 @@ final class ContainerAccessModel: ObservableObject {
     @Published var state: State = .unknown
     var isGranted: Bool { if case .granted = state { return true } ; return false }
 
-    private let escape = SandboxEscape()
+    private let TequilaDash = SandboxEscape()
     private let files = FileService()
 
     func check(app: InstalledApp) {
         state = .checking
         DispatchQueue.global(qos: .userInitiated).async {
             do {
-                try self.escape.withHandle(for: app.containerPath) { _ in
+                try self.TequilaDash.withHandle(for: app.containerPath) { _ in
                     if !self.files.isDirectory(at: app.containerPath) {
                         throw FileServiceError.notDirectory(app.containerPath)
                     }

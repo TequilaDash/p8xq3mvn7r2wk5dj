@@ -1,3 +1,18 @@
+## [0.3.851] - 2026-11-13
+
+### 新增漏洞利用
+- **worse_query**（`TequilaDash/Engine/worse_query.{h,m}` + `Exploits/WorseQueryExploit.swift`）：
+  bad_query 在 iOS 27.0 beta 4 被系统修复后返回 `-4`（kernelRejected）。
+  worse_query 改走另一条路：把自有 App Group 的 `Library/Caches` 换成指向目标路径的
+  符号链接，再向 containermanagerd 查询该 App Group（class 7 / part 3），由它按 symlink
+  解析后签发 sandbox extension，最后在本进程 `sandbox_extension_consume`。
+- 已在「更多 → 漏洞利用」登记为新的可勾选玩法（显示名 `worse_query`），
+  并加入默认启用集合；老用户升级时一次性迁移补上该项（`ExploitSettings.worseQueryMigrated`）。
+- 前提：进程必须有已签名的 `group.*` entitlement（`td_signed_app_groups()`），否则返回 -1。
+
+### 守卫
+- `swift_precommit_check.py` 全绿；版本三处同步 0.3.851 / 1140。
+
 ## [0.3.850] - 2026-11-13
 
 ### 修复
@@ -1389,7 +1404,7 @@
   居中圆角卡、旁边露出其它页面的碎片（真机截图实锤：内容只剩 62.6% 宽）。
   改为自绘常驻搜索条挂在顶部安全区，常驻由结构保证，永不触发系统放大态；
   同时删掉为旧方案服务的 `SearchBarInsetProbe` 测高补丁。
-- **SSH 默认用户名 `escape` 改为 `TequilaDash`**，旧安装存过旧值的启动时自动迁移。
+- **SSH 默认用户名 `TequilaDash` 改为 `TequilaDash`**，旧安装存过旧值的启动时自动迁移。
 - **隧道实时就绪判定**：新增后台探测状态机（不通 1.5s 一拍 / 已通 20s 保活 /
   VPN 建立断开立即加拍），11 处建隧道入口统一过 `TunnelGate.guardReady()` ——
   隧道通着零等待放行（去掉安装链每次固定 3s 预检等待），没通就地 0.5s 权威探测后
@@ -7031,7 +7046,7 @@ airlift 默认未启用 ⇒ 模块概览 tab 会显示橙色的「airlift 不可
 
 ```
 - 清单: com.tequila.airlift-poc v1.0.0 (Airlift PoC)
-- 规范: escape.module.v1 ✓
+- 规范: TequilaDash.module.v1 ✓
 ! 导入失败: 模块未声明任何 action
 ```
 
@@ -7176,7 +7191,7 @@ AirliftPocModuleUI.swift:303: error: generic parameter 'Content' could not be in
 
 ## [0.3.481] - 2026-09-20
 
-### 模块系统补上**反向通道**：`escape.host.v1` 宿主能力接口 + 原生 SwiftUI 二级界面
+### 模块系统补上**反向通道**：`TequilaDash.host.v1` 宿主能力接口 + 原生 SwiftUI 二级界面
 
 #### ① 为什么做这个（这是一直缺的一块）
 
@@ -7203,7 +7218,7 @@ AirliftPocModuleUI.swift:303: error: generic parameter 'Content' could not be in
 两条路径都汇到同一个 `call` 分发器：
 
 - **外部 dylib 模块**（C/Go）：宿主加载时把 `EscapeHostAPI` 函数表指针交给模块可选的
-  `escape_module_init`。**刻意不用 dlsym 宿主符号** —— 主可执行文件的符号不保证对
+  `TequilaDash_module_init`。**刻意不用 dlsym 宿主符号** —— 主可执行文件的符号不保证对
   `dlsym(RTLD_DEFAULT)` 可见（本仓库自己就是因为这个才写了
   `uloader_symbols_with_suffix` 去读符号表）。传指针对 dlopen 的 dylib 与静态链接的
   模块都成立。
@@ -7256,7 +7271,7 @@ SwiftUI 视图没法从 zip 里加载，所以 `view` 是**宿主内的注册名
 执行前确认弹窗如实说明风险；执行后逐条列出 steps；失败显示 `error` 原文，
 **不吞、不粉饰**；显示原文件备份路径。
 
-> **为什么监督模式现在才做得成**：现有实现靠 `escape.consume(path: configProfiles,
+> **为什么监督模式现在才做得成**：现有实现靠 `TequilaDash.consume(path: configProfiles,
 > isGroup: true)` 拿 bad_query 沙盒扩展，而 iOS 26.5/26.6 对 `configurationprofiles`
 > SystemGroup **拒绝签发沙盒扩展** ⇒ 写不进去。airlift 能写任意单个文件 ⇒ 正好补这个洞。
 
@@ -7868,7 +7883,7 @@ zip 里 symlink `p0/p1/p2/link` 的内容 = **`../../../` + `target[1:]`**，一
 
 ⇒ 落点改为：
 ```
-/var/mobile/Library/Logs/CrashReporter/airlift-escape-probe-<token>.txt
+/var/mobile/Library/Logs/CrashReporter/airlift-TequilaDash-probe-<token>.txt
 ```
 同时满足：**Media 之外（证明逃逸）+ 可读回（能验证）+ 无害（崩溃日志目录本就可丢弃）**。
 
@@ -7929,7 +7944,7 @@ zip 里 symlink `p0/p1/p2/link` 的内容 = **`../../../` + `target[1:]`**，一
 原来是 `/var/mobile/Library/SpringBoard` —— **真实敏感目录**，一旦攻击生效就会往那里写。改为：
 
 ```
-/var/mobile/Library/Caches/airlift-escape-probe-<token>.txt
+/var/mobile/Library/Caches/airlift-TequilaDash-probe-<token>.txt
 ```
 
 理由（已写进代码注释）：① 在 **AFC 根（`/var/mobile/Media`）之外** ⇒ 足以证明逃逸；
@@ -9067,7 +9082,7 @@ PoC 的 zip 里**故意没有**这种条目 ⇒ 这一点从没被验证过。
 
 1. **不逃逸对照**：`p0/p1/p2/link` → `../../../airlift-stage-target`，
    再放 `p0/p1/p2/link/<follow-probe>`。**只回答「跟不跟随」，不触发 zip-slip 防护。**
-2. **逃逸探针**：`p0/p1/p2/out` → `../../../../`，再放 `p0/p1/p2/out/<escape-probe>`。
+2. **逃逸探针**：`p0/p1/p2/out` → `../../../../`，再放 `p0/p1/p2/out/<TequilaDash-probe>`。
 
 为什么必须有第 1 条：只有第 2 条时，整包若被 zip-slip 防护拒掉，
 就分不清「不跟随」与「整包被拒」—— 两者后续动作完全不同。
@@ -9525,7 +9540,7 @@ PoC 的 zip 里**故意没有**任何「穿过 symlink 的条目」（它的 sym
 |---|---|---|---|
 | 1 | `p0/p1/p2/link/airlift-follow-probe-<t>.txt` | 文件 0600 | `<source>/airlift-stage-target/…`（**不逃逸**，零风险对照） |
 | 2 | `p0/p1/p2/out` | symlink 0777，内容 **`../../../../`** | `/var/mobile/Media/`（**逃逸**，真正的越界写探针） |
-| 3 | `p0/p1/p2/out/airlift-escape-probe-<t>.txt` | 文件 0600 | `/var/mobile/Media/airlift-escape-probe-<t>.txt` |
+| 3 | `p0/p1/p2/out/airlift-TequilaDash-probe-<t>.txt` | 文件 0600 | `/var/mobile/Media/airlift-TequilaDash-probe-<t>.txt` |
 
 **`..` 层数复核过**：`out` 在 `p0/p1/p2/` 下，相对目标从**它所在目录**解析 ⇒
 `p0/p1/p2 → p0/p1 → p0 → <source> → /var/mobile/Media` = **4 个 `..`**。
@@ -9553,12 +9568,12 @@ META-INF/ → META-INF/com.apple.ZipMetadata.plist
 → p0/p1/p2/link/<follow-probe>（零风险对照）
 → payload
 → p0/p1/p2/out（symlink，逃逸）
-→ p0/p1/p2/out/<escape-probe>（越界写探针，必须最后）
+→ p0/p1/p2/out/<TequilaDash-probe>（越界写探针，必须最后）
 ```
 （`out` 与穿透文件必须排最后：反过来的话解压器会先自建一个**真目录** `out/`，逃逸测试就废了。）
 
 **AFC 回读新增**：`<source>/airlift-stage-target/airlift-follow-probe-<t>.txt` 与
-`airlift-escape-probe-<t>.txt` 各查一次（note `size` / `st_ifmt`）；`AfcEntry` 加了 `exists` 字段
+`airlift-TequilaDash-probe-<t>.txt` 各查一次（note `size` / `st_ifmt`）；`AfcEntry` 加了 `exists` 字段
 （原来只有 `ifmt`，分不开「取不到」和「取到但无 ifmt」）。
 
 **残留**：`/var/mobile/Media/` 下那几个探针文件**刻意留着当证据**，事后再用 AFC 删。
@@ -10434,7 +10449,7 @@ v0.3.423 给 `enabled()` 加了缓存 —— 这三项与本条根因是**不同
 `UserDefaults.array` 读 + `Set` 构造 + `filter` + 数组分配。
 
 而 `consume` 是**高频调用点**：
-- `ReclaimService.scan`（空间回收）用 `escape.withHandle(for:)` 包住整个扫描，
+- `ReclaimService.scan`（空间回收）用 `TequilaDash.withHandle(for:)` 包住整个扫描，
   每个容器、每个分类都走一次；
 - `ContainerNameResolver` 每个路径一次；
 - `LiveContainerDiscovery` 每个实例一次；
@@ -10843,7 +10858,7 @@ start_service(com.apple.atc)                               → BrokenPipe
 
 ### 撤销（SSH 调试页：把 v0.3.404 / v0.3.405 关于 SSH 的改动**连根删掉**）
 用户原话：**「我们不用 hostNameReport 这些了吧 我们不改 ssh 啊」**
-- **「连接信息」区回到只显示「局域网 `ssh escape@<IP> -p 2222`」一条**；
+- **「连接信息」区回到只显示「局域网 `ssh TequilaDash@<IP> -p 2222`」一条**；
   删掉「本机（仅设备自身）127.0.0.1」与「固定主机名（需 Bonjour）<设备名>.local」两行，
   以及配套的 `mdnsCommand` / `hasLAN` 之外的残留。
 - `SSHServerService`：删 `hostNameReport()`、`hostLabel(_:)`、`mdnsHostLabel`、
@@ -10897,11 +10912,11 @@ start_service(com.apple.atc)                               → BrokenPipe
 ### 新增（SSH 调试页加「固定主机名」连法，不再只依赖会变的局域网 IP）
 用户原话（批准时）：「**可以 这个作为备用共存**」
 - 「连接信息」并列三条：
-  - 本机（仅设备自身）：`ssh escape@127.0.0.1 -p 2222`
-  - 局域网：`ssh escape@<IP> -p 2222`
-  - **固定主机名（需 Bonjour）**：`ssh escape@<设备名>.local -p 2222`
+  - 本机（仅设备自身）：`ssh TequilaDash@127.0.0.1 -p 2222`
+  - 局域网：`ssh TequilaDash@<IP> -p 2222`
+  - **固定主机名（需 Bonjour）**：`ssh TequilaDash@<设备名>.local -p 2222`
 - 主机名优先取 `ProcessInfo.hostName`（系统主机名，空格/非法字符已被系统规范化），
-  退回 `UIDevice.current.name`；取不到则**整行不显示**；主机名带空格时自动改用 `ssh -l escape "<名字>.local" -p 2222`。
+  退回 `UIDevice.current.name`；取不到则**整行不显示**；主机名带空格时自动改用 `ssh -l TequilaDash "<名字>.local" -p 2222`。
 - 受限 shell 新增 `hostname`（一次列出：设备名 / 主机名 / 固定主机名），`help` 同步；
   打开页面时把固定主机名写进「通用」日志 —— **连不上时界面看不到，日志里看得到**。
 - **未自己广播 Bonjour**（经评估是零收益：设备自带 `.local` 已由系统广播，
@@ -10948,8 +10963,8 @@ region=2 → {"ba_apps":[{"trackName":"Via Browser",…}]}  ← 美区（英文�
 
 ### 新增（SSH 调试页并列显示两个地址）
 用户要求显示固定 IP：连接信息区现在并列显示
-- 本机（**仅设备自身**）：`ssh escape@127.0.0.1 -p 2222`
-- 局域网：`ssh escape@<IP> -p 2222`
+- 本机（**仅设备自身**）：`ssh TequilaDash@127.0.0.1 -p 2222`
+- 局域网：`ssh TequilaDash@<IP> -p 2222`
 
 ⚠️ 监听地址**未改**（仍 `0.0.0.0`）。
 **必须说明**：`127.0.0.1` 是设备自己的回环地址，**同一局域网的电脑永远连不上它** ——
@@ -11603,7 +11618,7 @@ CI 唯一错误：`NiuwaStoreClient.swift:520: error: cannot find 'dumpResponse'
 
 ### 新增
 - **虚拟定位右上角「增强守护」开关**：ON 档 = 重发 **8s → 3s**、健康检查 **12s → 5s**、**回前台立即重发**、
-  检出会话被回收时当场重建；**所有重发复用同一条隧道**（不新建）；持久化键 `escape.locationGuard`；
+  检出会话被回收时当场重建；**所有重发复用同一条隧道**（不新建）；持久化键 `TequilaDash.locationGuard`；
   日志前缀 `[增强守护]`（含触发来源、累计重发次数、"疑似复位"命中次数）。
 - **下载管理：点击已下载的 IPA 弹出操作面板** —— 覆盖安装（复用既有本地安装链路）/ 在线安装 / 打开 /
   复制下载链接 / 分享 IPA / 删除 / 取消。玻璃卡片 + 分组 + 危险项红色，**任何一行都不出现省略号**。
@@ -13149,7 +13164,7 @@ CI 唯一错误：`NiuwaStoreClient.swift:520: error: cannot find 'dumpResponse'
 
 - **Apps tab · batch uninstall**. A new `选择` button enters multi-select mode (matches the Reclaim tab UX). Long-press a row to toggle; `全选` selects everything in the current search filter; a bottom bar shows the count and a destructive `卸载` button. Confirm + `AppListViewModel.uninstallBatch` → `UninstallService.uninstall(bundleId:)`, which calls `MobileInstallationUninstall` in `/usr/lib/libmis.dylib` (loaded with `dlopen`/`dlsym` at runtime so no private SDK is needed). The pairing file already places TequilaDash in `misagent`'s trust list — `installd` accepts the call and surfaces the system "Delete App" alert only when iOS requires explicit consent. Failures keep going through the batch and are summarized in one alert.
 - **Search bar in Reclaim**. `ReclaimTabView` now has a `.searchable` box matching app name + bundle id (and a `没有匹配 "<q>" 的应用。` placeholder). It sits next to the existing 选择 batch UI.
-- **Shared-app explanation banner in LiveClean**. LiveContainer's shared apps live under `AppGroup/LiveContainer/Shared/...` — a different iOS sandbox that TequilaDash's `bad_query` cannot escape into from inside LiveContainer's own Data container. The list now shows a `person.2.slash` banner explaining the workaround (Convert to Private inside LC → revisit), instead of pretending the apps are missing.
+- **Shared-app explanation banner in LiveClean**. LiveContainer's shared apps live under `AppGroup/LiveContainer/Shared/...` — a different iOS sandbox that TequilaDash's `bad_query` cannot TequilaDash into from inside LiveContainer's own Data container. The list now shows a `person.2.slash` banner explaining the workaround (Convert to Private inside LC → revisit), instead of pretending the apps are missing.
 
 ### Removed
 

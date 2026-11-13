@@ -94,17 +94,17 @@ final class SpoofSession: ObservableObject {
     @Published private(set) var routeProgress = 0.0
     @Published private(set) var routeLap = 0
     @Published var speedMultiplier: Double = 1.0 {
-        didSet { UserDefaults.standard.set(speedMultiplier, forKey: "escape.speedMultiplier") }
+        didSet { UserDefaults.standard.set(speedMultiplier, forKey: "TequilaDash.speedMultiplier") }
     }
     @Published var routeLoopEnabled = false {
-        didSet { UserDefaults.standard.set(routeLoopEnabled, forKey: "escape.routeLoopEnabled") }
+        didSet { UserDefaults.standard.set(routeLoopEnabled, forKey: "TequilaDash.routeLoopEnabled") }
     }
     /// 增强守护：ON 档缩短重发/健康检查间隔，并在回前台、检出会话被回收时立刻重发.
     /// OFF 档与历史行为完全一致（8s 重发 / 12s 健康检查，不写守护日志）.
     @Published var locationGuard = false {
         didSet {
             guard locationGuard != oldValue else { return }
-            UserDefaults.standard.set(locationGuard, forKey: "escape.locationGuard")
+            UserDefaults.standard.set(locationGuard, forKey: "TequilaDash.locationGuard")
             LoginLogger.shared.log("增强守护：\(locationGuard ? "开启" : "关闭")")
             // 已在模拟中则立刻切档，不必等本次模拟结束.
             if isSpoofing {
@@ -131,8 +131,8 @@ final class SpoofSession: ObservableObject {
     private var guardResendTotal = 0
     private var guardResetHits = 0
 
-    private let favoritesKey = "escape.favorites"
-    private let recentsKey = "escape.recents"
+    private let favoritesKey = "TequilaDash.favorites"
+    private let recentsKey = "TequilaDash.recents"
 
     /// 增强守护重发的来源（写日志用）.
     private enum GuardTrigger: String {
@@ -154,10 +154,10 @@ final class SpoofSession: ObservableObject {
     private init() {
         favorites = SavedPlace.load(key: favoritesKey)
         recents = SavedPlace.load(key: recentsKey)
-        let storedSpeed = UserDefaults.standard.double(forKey: "escape.speedMultiplier")
+        let storedSpeed = UserDefaults.standard.double(forKey: "TequilaDash.speedMultiplier")
         speedMultiplier = storedSpeed > 0 ? min(4.0, max(0.25, storedSpeed)) : 1.0
-        routeLoopEnabled = UserDefaults.standard.bool(forKey: "escape.routeLoopEnabled")
-        locationGuard = UserDefaults.standard.bool(forKey: "escape.locationGuard")
+        routeLoopEnabled = UserDefaults.standard.bool(forKey: "TequilaDash.routeLoopEnabled")
+        locationGuard = UserDefaults.standard.bool(forKey: "TequilaDash.locationGuard")
         // 引擎不熄火（硬规则 31）：隧道就绪翻转是「油门」——挂着待发的坐标立即重发，
         // 不做任何定时重试.VPN 中途开启的场景（先放图钉后开 VPN）在这里自动接上.
         readinessCancellable = TunnelReadiness.shared.$isReady

@@ -406,7 +406,7 @@ final class BinaryModuleRunner: ObservableObject {
         }
     }
 
-    /// 把宿主能力函数表交给模块可选的 `escape_module_init`.
+    /// 把宿主能力函数表交给模块可选的 `TequilaDash_module_init`.
     ///
     /// ## 为什么是「加载时传函数表」而不是让模块 `dlsym` 宿主符号
     /// 主可执行文件的符号**不保证**对 `dlsym(RTLD_DEFAULT)` 可见（本仓库自己就是
@@ -417,8 +417,8 @@ final class BinaryModuleRunner: ObservableObject {
     /// 老模块都没有这个符号 —— **找不到是正常情况**，只记一行日志.
     /// 模块拿到表之后怎么用是它自己的事（`HostCapabilityService.call`）.
     nonisolated private func handoffHostCapabilities(dataDir: URL, moduleDir: URL, logFile: URL) {
-        guard let sym = Self.resolveBridgeSymbol("escape_module_init") else {
-            appendLog(logFile, "[host] 模块未导出 escape_module_init → 跳过能力表交接")
+        guard let sym = Self.resolveBridgeSymbol("TequilaDash_module_init") else {
+            appendLog(logFile, "[host] 模块未导出 TequilaDash_module_init → 跳过能力表交接")
             return
         }
         var api = HostCapabilityService.makeAPI(moduleDataDir: dataDir.path,
@@ -428,11 +428,11 @@ final class BinaryModuleRunner: ObservableObject {
         // 「not representable in Objective-C, so it cannot be used with '@convention(c)'」：
         // EscapeHostAPI 里有 `@convention(c)` 函数指针字段，Swift 不认为它 C 可表示.
         // 从 C 侧看两者都是「一个指针」，ABI 完全一致，所以模块照样声明
-        // `int escape_module_init(const EscapeHostAPI *api)`.
+        // `int TequilaDash_module_init(const EscapeHostAPI *api)`.
         typealias ModuleInitFn = @convention(c) (UnsafeMutableRawPointer?) -> Int32
         let fn = unsafeBitCast(sym, to: ModuleInitFn.self)
         let rc = withUnsafeMutablePointer(to: &api) { fn(UnsafeMutableRawPointer($0)) }
-        appendLog(logFile, "[host] escape_module_init 返回 \(rc)"
+        appendLog(logFile, "[host] TequilaDash_module_init 返回 \(rc)"
             + "（能力表 abi=\(api.abiVersion) 大小=\(api.structSize) 字节，"
             + "支持 \(HostCapabilityService.capabilityList.count) 项能力）")
     }

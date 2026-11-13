@@ -121,12 +121,12 @@ final class DialerThemeViewModel: ObservableObject {
             // 实例建在闭包内（避免捕获 non-Sendable 对象），且必须贯穿
             // consume / release：SandboxEscape 用实例内的 liveHandles 集合判定
             // 句柄是否有效，两个实例会让 release 空转.
-            let escape = SandboxEscape()
+            let TequilaDash = SandboxEscape()
             // 一次性求出结果再传给主线程：在并发闭包里声明 var 再改写会触发
             // "captured var in concurrently-executing code" 警告.
             let count: Int = {
-                guard let handle = try? escape.consume(path: cachePath, create: true) else { return 0 }
-                defer { escape.release(handle) }
+                guard let handle = try? TequilaDash.consume(path: cachePath, create: true) else { return 0 }
+                defer { TequilaDash.release(handle) }
                 return ((try? FileManager.default.contentsOfDirectory(atPath: cachePath)) ?? [])
                     .filter { $0.lowercased().hasSuffix(".png") }
                     .count

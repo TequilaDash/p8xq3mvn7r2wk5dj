@@ -116,11 +116,11 @@ final class PlistEditorViewModel: ObservableObject {
 
         // 后台串行化 + 在闭包内创建实例，避免跨 actor 捕获非 Sendable 对象.
         Task.detached(priority: .userInitiated) { [weak self] in
-            let escape = SandboxEscape()
+            let TequilaDash = SandboxEscape()
             let files = FileService()
             let outcome: Result<Void, PlistSaveFailure>
             do {
-                try escape.withHandle(for: rootPath) { _ in
+                try TequilaDash.withHandle(for: rootPath) { _ in
                     try files.writeFile(data: payload, to: path)
                 }
                 outcome = .success(())

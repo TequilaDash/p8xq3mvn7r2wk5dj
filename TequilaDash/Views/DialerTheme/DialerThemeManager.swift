@@ -90,14 +90,14 @@ struct DialerThemeStatus {
 final class DialerThemeManager {
 
     /// Swift 6 并发检查：本类型非 Sendable，但**没有可变实例状态** ——
-    /// 只有 `fm`（FileManager）与 `escape`（SandboxEscape）两个无状态工具实例，
+    /// 只有 `fm`（FileManager）与 `TequilaDash`（SandboxEscape）两个无状态工具实例，
     /// 其余全是计算属性；所有方法只做文件 IO，不保存跨调用状态.
     nonisolated(unsafe) static let shared = DialerThemeManager()
 
     private init() {}
 
     private let fm = FileManager.default
-    private let escape = SandboxEscape()
+    private let TequilaDash = SandboxEscape()
 
     private static let containersRoot = "/var/mobile/Containers/Data/Application"
     private static let cachePrefix = "TelephonyUI-"
@@ -221,8 +221,8 @@ final class DialerThemeManager {
 
                 // 2) metadata 读不到时记录 TelephonyUI 特征容器作为兜底.
                 let cachesPath = (containerPath as NSString).appendingPathComponent("Library/Caches")
-                guard let handle = try? escape.consume(path: cachesPath, create: true) else { continue }
-                defer { escape.release(handle) }
+                guard let handle = try? TequilaDash.consume(path: cachesPath, create: true) else { continue }
+                defer { TequilaDash.release(handle) }
                 let names = entryNames(at: cachesPath, maxInode: 200_000)
                 guard let cacheDirectoryName = Self.preferredCacheDirectory(in: names) else { continue }
                 sawTelephonyCache = true
@@ -259,8 +259,8 @@ final class DialerThemeManager {
     }
 
     private func readMetadataIdentifier(at path: String) -> String? {
-        guard let handle = try? escape.consume(path: path, create: true) else { return nil }
-        defer { escape.release(handle) }
+        guard let handle = try? TequilaDash.consume(path: path, create: true) else { return nil }
+        defer { TequilaDash.release(handle) }
         guard let dict = NSDictionary(contentsOfFile: path) as? [String: Any] else { return nil }
         return dict["MCMMetadataIdentifier"] as? String
     }
@@ -269,7 +269,7 @@ final class DialerThemeManager {
     private func makeStatus(containerPath: String) throws -> DialerThemeStatus {
         let cachesPath = (containerPath as NSString).appendingPathComponent("Library/Caches")
         let handle = try consumeOrThrow(cachesPath)
-        defer { escape.release(handle) }
+        defer { TequilaDash.release(handle) }
 
         let names = entryNames(at: cachesPath, maxInode: 200_000)
         guard let cacheDirectoryName = Self.preferredCacheDirectory(in: names) else {
@@ -312,7 +312,7 @@ final class DialerThemeManager {
         if hasBackup { return 0 }
 
         let handle = try consumeOrThrow(cachePath)
-        defer { escape.release(handle) }
+        defer { TequilaDash.release(handle) }
 
         let names = entryNames(at: cachePath, maxInode: 2_000_000)
             .filter { $0.lowercased().hasSuffix(".png") }
@@ -376,7 +376,7 @@ final class DialerThemeManager {
 
         // 3. 持有缓存目录的沙盒扩展，逐个替换同名文件.
         let handle = try consumeOrThrow(cachePath)
-        defer { escape.release(handle) }
+        defer { TequilaDash.release(handle) }
 
         let liveNames = entryNames(at: cachePath, maxInode: 2_000_000)
             .filter { $0.lowercased().hasSuffix(".png") }
@@ -406,7 +406,7 @@ final class DialerThemeManager {
         guard hasBackup else { throw DialerThemeError.noBackup }
 
         let handle = try consumeOrThrow(cachePath)
-        defer { escape.release(handle) }
+        defer { TequilaDash.release(handle) }
 
         let names = try fm.contentsOfDirectory(atPath: backupDirectory.path)
         var restored = 0
@@ -429,7 +429,7 @@ final class DialerThemeManager {
         // 扩展，随后读取缓存文件时就拿不到权限（v0.2.94/95 实测「无权限」的根因）.
         var handle: SandboxEscape.Handle?
         defer {
-            if let handle { escape.release(handle) }
+            if let handle { TequilaDash.release(handle) }
         }
 
         let sourceNames: [String]
@@ -468,7 +468,7 @@ final class DialerThemeManager {
 
     private func consumeOrThrow(_ path: String) throws -> SandboxEscape.Handle {
         do {
-            return try escape.consume(path: path, create: true)
+            return try TequilaDash.consume(path: path, create: true)
         } catch {
             let detail = (error as? SandboxEscapeError)?.errorDescription ?? error.localizedDescription
             throw DialerThemeError.sandboxFailed(detail)

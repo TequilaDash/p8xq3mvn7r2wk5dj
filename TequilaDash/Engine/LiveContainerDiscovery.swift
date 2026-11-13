@@ -92,7 +92,7 @@ struct LiveContainerGuest: Identifiable {
 /// that wasn't reached through the `.app` enumeration (rare fork layouts).
 final class LiveContainerDiscovery {
 
-    private let escape = SandboxEscape()
+    private let TequilaDash = SandboxEscape()
     private let files = FileService()
     private let fm = FileManager.default
 
@@ -236,7 +236,7 @@ final class LiveContainerDiscovery {
                 if SandboxEscape.lcContainerExtensionsActive {
                     guests = try runEnumeration()
                 } else {
-                    guests = try escape.withHandle(for: host.containerPath) { _ in try runEnumeration() }
+                    guests = try TequilaDash.withHandle(for: host.containerPath) { _ in try runEnumeration() }
                 }
             } catch {
                 return LiveContainerInstance(host: host, guests: [], error: error.localizedDescription)

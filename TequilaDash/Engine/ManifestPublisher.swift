@@ -513,7 +513,7 @@ enum ManifestPublisher {
 /// · **HTTPS 托管地址**（可选）：非机密，存 `UserDefaults`（与设置页 `@AppStorage` 同键）.
 enum OnlineInstallConfig {
 
-    static let endpointKey = "escape.onlineInstallEndpoint"
+    static let endpointKey = "TequilaDash.onlineInstallEndpoint"
 
     private static let keychainService = "com.tequila.dash.onlineinstall"
     private static let tokenAccount = "githubToken"

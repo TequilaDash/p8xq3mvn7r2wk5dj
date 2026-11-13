@@ -5,7 +5,7 @@
 //  TequilaDash 模块系统.
 //  参考 KernelSU 的模块管理形态（module.prop + 声明式动作），升级为 JSON 规范：
 //
-//    escape.module.v1 规范
+//    TequilaDash.module.v1 规范
 //    ├── module.json      模块清单（spec/id/name/icon/version/author/description/actions）
 //    └── actions[]        声明式动作，由宿主（TequilaDash）通过 Rust FFI 管道执行
 //
@@ -187,7 +187,7 @@ struct EscapeModuleAction: Identifiable, Codable {
 }
 
 struct EscapeModule: Identifiable, Codable {
-    /// 规范版本，固定 "escape.module.v1"
+    /// 规范版本，固定 "TequilaDash.module.v1"
     let spec: String
     /// 模块唯一标识（反向域名）
     let id: String
@@ -521,7 +521,7 @@ final class ModuleService {
     // MARK: 导入 .zip
 
     /// 导入 .zip 模块.zip 内任意层级（含 modules/<id>/ 前缀、GitHub 源码 zip 的多层嵌套）均可识别
-    /// module.json，并安装其所在目录的内容.spec = escape.module.v1.
+    /// module.json，并安装其所在目录的内容.spec = TequilaDash.module.v1.
     /// log：安装详情日志回调（KernelSU 风格安装界面逐行输出）.
     /// 返回解析后的模块；spec 不符 / 清单缺失会抛错.
     func importZip(at url: URL, log: ((String) -> Void)? = nil) throws -> EscapeModule {
@@ -577,7 +577,7 @@ final class ModuleService {
             throw ModuleError.missingManifest("zip 内缺少合法的 module.json")
         }
         log?("- 清单：\(module.id) v\(module.version)（\(module.name)）")
-        guard module.spec == "escape.module.v1" else {
+        guard module.spec == "TequilaDash.module.v1" else {
             throw ModuleError.badSpec("规范版本不支持：\(module.spec)")
         }
         log?("- 规范 \(module.spec) [完成]")

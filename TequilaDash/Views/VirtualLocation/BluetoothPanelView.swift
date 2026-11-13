@@ -26,7 +26,7 @@ struct BluetoothPanelView: View {
     @State private var hint: String?
     @State private var showLog = false
 
-    private static let roleKey = "escape.bluetoothRole"
+    private static let roleKey = "TequilaDash.bluetoothRole"
 
     var body: some View {
         NavigationStack {

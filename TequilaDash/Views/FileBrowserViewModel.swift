@@ -50,7 +50,7 @@ final class FileBrowserViewModel: ObservableObject {
     // 标 nonisolated(unsafe) 以解除 MainActor 隔离.线程安全性来自类型内部：
     // SandboxEscape 的可变状态 liveHandles 全部在 NSLock 内；FileService 无可变状态
     // （仅持有线程安全的 FileManager.default）.
-    nonisolated(unsafe) private let escape = SandboxEscape()
+    nonisolated(unsafe) private let TequilaDash = SandboxEscape()
     nonisolated(unsafe) private let files = FileService()
 
     /// 兼容原调用点（App 详情 / 空间回收）.class 的委托初始化必须标记为 convenience.
@@ -111,14 +111,14 @@ final class FileBrowserViewModel: ObservableObject {
     ///   再兜底尝试签发扩展后用 FileManager 直接列（iOS 27 上部分只读目录可列）.
     /// - 普通根 / 容器内部：先尝试用沙盒扩展；失败时退回直接 `FileManager`.
     /// Swift 6：在 Task.detached 后台线程执行；只读不可变 let（isContainerRoot/rootPath）
-    /// 与线程安全的引擎（escape/files），不触碰任何 @Published → nonisolated.
+    /// 与线程安全的引擎（TequilaDash/files），不触碰任何 @Published → nonisolated.
     private nonisolated func list(at path: String) throws -> [FileItem] {
         if isContainerRoot && path == rootPath {
             let items = try files.listContainerRoot(at: path)
             if !items.isEmpty { return items }
             // 兜底：签发扩展后用 FileManager 直接列（绕过 isDirectory 前置检查，
             // 沙盒下 fileExists 对跨容器路径可能误判）.成功则用，失败保持空列表.
-            if let fallback = try? escape.withHandle(for: rootPath) { _ in
+            if let fallback = try? TequilaDash.withHandle(for: rootPath) { _ in
                 try files.listDirectly(at: path)
             } {
                 return fallback
@@ -126,7 +126,7 @@ final class FileBrowserViewModel: ObservableObject {
             return items
         }
         do {
-            return try escape.withHandle(for: rootPath) { _ in
+            return try TequilaDash.withHandle(for: rootPath) { _ in
                 try files.list(directory: path)
             }
         } catch {
@@ -278,7 +278,7 @@ final class FileBrowserViewModel: ObservableObject {
             }
         }
         if clip.containerPath == destContainer {
-            try escape.withHandle(for: destContainer) { _ in
+            try TequilaDash.withHandle(for: destContainer) { _ in
                 try self.transferSameContainer(clip, destDir: destDir)
             }
             return
@@ -289,7 +289,7 @@ final class FileBrowserViewModel: ObservableObject {
         try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: staging) }
 
-        try escape.withHandle(for: clip.containerPath) { _ in
+        try TequilaDash.withHandle(for: clip.containerPath) { _ in
             for item in clip.items {
                 try self.files.copyItem(
                     at: item.path,
@@ -297,7 +297,7 @@ final class FileBrowserViewModel: ObservableObject {
                 )
             }
         }
-        try escape.withHandle(for: destContainer) { _ in
+        try TequilaDash.withHandle(for: destContainer) { _ in
             for item in clip.items {
                 let dest = self.files.uniqueDestination(in: destDir, preferredName: item.name)
                 try self.files.copyItem(
@@ -307,7 +307,7 @@ final class FileBrowserViewModel: ObservableObject {
             }
         }
         if clip.mode == .cut {
-            try escape.withHandle(for: clip.containerPath) { _ in
+            try TequilaDash.withHandle(for: clip.containerPath) { _ in
                 for item in clip.items {
                     try self.files.deleteItem(at: item.path)
                 }
@@ -366,7 +366,7 @@ final class FileBrowserViewModel: ObservableObject {
         Task.detached(priority: .userInitiated) { [weak self] in
             guard let self else { return }
             do {
-                try self.escape.withHandle(for: self.rootPath) { _ in
+                try self.TequilaDash.withHandle(for: self.rootPath) { _ in
                     for url in urls {
                         let accessing = url.startAccessingSecurityScopedResource()
                         defer { if accessing { url.stopAccessingSecurityScopedResource() } }
@@ -401,7 +401,7 @@ final class FileBrowserViewModel: ObservableObject {
             guard let self else { return }
             do {
                 let dest = try Self.shareStagingURL(named: Self.shareName(for: item))
-                try self.escape.withHandle(for: self.rootPath) { _ in
+                try self.TequilaDash.withHandle(for: self.rootPath) { _ in
                     if item.isDirectory {
                         let zip = ZipWriter()
                         try zip.begin(at: dest)
@@ -442,7 +442,7 @@ final class FileBrowserViewModel: ObservableObject {
         Task.detached(priority: .userInitiated) { [weak self] in
             guard let self else { return }
             do {
-                let destPath: String = try self.escape.withHandle(for: self.rootPath) { _ in
+                let destPath: String = try self.TequilaDash.withHandle(for: self.rootPath) { _ in
                     let dest = self.files.uniqueDestination(
                         in: targetDir,
                         preferredName: Self.zipName(for: items)
@@ -491,7 +491,7 @@ final class FileBrowserViewModel: ObservableObject {
         Task.detached(priority: .userInitiated) { [weak self] in
             guard let self else { return }
             do {
-                let destName: String = try self.escape.withHandle(for: self.rootPath) { _ in
+                let destName: String = try self.TequilaDash.withHandle(for: self.rootPath) { _ in
                     let bytes = try self.files.readFile(at: item.path)
                     if ArchiveExtractor.archiveNeedsPassword(bytes, name: item.name),
                        password == nil || password?.isEmpty == true {
@@ -586,7 +586,7 @@ final class FileBrowserViewModel: ObservableObject {
         Task.detached(priority: .userInitiated) { [weak self] in
             guard let self else { return }
             do {
-                try self.escape.withHandle(for: self.rootPath) { _ in
+                try self.TequilaDash.withHandle(for: self.rootPath) { _ in
                     try body()
                 }
                 await MainActor.run { [weak self] in

@@ -2,7 +2,7 @@
 //  HostCapabilityService.swift
 //  TequilaDash
 //
-//  宿主能力接口（escape.host.v1）—— 模块**反向调用宿主**的唯一通道.
+//  宿主能力接口（TequilaDash.host.v1）—— 模块**反向调用宿主**的唯一通道.
 //
 //  ## 为什么需要它
 //  在此之前模块只能「被宿主调用」（signal / bridge），不能反向调用宿主能力.
@@ -14,7 +14,7 @@
 //
 //  ## 两条调用路径（都汇到本文件的 `call`）
 //  · **外部 dylib 模块**（C/Go）：宿主加载时把 `EscapeHostAPI` 函数表指针交给模块的
-//    `escape_module_init`（见 `BinaryModuleRunner.startBinaryModule`），模块拿到
+//    `TequilaDash_module_init`（见 `BinaryModuleRunner.startBinaryModule`），模块拿到
 //    `call` 函数指针后调用. 这条路径**刻意不用 dlsym 宿主符号** —— 主可执行文件的
 //    符号不保证对 `dlsym(RTLD_DEFAULT)` 可见（本仓库自己就是因为这个才写了
 //    `uloader_symbols_with_suffix` 去读符号表）.
@@ -79,7 +79,7 @@ struct EscapeHostAPI {
 /// 便利入口：模块愿意 `dlsym(RTLD_DEFAULT, "escape_host_call")` 时用这个.
 ///
 /// 注意这条路径**不保证可用**（主可执行文件符号不一定导出），主路径是
-/// `escape_module_init` 拿函数表. 这里只是顺手提供一个，能用就用.
+/// `TequilaDash_module_init` 拿函数表. 这里只是顺手提供一个，能用就用.
 ///
 /// - Parameters:
 ///   - capability: 能力名（如 `fs.read`）

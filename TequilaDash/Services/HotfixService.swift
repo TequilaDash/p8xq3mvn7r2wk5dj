@@ -13,12 +13,12 @@
 //
 //  二期（JS 引擎）：
 //   - 签名模块可携带 hotfix.js，由 JavaScriptCore 执行
-//   - 桥接对象 escape：log / setFlag / setOverride / moduleVersion
+//   - 桥接对象 TequilaDash：log / setFlag / setOverride / moduleVersion
 //   - app 启动与模块变更时执行；异常捕获进日志
 //
 //  安全模型：
 //   - 无签名 = 无热补丁能力（普通 signal 模块不受影响）
-//   - JS 沙箱内无文件/网络 API，仅能通过 escape 桥影响声明式状态
+//   - JS 沙箱内无文件/网络 API，仅能通过 TequilaDash 桥影响声明式状态
 //
 
 import CryptoKit
@@ -173,12 +173,12 @@ final class HotfixService: NSObject, ObservableObject, @unchecked Sendable {
         // JSExport 协议桥（类型安全；闭包桥在当前 SDK 有签名解析问题）
         let bridge = EscapeJSBridge(moduleId: moduleId, moduleVersion: moduleVersion)
         bridge.owner = self
-        ctx.setObject(bridge, forKeyedSubscript: "escape" as NSString)
+        ctx.setObject(bridge, forKeyedSubscript: "TequilaDash" as NSString)
         ctx.evaluateScript(source)
     }
 }
 
-// MARK: - JS 桥（JSExport：JS 侧 escape.log / escape.setFlag / escape.setOverride）
+// MARK: - JS 桥（JSExport：JS 侧 TequilaDash.log / TequilaDash.setFlag / TequilaDash.setOverride）
 
 @objc protocol EscapeJSBridgeExports: JSExport {
     func log(_ message: String)

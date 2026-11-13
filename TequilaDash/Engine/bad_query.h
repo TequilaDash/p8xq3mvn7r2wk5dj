@@ -7,7 +7,7 @@
 
 int64_t bad_query(char *path, bool create, char *group_identifier, bool is_group);
 
-// Generalized escape: query `container_class` for `identifier`, then walk
+// Generalized TequilaDash: query `container_class` for `identifier`, then walk
 // `levels` "../" back to the root before appending `path`.
 int64_t bad_query_ex(char *path, bool create, uint64_t container_class,
                      char *identifier, bool is_group, int levels);

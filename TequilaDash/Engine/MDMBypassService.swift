@@ -225,9 +225,9 @@ enum MDMEscape {
         log("Method B（cmg-activate）失败")
 
         // C/D. bad_query（TequilaDash 内置 SandboxEscape 封装）
-        let escape = SandboxEscape()
+        let TequilaDash = SandboxEscape()
         do {
-            _ = try escape.consume(path: MDMPaths.profilesDir,
+            _ = try TequilaDash.consume(path: MDMPaths.profilesDir,
                                    groupIdentifier: "systemgroup.com.apple.mobilegestaltcache",
                                    isGroup: true, create: true)
             if openVerified(MDMPaths.profiles) {
@@ -237,7 +237,7 @@ enum MDMEscape {
         } catch { log("Method C（bad_query-mg）失败：\(error.localizedDescription)") }
 
         do {
-            _ = try escape.consume(path: MDMPaths.profilesDir, isGroup: false, create: true)
+            _ = try TequilaDash.consume(path: MDMPaths.profilesDir, isGroup: false, create: true)
             if openVerified(MDMPaths.profiles) {
                 log("Method D 成功：bad_query 自动识别")
                 return MDMEscapeResult(method: "bad_query", targetPath: MDMPaths.profiles)
@@ -250,7 +250,7 @@ enum MDMEscape {
                 ? root + "Library/ConfigurationProfiles/"
                 : root + "/Library/ConfigurationProfiles/"
             do {
-                _ = try escape.consume(path: uuidTarget,
+                _ = try TequilaDash.consume(path: uuidTarget,
                                        groupIdentifier: "systemgroup.com.apple.mobilegestaltcache",
                                        isGroup: true, create: true)
                 if openVerified(uuidTarget) {

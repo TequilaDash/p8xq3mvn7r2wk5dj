@@ -656,7 +656,7 @@ enum DeviceSlimService {
     /// `FileSharingAppsView.computeDocumentSizes()` 至今是死代码 —— 也正因如此从没生效过.）
     ///
     /// ## 实际通道：本机沙盒扩展 + 递归求和（与「空间回收」页同一套）
-    /// `escape.withHandle(for: 容器路径)` 消费沙盒扩展 → `files.countTree` 递归求和.
+    /// `TequilaDash.withHandle(for: 容器路径)` 消费沙盒扩展 → `files.countTree` 递归求和.
     /// 只要 instproxy 给了 `Container`（`get_apps` 默认响应自带；带属性 Lookup 自
     /// 起也在请求里，见 `FileSharingApp.containerPath`）就能量 ——
     /// 不需要应用配合，也不需要额外隧道.
@@ -728,10 +728,10 @@ enum DeviceSlimService {
     /// 单个应用数据容器的递归占用（字节）；`nil` = 这次没量到（沙盒扩展被拒 / 容器不在）.
     private static func measureContainerBytes(_ containerPath: String) -> Int64? {
         guard !containerPath.isEmpty else { return nil }
-        let escape = SandboxEscape()
+        let TequilaDash = SandboxEscape()
         let files = FileService()
         do {
-            return try escape.withHandle(for: containerPath) { _ in
+            return try TequilaDash.withHandle(for: containerPath) { _ in
                 guard files.isDirectory(at: containerPath) else { return nil }
                 let counted = try files.countTree(at: containerPath,
                                                   maxNodes: docSizeMaxNodesPerApp)

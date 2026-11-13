@@ -49,7 +49,7 @@ enum BackupError: Error, LocalizedError {
 /// target app during export.
 final class BackupService {
 
-    private let escape = SandboxEscape()
+    private let TequilaDash = SandboxEscape()
     private let files = FileService()
 
     /// Subtrees of a Data container we export and restore.
@@ -109,7 +109,7 @@ final class BackupService {
         }
 
         do {
-            try escape.withHandle(for: app.containerPath) { _ in
+            try TequilaDash.withHandle(for: app.containerPath) { _ in
                 var foundRoot = false
                 for root in Self.backupRoots {
                     if isCancelled() { throw BackupError.cancelled }

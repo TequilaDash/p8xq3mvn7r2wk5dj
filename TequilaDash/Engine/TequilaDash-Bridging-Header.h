@@ -9,6 +9,7 @@
 #define TequilaDash_Bridging_Header_h
 
 #include "bad_query.h"
+#include "worse_query.h"
 #include "zip_crypto.h"
 
 // v0.3.200：体检引擎 DYLD 注入检测需要 mach-o/dyld API

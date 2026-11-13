@@ -65,7 +65,7 @@ final class ContainerNameResolver {
     /// —— `resolveAll` 的文档也声明「任意线程可调」.
     nonisolated(unsafe) static let shared = ContainerNameResolver()
 
-    private let escape = SandboxEscape()
+    private let TequilaDash = SandboxEscape()
     private var cache: [String: String] = [:]
     private let lock = NSLock()
 
@@ -162,7 +162,7 @@ final class ContainerNameResolver {
     private func readMetadataIdentifier(at path: String, containerPath: String) -> MetadataOutcome {
         let handle: SandboxEscape.Handle
         do {
-            handle = try escape.consume(path: path, create: true)
+            handle = try TequilaDash.consume(path: path, create: true)
         } catch {
             return .failed(ResolveFailure(
                 path: containerPath,
@@ -170,7 +170,7 @@ final class ContainerNameResolver {
                 detail: error.localizedDescription
             ))
         }
-        defer { escape.release(handle) }
+        defer { TequilaDash.release(handle) }
 
         if handle.raw < 0 {
             // 哨兵句柄：本次没真取扩展，靠的是「进程本身已有访问权」的假设.
@@ -180,8 +180,8 @@ final class ContainerNameResolver {
             // 读一次，读不到就强制真取一次扩展再试 —— 强制失败会 throw，只影响本次解析.
             let ambient = identifierOutcome(at: path, containerPath: containerPath)
             if case .resolved = ambient { return ambient }
-            if let forced = try? escape.consume(path: path, create: true, forceRealExtension: true) {
-                defer { escape.release(forced) }
+            if let forced = try? TequilaDash.consume(path: path, create: true, forceRealExtension: true) {
+                defer { TequilaDash.release(forced) }
                 let forcedOutcome = identifierOutcome(at: path, containerPath: containerPath)
                 if case .resolved = forcedOutcome { return forcedOutcome }
             }
