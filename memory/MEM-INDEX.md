@@ -185,3 +185,14 @@
 - 正确做法：init 内所有需要持久化的状态显式 `UserDefaults.set`，不要依赖 didSet
 - 验证：安装后重启两次，macOS 上读 container 里的 plist 确认 `ExploitSettings.enabled.rawValues` 含新值
 - 关联规范：R-030
+
+## MEM-023 访客浮窗不能挂 SwiftUI 的 PresentationHostingController（2026-11-13）
+
+- 现象：多任务启动 SIGABRT，四个 .ips 都在 `DecoratedAppSceneViewController initWindowName:` 的
+  `[rootVC addChildViewController:self]`
+- 根因：上一版把 `fullScreenCover` 的 `PresentationHostingController` 当 rootVC，
+  UIKit 层级检查直接抛「child view controller ... should have parent ... but requested parent is ...」
+- 正确做法：自建**覆盖窗口**（普通容器 VC + windowLevel 高一层 + hitTest 只拦截访客区域），
+  并把 LC dock 的 `windowHostingView`（真正承载访客画面的视图）挪进该窗口
+- 检测方法：Console 出现 `[TD-Multitask] 覆盖窗口挂载`
+- 关联规范：R-031

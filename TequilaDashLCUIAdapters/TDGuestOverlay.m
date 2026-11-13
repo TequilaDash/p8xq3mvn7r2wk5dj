@@ -10,25 +10,14 @@
 
 - (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
     UIView *hit = [super hitTest:point withEvent:event];
-    if (!hit || hit == self.rootViewController.view) {
+    UIView *root = self.rootViewController.view;
+    if (!hit || hit == root) {
+        // 落在透明背景上：不拦截，交给下面的宿主窗口。
+        // 访客画面在 root 的子视图（VirtualWindowsHostView）里；它自己的 hitTest
+        // 已在空白处返回 nil，所以这里只需判断是否命中 root 本身。
         return nil;
     }
-    // 命中点若不在任何访客控制器视图内，也放行（容器背景透明）.
-    for (UIView *view in self.rootViewController.view.subviews) {
-        UIViewController *owner = nil;
-        UIResponder *responder = view.nextResponder;
-        while (responder && !owner) {
-            if ([responder isKindOfClass:[UIViewController class]]) {
-                owner = (UIViewController *)responder;
-            }
-            responder = responder.nextResponder;
-        }
-        if ([owner isKindOfClass:[DecoratedAppSceneViewController class]] &&
-            CGRectContainsPoint(view.frame, point)) {
-            return hit;
-        }
-    }
-    return nil;
+    return hit;
 }
 
 @end

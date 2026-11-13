@@ -146,3 +146,9 @@
 - 动作：在 init 内直接调用 `UserDefaults.set`（或等价持久化），不要指望属性观察器
 - 验证：连续冷启动两次，状态仍在
 - 违反记录：MEM-022
+
+## R-031 第三方控制器只挂在自己的容器或独立窗口上
+- 条件：把第三方 UIViewController 用 `addChildViewController` 挂到宿主
+- 动作：不要挂 SwiftUI 的 `PresentationHostingController`/系统的私有容器；自建普通容器 VC（必要时独立覆盖窗口，并实现 hitTest 穿透）
+- 验证：多任务/浮窗能出现画面且不触发 UIKit 层级断言
+- 违反记录：MEM-023
