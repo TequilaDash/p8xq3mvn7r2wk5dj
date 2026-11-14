@@ -1,3 +1,20 @@
+## [0.3.882] - 2026-11-14
+
+### 巢中巢 bookmark 崩溃防御 (M40)
+- 崩溃实证（0.3.879 `.ips` 095750 + 爱思导出文本）：内层自带 LiveContainer 的访客
+  （zcontainer.app）里再启动 App 时，**内层旧版 LC** 的 `AppSceneViewController`
+  组装 bookmarks 无 nil 保护 —— `URLsForDirectory:NSDocumentDirectory` 或
+  `bookmarkDataWithOptions:(1<<11)` 返回 nil → `-[__NSArrayM insertObject:atIndex:]`
+  object cannot be nil（崩溃帧 `zcontainer LCUI +0x24324c = addObject:`，
+  selref `bookmarkDataWithOptions...`，本地符号化实锤）。
+- 内层二进制不可改 → 宿主进程侧装两层兜底 swizzle：
+  1. `-[NSFileManager URLsForDirectory:inDomains:]` 返回空且目录为 Documents 时，
+     幂等创建并返回 `<NSHomeDirectory>/Documents`；
+  2. `-[NSURL bookmarkDataWithOptions:...]` 返回 nil 时去掉安全作用域位
+     （`(1<<11)`）重试一次；两层都只影响"原本会拿到 nil"的调用。
+- 安装点：`main()` 首行（`TDConsoleLogInstall` 之后），宿主/访客/巢中巢三态全覆盖。
+- 日志：`[TDDefend] 巢中巢防御层已安装` / 兜底命中各限流 3 条。
+
 ## [0.3.881] - 2026-11-14
 
 ### Tier B-1: 模拟内核·进程面（Surface-lite）

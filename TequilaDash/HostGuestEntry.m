@@ -77,8 +77,66 @@ void TDInitLCGlobals(void) {
     isLiveProcess = NO;
 }
 
+// 本仓适配 (M40, 2026-11-14): 巢中巢防御层. 内层自带 LiveContainer 的访客
+// (如 zcontainer.app) 里的**旧版** LC 在组装 scene bookmarks 时无 nil 保护:
+// URLsForDirectory:NSDocumentDirectory 或 bookmarkDataWithOptions:(1<<11)
+// 返回 nil -> -[NSMutableArray addObject:] 崩 (owner 0.3.879 .ips 095750 实证,
+// 崩溃帧在 zcontainer 的 LiveContainerSwiftUI +0x24324c "addObject:").
+// 我们改不了它的二进制, 但宿主进程就是我们自己 —— 在 main 最前面装两层兜底:
+//   1) URLsForDirectory 返回 nil 且是 Documents -> 兜底 <NSHomeDirectory>/Documents
+//   2) bookmarkData 失败 -> 去掉安全作用域位重试一次
+// 两层都只影响"原本会拿到 nil"的调用, 正常路径零改动.
+static IMP gOrigURLsForDirectory = nil;
+static IMP gOrigBookmarkData = nil;
+
+static NSArray *TDHookURLsForDirectory(id self, SEL _cmd, NSSearchPathDirectory directory,
+                                       NSSearchPathDomainMask domainMask) {
+    NSArray *urls = ((NSArray *(*)(id, SEL, NSSearchPathDirectory, NSSearchPathDomainMask))gOrigURLsForDirectory)(self, _cmd, directory, domainMask);
+    if ((urls.count == 0 || urls == nil) && directory == NSDocumentDirectory && (domainMask & NSUserDomainMask)) {
+        NSString *path = [NSHomeDirectory() stringByAppendingPathComponent:@"Documents"];
+        [[NSFileManager defaultManager] createDirectoryAtPath:path withIntermediateDirectories:YES attributes:nil error:nil];
+        static int logged = 0;
+        if (logged++ < 3) NSLog(@"[TDDefend] URLsForDirectory(Documents) 返回空, 兜底 %@", path);
+        return @[[NSURL fileURLWithPath:path isDirectory:YES]];
+    }
+    return urls;
+}
+
+static NSData *TDHookBookmarkData(id self, SEL _cmd, NSURLBookmarkCreationOptions options,
+                                  NSArray<NSURLResourceKey> *keys, NSURL *relativeToURL, NSError **error) {
+    NSData *data = ((NSData *(*)(id, SEL, NSURLBookmarkCreationOptions, NSArray<NSURLResourceKey> *, NSURL *, NSError **))gOrigBookmarkData)(self, _cmd, options, keys, relativeToURL, error);
+    if (!data) {
+        NSURLBookmarkCreationOptions retry = options & ~(NSURLBookmarkCreationOptions)(1 << 11);
+        if (retry != options) {
+            data = ((NSData *(*)(id, SEL, NSURLBookmarkCreationOptions, NSArray<NSURLResourceKey> *, NSURL *, NSError **))gOrigBookmarkData)(self, _cmd, retry, keys, relativeToURL, error);
+            if (data) {
+                static int blogged = 0;
+                if (blogged++ < 3) NSLog(@"[TDDefend] bookmarkData 去安全作用域位重试成功 (self=%@)", self);
+            }
+        }
+    }
+    return data;
+}
+
+static void TDNestedDefendInstall(void) {
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        SEL urlSel = @selector(URLsForDirectory:inDomains:);
+        Method m1 = class_getInstanceMethod([NSFileManager class], urlSel);
+        gOrigURLsForDirectory = method_getImplementation(m1);
+        method_setImplementation(m1, (IMP)TDHookURLsForDirectory);
+
+        SEL bmSel = @selector(bookmarkDataWithOptions:includingResourceValuesForKeys:relativeToURL:error:);
+        Method m2 = class_getInstanceMethod([NSURL class], bmSel);
+        gOrigBookmarkData = method_getImplementation(m2);
+        method_setImplementation(m2, (IMP)TDHookBookmarkData);
+        NSLog(@"[TDDefend] 巢中巢防御层已安装 (URLsForDirectory 兜底 + bookmarkData 重试)");
+    });
+}
+
 int main(int argc, char *argv[]) {
     TDConsoleLogInstall();
+    TDNestedDefendInstall();
     @autoreleasepool {
         // 本仓适配 (v0.3.834): 所有路径（宿主/访客/失败回落）都需要 LC 全局初始化.
         // 访客路径 LiveContainerMain 里会再赋一遍（幂等），这里先保证宿主路径非 nil.
