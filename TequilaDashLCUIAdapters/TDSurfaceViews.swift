@@ -178,6 +178,9 @@ struct TDSurfaceView: View {
                 } else {
                     rootfsStatus = "解包失败 (详见 exploit.log)"
                 }
+            }
+        }
+    }
 }
 
 /// 单行: 名称 + 种类徽标 / pid 与容器详情 / 状态圆点 + kill 按钮.
