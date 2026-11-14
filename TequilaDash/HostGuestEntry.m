@@ -86,6 +86,8 @@ void TDInitLCGlobals(void) {
 //   1) URLsForDirectory 返回 nil 且是 Documents -> 兜底 <NSHomeDirectory>/Documents
 //   2) bookmarkData 失败 -> 去掉安全作用域位重试一次
 // 两层都只影响"原本会拿到 nil"的调用, 正常路径零改动.
+@import ObjectiveC; // M40: Method/method_setImplementation 需显式导入 runtime 模块
+
 static IMP gOrigURLsForDirectory = nil;
 static IMP gOrigBookmarkData = nil;
 
