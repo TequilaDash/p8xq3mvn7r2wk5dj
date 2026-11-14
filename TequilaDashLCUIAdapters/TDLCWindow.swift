@@ -37,6 +37,18 @@ public final class TDLCWindowController: NSObject {
     /// `[rootVC addChildViewController:self]` 用 —— 0.3.884 .ips 150942 实证：
     /// 直接传 window.rootViewController 会因 "already has a parent" 层级断言闪退）.
     @objc public func showAndGetHost() -> UIViewController? {
+        // M44d (owner 真机: 手势没了 + 白屏 + 卡死): **预热顺序是根因**.
+        // 上游 MultitaskDockManager.init() 第一行就
+        //   `keyWindow!.rootViewController!.view.subviews.first!.addSubview(windowHostingView)`
+        // —— 强解包链 + "挂到 keyWindow root 的第一个子视图"。若在我们窗口
+        // makeKeyAndVisible **之后**才首次触碰 .shared，keyWindow=LC 窗口,
+        // rootVC=Tab VC → dock 挂进 SwiftUI 内部视图 (层级错乱=手势死/白屏),
+        // subviews.first 结构不符时直接崩溃/卡死。
+        // 修法: 在创建 LC 窗口**之前**预热 dock (此时 keyWindow 仍是宿主主窗口,
+        // dock 挂到宿主 rootVC.view 上 = 正常层级), 之后 ensureWindow + re-home
+        // 把 windowHostingView 搬进 LC 窗口的 guestContainer (同窗口迁移,
+        // presenter 链不断)。
+        _ = MultitaskDockManager.shared   // 预热: dock 挂到宿主 keyWindow
         show()
         guard let window, let rootVC = window.rootViewController else { return nil }
         if guestContainer == nil {
@@ -44,29 +56,20 @@ public final class TDLCWindowController: NSObject {
             c.view.backgroundColor = .clear
             guestContainer = c
         }
-        // M44c (owner 真机: 多任务手势消失 + 白屏): 容器 view 必须挂在
-        // **rootVC.view 下**而不是 window 直挂 —— window 直挂的 view 游离于
-        // rootVC 的 VC 链之外，与"overlay 搬家断 presenter 链"同构:
-        // SwiftUI Tab 的视图与容器互相遮挡 (dock 手势收不到/白屏).
-        // 挂进 rootVC.view 后 VC 链 = window.root → guestContainer(无父 VC 的
-        // 独立 VC, 其 view 仅作为视图挂载) → DecoratedAppScene VC, 链一致.
+        // M44c: 容器 view 挂在 rootVC.view 下 (非 window 直挂 —— 游离于 VC 链
+        // 之外与 overlay 时代 presenter 断链同构), zPosition 盖过 Tab 内容.
         if guestContainer?.view.superview !== rootVC.view {
             guestContainer?.view.removeFromSuperview()
             guestContainer?.view.frame = rootVC.view.bounds
             guestContainer?.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-            // zPosition 置顶: 容器 (含 dock 与访客 scene) 盖过 Tab 内容.
             rootVC.view.addSubview(guestContainer!.view)
             guestContainer?.view.layer.zPosition = 9999
             NSLog("[TD-Multitask] guestContainer re-homed into window.rootVC.view (M44c)")
         }
         guestContainer?.view.frame = rootVC.view.bounds
-        // M44b (0.3.886 .ips 162906 实证): DecoratedAppSceneViewController 先
-        // `[windowHostingView addSubview:self.view]` 再 `[rootVC addChildViewController:self]`。
-        // UIKit 层级检查要求 self.view.superview 的 VC 链 == rootVC；dock 的
-        // windowHostingView 原先挂在 SwiftUI 子 hosting VC 下，与传入的容器 VC 不一致
-        // → "should have parent ... but requested parent is ..." 断言（仍然闪退）。
-        // 修法: 先把 dock 的 windowHostingView 挪进**同一个 LC 窗口内**的 guestContainer.view，
-        // 链一致；仍是同窗口（非同窗口搬家才不会断 scene presenter）。
+        // M44b: dock 的 windowHostingView 必须与 DecoratedAppSceneViewController
+        // 的 rootVC 同链 —— 从宿主 keyWindow (预热挂点) 搬进 guestContainer.view
+        // (同窗口迁移, presenter 链不断).
         let dockHost = MultitaskDockManager.shared.windowHostingView
         if dockHost.superview !== guestContainer?.view {
             dockHost.frame = guestContainer?.view.bounds ?? rootVC.view.bounds
