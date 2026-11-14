@@ -1,3 +1,16 @@
+## [0.3.886] - 2026-11-14
+
+### 多任务闪退真正修复（M44a 补发）
+- 0.3.885 的 M44a 实际未进包（该 commit 只带了 utils.h），
+  `DecoratedAppSceneViewController` 仍收到 LC 窗口 rootViewController →
+  `_addChildViewController` 层级断言（`.ips` 154754/155107）。
+- 本次把**无父级 guestContainer VC** 真正加进 `TDLCWindowController`：
+  clear 视图、frame=窗口 bounds、直接挂在 LC 窗口，`showAndGetHost` 返回它。
+
+### 交接：sysctl 伪值门控（对方 harness 的 7f95823 扩表）
+- launcher 读 per-app `LCAppInfo.sysctlSpoof` → `payload[@"tdSysctlSpoof"]`；
+- 扩展 `main.m` 落 `TD_SYSCTL_SPOOF=1`；`TDScrubGuestEnv` 同步清理该键。
+
 ## [0.3.885] - 2026-11-14
 
 ### 嵌套双 bug 修复（0.3.884 真机实证）
