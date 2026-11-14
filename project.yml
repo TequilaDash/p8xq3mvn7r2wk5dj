@@ -283,6 +283,15 @@ targets:
         excludes:
           - "LICENSE"
           - "README.md"
+          # 头文件一律不进主 target 的 header 集 (显式模块会为目标头生成 module map,
+          # 两个 common.h —— ZSign/common 与本目录 —— 会让 ZSign 的 signing.cpp
+          # 摸错 common.h, ZUtil/assert 全部 undeclared, CI run 43552731758 实锤)。
+          # 消费方经顶层 HEADER_SEARCH_PATHS 的 $(SRCROOT)/vendor/roothide 文本包含。
+          - "cache.h"
+          - "common.h"
+          - "roothide.h"
+          - "vroot.h"
+          - "TDRootHideInit.h"
           - "vroot.c"
           - "vroot.cpp"
           - "vrootapi.c"
