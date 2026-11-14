@@ -151,6 +151,9 @@ static int TequilaDashLiveProcessMain(int argc, char *argv[]) {
     if ([appInfo[@"secTaskSpoof"] boolValue] || [appInfo[@"tdSecTaskSpoof"] boolValue]) {
         setenv("TD_SECTASK_SPOOF", "1", 1);
     }
+    if ([appInfo[@"procSpoof"] boolValue] || [appInfo[@"tdProcSpoof"] boolValue]) {
+        setenv("TD_PROC_SPOOF", "1", 1);
+    }
     if ([appInfo[@"csopsSpoof"] boolValue] || [appInfo[@"tdCsopsSpoof"] boolValue]) {
         setenv("TD_CSOPS_SPOOF", "1", 1);
         // 调试器位保留开关 (宿主自己的 JIT 探测链路依赖 CS_DEBUGGED,

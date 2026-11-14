@@ -199,8 +199,11 @@ static bool gTDVSecTaskSpoof = false;
 // csops 伪 CS flags数据源: TD_CSOPS_SPOOF env (launcher 透传 per-app csopsSpoof).
 static bool gTDVCsopsSpoof = false;
 // TD_CSOPS_KEEP_DEBUGGED=1: 保留 CS_DEBUGGED (我们自己的调试器探测链路依赖它,
-// 见 TequilaDash-Bridging-Header.h v0.3.8 注释 —— 隐藏它会让体检引擎误判).
+// 见 TequilaDash-Bridging-Header.h v0.3.8): per-app 键 csopsKeepDebugged.
 static bool gTDVCsopsKeepDebugged = false;
+
+// proc 族伪值数据源: TD_PROC_SPOOF env (launcher 透传 per-app procSpoof).
+static bool gTDVProcSpoof = false;
 
 static void tdv_init_once(void);
 
@@ -261,6 +264,25 @@ bool TDVCsopsSpoofLookup(unsigned int flagsIn, unsigned int *flagsOut) {
     }
     *flagsOut = v;
     return true;
+}
+
+bool TDVProcSpoofEnabled(void) {
+    tdv_init_once();
+    return gTDVProcSpoof;
+}
+
+int TDVProcFilterPids(pid_t *pids, int count) {
+    if (!pids || count <= 0 || !TDVProcSpoofEnabled()) {
+        return count;
+    }
+    pid_t self = getpid();
+    int kept = 0;
+    for (int i = 0; i < count; i++) {
+        if (pids[i] == self) {
+            pids[kept++] = pids[i];
+        }
+    }
+    return kept;
 }
 
 bool TDVSysctlSpoofLookup(const char *name, char *out, size_t outSize) {
@@ -324,6 +346,8 @@ static void tdv_init_locked(void) {
     // csops 伪 CS flags 独立于 vroot: TD_CSOPS_SPOOF (+ TD_CSOPS_KEEP_DEBUGGED).
     gTDVCsopsSpoof = getenv("TD_CSOPS_SPOOF") && getenv("TD_CSOPS_SPOOF")[0] == '1';
     gTDVCsopsKeepDebugged = getenv("TD_CSOPS_KEEP_DEBUGGED") && getenv("TD_CSOPS_KEEP_DEBUGGED")[0] == '1';
+    // proc 族伪值独立于 vroot: TD_PROC_SPOOF.
+    gTDVProcSpoof = getenv("TD_PROC_SPOOF") && getenv("TD_PROC_SPOOF")[0] == '1';
     gTDVRootMode = TDVRootModeOff;
     gTDVRootRoot[0] = '\0';
 

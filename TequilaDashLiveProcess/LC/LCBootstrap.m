@@ -14,7 +14,7 @@
 static void TDScrubGuestEnv(void) {
     static const char *kKeys[] = {
         "TD_NET_BLOCK", "TD_VROOT", "TD_VROOT_MODE", "TD_DYLD_TRIM", "TD_SYSCTL_SPOOF",
-        "TD_SECTASK_SPOOF", "TD_CSOPS_SPOOF", "TD_CSOPS_KEEP_DEBUGGED",
+        "TD_SECTASK_SPOOF", "TD_CSOPS_SPOOF", "TD_CSOPS_KEEP_DEBUGGED", "TD_PROC_SPOOF",
         "LC_HOME_PATH", "LP_HOME_PATH",
     };
     int removed = 0;

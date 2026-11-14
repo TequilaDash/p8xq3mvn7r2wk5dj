@@ -64,6 +64,13 @@ bool TDVCsopsSpoofEnabled(void);
 // flagsIn = 真 flags. 仅处理 CS_OPS_STATUS; 其余 ops 由 shim 层透传.
 bool TDVCsopsSpoofLookup(unsigned int flagsIn, unsigned int *flagsOut);
 
+// proc 族伪值 (TD_PROC_SPOOF=1, launcher 按 per-app procSpoof 透传):
+// 访客枚举/探测进程信息时隐藏宿主与其它进程 (Reveil "Suspicious PFlag value"
+// 的 kern.proc PFLAGS 通道也在内). 自身 pid 永远保留 (kill/wait 自身语义不破坏).
+bool TDVProcSpoofEnabled(void);
+// proc_listallpids 过滤回调: buffer 内逐 pid 保留判定. 返回保留数量.
+int TDVProcFilterPids(pid_t *pids, int count);
+
 /// 当前模式; 未启用返回 TDVRootModeOff.
 TDVRootMode TDVRootCurrentMode(void);
 

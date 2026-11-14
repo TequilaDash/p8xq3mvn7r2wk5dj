@@ -178,6 +178,10 @@ NSString *TequilaDashLiveProcessDebugLaunch(NSDictionary<NSString *, id> *userIn
             if ([ai[@"csopsKeepDebugged"] boolValue]) {
                 payload[@"tdCsopsKeepDebugged"] = @"1";
             }
+            // proc 族伪值 (第四批二刀): proc_pidpath/listallpids/bootstrap 隐藏.
+            if ([ai[@"procSpoof"] boolValue]) {
+                payload[@"tdProcSpoof"] = @"1";
+            }
         }
     }
 
