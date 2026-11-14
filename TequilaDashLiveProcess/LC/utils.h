@@ -32,10 +32,14 @@ uint64_t aarch64_emulate_adrp_ldr(uint32_t instruction, uint32_t ldrInstruction,
 // 都会再调 swizzle(UIWindow.makeKeyAndVisible/...)，method_exchangeImplementations
 // 在 iOS 26 上对同一 (class,selector) 重复交换时 cache flush 段错误；
 // 且重复交换会让 hook/orig 互换 (奇偶翻转)。这里按 (class,sel) 去重，只换一次。
-static inline void td_swizzle_once(NSMutableSet **seen, NSString *key, Class class,
+// seen 由调用方以 __strong 静态存储传入 (地址即静态对象地址, 避免 __autoreleasing 误判).
+static inline void td_swizzle_once(__strong NSMutableSet **seen, NSString *key, Class class,
                                    SEL originalAction, SEL swizzledAction, BOOL classMethod) {
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^{ *seen = [NSMutableSet new]; });
+    if (*seen == nil) {
+        @synchronized ([NSUserDefaults class]) {
+            if (*seen == nil) *seen = [NSMutableSet new];
+        }
+    }
     @synchronized (*seen) {
         if ([*seen containsObject:key]) return;
         [*seen addObject:key];
