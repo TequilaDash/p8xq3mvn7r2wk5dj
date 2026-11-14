@@ -393,10 +393,13 @@ static gid_t tdv_getegid(void) {
 //   · 宿主 app bundle 目录前缀 (image0 实路径推导, 主执行文件本身保留);
 //   · LC/内嵌工具链特征串 (LiveContainer/ZSign/OpenSSL/TweakLoader/CydiaSubstrate);
 //   · Documents/Tweaks/ 下的 tweak dylib。
-extern uint32_t tdv_real_dyld_image_count(void) __asm("_dyld_image_count");
-extern const char *tdv_real_dyld_get_image_name(uint32_t) __asm("_dyld_get_image_name");
-extern const struct mach_header *tdv_real_dyld_get_image_header(uint32_t) __asm("_dyld_get_image_header");
-extern intptr_t tdv_real_dyld_get_image_vmaddr_slide(uint32_t) __asm("_dyld_get_image_vmaddr_slide");
+// 公开 API 直接声明 (mach-o/dyld.h); 本镜像自身调用走 dyld 同镜像豁免, 不会被我们的
+// interpose 表拦到, 所以 impl 内直接调这些函数就是"原实现".
+#include <mach-o/dyld.h>
+#define tdv_real_dyld_image_count _dyld_image_count
+#define tdv_real_dyld_get_image_name _dyld_get_image_name
+#define tdv_real_dyld_get_image_header _dyld_get_image_header
+#define tdv_real_dyld_get_image_vmaddr_slide _dyld_get_image_vmaddr_slide
 
 static pthread_mutex_t gTDVDyldLock = PTHREAD_MUTEX_INITIALIZER;
 static uint32_t gTDVDyldRealCount = 0;
@@ -520,7 +523,7 @@ TDV_INTERPOSE(tdv_getuid, tdv_real_getuid);
 TDV_INTERPOSE(tdv_geteuid, tdv_real_geteuid);
 TDV_INTERPOSE(tdv_getgid, tdv_real_getgid);
 TDV_INTERPOSE(tdv_getegid, tdv_real_getegid);
-TDV_INTERPOSE(tdv_dyld_count_impl, tdv_real_dyld_image_count);
-TDV_INTERPOSE(tdv_dyld_name_impl, tdv_real_dyld_get_image_name);
-TDV_INTERPOSE(tdv_dyld_header_impl, tdv_real_dyld_get_image_header);
-TDV_INTERPOSE(tdv_dyld_slide_impl, tdv_real_dyld_get_image_vmaddr_slide);
+TDV_INTERPOSE(tdv_dyld_count_impl, _dyld_image_count);
+TDV_INTERPOSE(tdv_dyld_name_impl, _dyld_get_image_name);
+TDV_INTERPOSE(tdv_dyld_header_impl, _dyld_get_image_header);
+TDV_INTERPOSE(tdv_dyld_slide_impl, _dyld_get_image_vmaddr_slide);
