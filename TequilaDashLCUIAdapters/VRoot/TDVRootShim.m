@@ -654,7 +654,8 @@ static CFDictionaryRef tdv_sectask_copy_values_impl(tdv_SecTaskRef task,
                                                     void **error);
 extern CFDictionaryRef tdv_real_sectask_copy_values(tdv_SecTaskRef task,
                                                     CFArrayRef entitlements,
-                                                    void **error);
+                                                    void **error)
+    __asm("_SecTaskCopyValuesForEntitlements");
 TDV_INTERPOSE(tdv_sectask_copy_values_impl, tdv_real_sectask_copy_values);
 TDV_INTERPOSE(tdv_csops_impl, tdv_real_csops);
 TDV_INTERPOSE(tdv_csops_audittoken_impl, tdv_real_csops_audittoken);
@@ -671,11 +672,6 @@ TDV_INTERPOSE(tdv_dyld_slide_impl, _dyld_get_image_vmaddr_slide);
 // entitlements 数组剔除后调原实现 (返回字典少键 = 键不存在同形); 全部命中则
 // 传空数组. WithAuditToken 通道: Create 本身不泄数据, 只需拦后续 Copy ——
 // Copy 的 task 参数与 self 同进程, 单数拦截天然覆盖, 无需额外处理.
-extern CFDictionaryRef tdv_real_sectask_copy_values(tdv_SecTaskRef task,
-                                                    CFArrayRef entitlements,
-                                                    void **error)
-    __asm("_SecTaskCopyValuesForEntitlements");
-
 static CFDictionaryRef tdv_sectask_copy_values_impl(tdv_SecTaskRef task,
                                                     CFArrayRef entitlements,
                                                     void **error) {
