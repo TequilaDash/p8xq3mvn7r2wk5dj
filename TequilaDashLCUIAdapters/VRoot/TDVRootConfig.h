@@ -46,6 +46,24 @@ bool TDVSysctlSpoofEnabled(void);
 // 返回 true = 已伪值化 (调用方直接返回); false = 透传真 sysctl.
 bool TDVSysctlSpoofLookup(const char *name, char *out, size_t outSize);
 
+// SecTask entitlement 隐藏 (TD_SECTASK_SPOOF=1, launcher 按 per-app secTaskSpoof 透传):
+// 访客 SecTaskCopyValueForEntitlement 查到宿主私有键时返回 NULL (键不存在语义),
+// 防"读宿主 entitlement 看 LC/TD 痕迹"类检测. 合法键 (应用组/团队标识等) 透传真值.
+bool TDVSecTaskSpoofEnabled(void);
+// entitlement = 请求键名 (CFStringRef). 返回 true = 应答 NULL (调用方返回 NULL);
+// false = 透传真实现. 仅对字符串型查询有意义, 数组型键 (application-groups) 永远透传.
+bool TDVSecTaskHideEntitlement(const char *entitlement);
+
+// csops 伪 CS flags (TD_CSOPS_SPOOF=1, launcher 按 per-app csopsSpoof 透传):
+// 检测器经 csops(CS_OPS_STATUS) 读代码签名 flags: CS_DEBUGGED 0x10000000 =
+// "调试器已附加"内核级判据, CS_GET_TASK_ALLOW 0x2000 = "可被调试"(侧载宿主必有
+// get-task-allow). 伪表默认清除这两位; TD_CSOPS_KEEP_DEBUGGED=1 时保留
+// CS_DEBUGGED (供我们自己的调试器探测链路继续工作).
+bool TDVCsopsSpoofEnabled(void);
+// 返回 true = *flagsOut 已伪值化 (调用方直接 copyout); false = 透传真 csops.
+// flagsIn = 真 flags. 仅处理 CS_OPS_STATUS; 其余 ops 由 shim 层透传.
+bool TDVCsopsSpoofLookup(unsigned int flagsIn, unsigned int *flagsOut);
+
 /// 当前模式; 未启用返回 TDVRootModeOff.
 TDVRootMode TDVRootCurrentMode(void);
 

@@ -416,6 +416,75 @@ static int tdv_sysctlbyname(const char *name, void *oldp, size_t *oldlenp,
     return tdv_real_sysctlbyname(name, oldp, oldlenp, newp, newlen);
 }
 
+#pragma mark - SecTask entitlement 隐藏 (TD_SECTASK_SPOOF)
+
+// 检测器经 SecTaskCopyValueForEntitlement 读宿主任务 entitlement: 命中宿主私有键
+// (get-task-allow / com.apple.private.* / com.apple.developer.* / 注入框架前缀)
+// 即暴露侧载+注入宿主身份. 隐藏语义 = 返回 NULL 且 *error 清空 (与"键不存在"
+// 完全同形). 合法键 (application-groups / team-identifier 等) 透传 —— 宿主自身
+// 的 td_signed_app_groups (worse_query.m:133) 依赖 application-groups, 不能误伤.
+// 门控与键表在 TDVRootConfig (TDVSecTaskSpoofEnabled / TDVSecTaskHideEntitlement).
+typedef struct __SecTask *tdv_SecTaskRef;
+
+extern void *tdv_real_sectask_copy(tdv_SecTaskRef task, CFStringRef entitlement,
+                                   void **error)
+    __asm("_SecTaskCopyValueForEntitlement");
+
+static void *tdv_sectask_copy_impl(tdv_SecTaskRef task, CFStringRef entitlement,
+                                   void **error) {
+    // entitlement 是 CFStringRef (Foundation 已 import, CF 类型直接可用);
+    // CFStringGetCString 不经 interpose, 无递归风险.
+    char name[256];
+    Boolean ok = false;
+    if (entitlement) {
+        ok = CFStringGetCString(entitlement, name, sizeof(name), kCFStringEncodingUTF8);
+    }
+    if (ok && TDVSecTaskHideEntitlement(name)) {
+        if (error) *error = NULL;
+        return NULL;
+    }
+    return tdv_real_sectask_copy(task, entitlement, error);
+}
+
+#pragma mark - csops 伪 CS flags (TD_CSOPS_SPOOF)
+
+// 检测器两个通道读同一组内核 flags: csops(pid, CS_OPS_STATUS) 与
+// csops_audittoken(token, CS_OPS_STATUS). 拦 CS_OPS_STATUS, 清
+// CS_GET_TASK_ALLOW (侧载宿主必有, 必露) 与 CS_DEBUGGED (调试器判据,
+// TD_CSOPS_KEEP_DEBUGGED=1 时保留给宿主自己的调试器探测链路).
+// 其余 ops (CS_OPS_MARKINVALID 等) 与 pid!=self 的查询透传.
+// 位定义与门控在 TDVRootConfig (TDVCsopsSpoofEnabled / TDVCsopsSpoofLookup).
+extern int tdv_real_csops(int pid, unsigned int ops, void *useraddr, size_t usersize)
+    __asm("_csops");
+extern int tdv_real_csops_audittoken(void *token, unsigned int ops, void *useraddr,
+                                     size_t usersize)
+    __asm("_csops_audittoken");
+
+static int tdv_csops_apply(unsigned int ops, void *useraddr, size_t usersize,
+                           int realRc) {
+    if (ops == 0 /*CS_OPS_STATUS*/ && realRc == 0 && useraddr &&
+        usersize >= sizeof(unsigned int)) {
+        unsigned int fake = 0;
+        memcpy(&fake, useraddr, sizeof(unsigned int));
+        if (TDVCsopsSpoofLookup(fake, &fake)) {
+            memcpy(useraddr, &fake, sizeof(unsigned int));
+        }
+    }
+    return realRc;
+}
+
+static int tdv_csops_impl(int pid, unsigned int ops, void *useraddr, size_t usersize) {
+    // 仅伪化自身 pid 查询 (getpid 同进程恒等; 跨 pid 查询给真值 —— 访客无权跨进程读).
+    int rc = tdv_real_csops(pid, ops, useraddr, usersize);
+    return tdv_csops_apply(ops, useraddr, usersize, rc);
+}
+
+static int tdv_csops_audittoken_impl(void *token, unsigned int ops, void *useraddr,
+                                     size_t usersize) {
+    int rc = tdv_real_csops_audittoken(token, ops, useraddr, usersize);
+    return tdv_csops_apply(ops, useraddr, usersize, rc);
+}
+
 #pragma mark - dyld 镜像清单裁剪 (M41)
 
 // 目标: 访客 _dyld_image_count/_dyld_get_image_* 看不到宿主注入层.
@@ -577,6 +646,9 @@ TDV_INTERPOSE(tdv_geteuid, tdv_real_geteuid);
 TDV_INTERPOSE(tdv_getgid, tdv_real_getgid);
 TDV_INTERPOSE(tdv_getegid, tdv_real_getegid);
 TDV_INTERPOSE(tdv_sysctlbyname, tdv_real_sysctlbyname);
+TDV_INTERPOSE(tdv_sectask_copy_impl, tdv_real_sectask_copy);
+TDV_INTERPOSE(tdv_csops_impl, tdv_real_csops);
+TDV_INTERPOSE(tdv_csops_audittoken_impl, tdv_real_csops_audittoken);
 TDV_INTERPOSE(tdv_dyld_count_impl, _dyld_image_count);
 TDV_INTERPOSE(tdv_dyld_name_impl, _dyld_get_image_name);
 TDV_INTERPOSE(tdv_dyld_header_impl, _dyld_get_image_header);

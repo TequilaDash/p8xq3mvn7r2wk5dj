@@ -174,6 +174,30 @@ static const TDVSysctlSpoofEntry kTDVSysctlSpoofs[] = {
 
 static bool gTDVSysctlSpoof = false;
 
+// SecTask entitlement 隐藏数据源: TD_SECTASK_SPOOF env (launcher 透传 per-app secTaskSpoof).
+// 精确表 = 宿主侧真实存在且暴露宿主身份的键; 前缀表 = 家族通配 (LC/TD/私有注入框架).
+// 注意: 宿主自己的合法键 (com.apple.security.application-groups / team-identifier /
+// application-identifier / keychain-access-groups) 一律透传 —— worse_query.m 的
+// td_signed_app_groups 靠 application-groups 工作, 隐藏它会把宿主自己打断.
+static const char *kTDVSecTaskHideExact[] = {
+    "get-task-allow",
+};
+static const char *kTDVSecTaskHidePrefixes[] = {
+    "com.apple.private.",
+    "com.apple.developer.",
+    "org.emexlabs.nyxian.",
+    "org.tequila.",
+    "td.tequila.",
+};
+
+static bool gTDVSecTaskSpoof = false;
+
+// csops 伪 CS flags数据源: TD_CSOPS_SPOOF env (launcher 透传 per-app csopsSpoof).
+static bool gTDVCsopsSpoof = false;
+// TD_CSOPS_KEEP_DEBUGGED=1: 保留 CS_DEBUGGED (我们自己的调试器探测链路依赖它,
+// 见 TequilaDash-Bridging-Header.h v0.3.8 注释 —— 隐藏它会让体检引擎误判).
+static bool gTDVCsopsKeepDebugged = false;
+
 static void tdv_init_once(void);
 
 bool TDVDyldTrimEnabled(void) {
@@ -184,6 +208,55 @@ bool TDVDyldTrimEnabled(void) {
 bool TDVSysctlSpoofEnabled(void) {
     tdv_init_once();
     return gTDVSysctlSpoof;
+}
+
+bool TDVSecTaskSpoofEnabled(void) {
+    tdv_init_once();
+    return gTDVSecTaskSpoof;
+}
+
+bool TDVSecTaskHideEntitlement(const char *entitlement) {
+    if (!entitlement || !TDVSecTaskSpoofEnabled()) {
+        return false;
+    }
+    for (size_t i = 0; i < sizeof(kTDVSecTaskHideExact) / sizeof(kTDVSecTaskHideExact[0]); i++) {
+        if (strcmp(entitlement, kTDVSecTaskHideExact[i]) == 0) {
+            return true;
+        }
+    }
+    for (size_t i = 0; i < sizeof(kTDVSecTaskHidePrefixes) / sizeof(kTDVSecTaskHidePrefixes[0]); i++) {
+        size_t n = strlen(kTDVSecTaskHidePrefixes[i]);
+        if (strncmp(entitlement, kTDVSecTaskHidePrefixes[i], n) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool TDVCsopsSpoofEnabled(void) {
+    tdv_init_once();
+    return gTDVCsopsSpoof;
+}
+
+// CS_OPS_STATUS 的相关位 (XNU bsd/kern/bsd_coderule.c):
+//   CS_GET_TASK_ALLOW 0x00002000 (get-task-allow entitlement 的内核投影)
+//   CS_DEBUGGED       0x10000000 (调试器已附加)
+#define TDV_CS_GET_TASK_ALLOW 0x00002000u
+#define TDV_CS_DEBUGGED       0x10000000u
+// 伪值需要与真值同形状, 但这两位按门控清除; 其余位 (CS_VALID/CS_HARD/CS_KILL/
+// CS_RESTRICT/CS_PLATFORM_BINARY/CS_ENTITLEMENTS_VALID/CS_LINKER_SIGNED…) 原样保留,
+// 避免破坏访客对自身签名状态的一致性预期.
+bool TDVCsopsSpoofLookup(unsigned int flagsIn, unsigned int *flagsOut) {
+    if (!flagsOut || !TDVCsopsSpoofEnabled()) {
+        return false;
+    }
+    unsigned int v = flagsIn;
+    v &= ~TDV_CS_GET_TASK_ALLOW;
+    if (!gTDVCsopsKeepDebugged) {
+        v &= ~TDV_CS_DEBUGGED;
+    }
+    *flagsOut = v;
+    return true;
 }
 
 bool TDVSysctlSpoofLookup(const char *name, char *out, size_t outSize) {
@@ -242,6 +315,11 @@ static void tdv_init_locked(void) {
     gTDVDyldTrim = getenv("TD_DYLD_TRIM") && getenv("TD_DYLD_TRIM")[0] == '1';
     // sysctl 伪值表独立于 vroot: TD_SYSCTL_SPOOF 由 launcher 按 per-app sysctlSpoof 透传.
     gTDVSysctlSpoof = getenv("TD_SYSCTL_SPOOF") && getenv("TD_SYSCTL_SPOOF")[0] == '1';
+    // SecTask entitlement 隐藏独立于 vroot: TD_SECTASK_SPOOF.
+    gTDVSecTaskSpoof = getenv("TD_SECTASK_SPOOF") && getenv("TD_SECTASK_SPOOF")[0] == '1';
+    // csops 伪 CS flags 独立于 vroot: TD_CSOPS_SPOOF (+ TD_CSOPS_KEEP_DEBUGGED).
+    gTDVCsopsSpoof = getenv("TD_CSOPS_SPOOF") && getenv("TD_CSOPS_SPOOF")[0] == '1';
+    gTDVCsopsKeepDebugged = getenv("TD_CSOPS_KEEP_DEBUGGED") && getenv("TD_CSOPS_KEEP_DEBUGGED")[0] == '1';
     gTDVRootMode = TDVRootModeOff;
     gTDVRootRoot[0] = '\0';
 
