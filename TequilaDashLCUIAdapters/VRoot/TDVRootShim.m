@@ -19,6 +19,7 @@
 //
 
 #import "TDVRootConfig.h"
+#import <Foundation/Foundation.h>
 
 #include <dirent.h>
 #include <dlfcn.h>
