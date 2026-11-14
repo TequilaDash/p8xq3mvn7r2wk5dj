@@ -28,7 +28,11 @@
 #include <mach-o/dyld.h>
 #include <libgen.h>
 #include <sys/acl.h>
-#include <util.h>
+// 本仓改造: 去掉 #include <util.h>。上游靠它拿 forkpty/openpty 声明, 本文件并未使用
+// 这些符号; 而本仓顶层 HEADER_SEARCH_PATHS 含 $(SRCROOT)/ZSign/common, 角括号
+// <util.h> 会先命中 ZSign/common/util.h -> 其 common.h 再 include <set> (C++ 头),
+// 在 C 编译单元里直接报 "'set' file not found" (CI run 43548247600 实锤)。
+// 若将来需要 pty 族符号, 改用 -I 顺序无关的带路径包含或前置 SDK 系统路径。
 #include <nl_types.h>
 
 #include "roothide.h"

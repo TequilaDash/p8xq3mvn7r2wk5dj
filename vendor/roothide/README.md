@@ -52,10 +52,15 @@
    - `jbrootat_alloc` 对已位于 JBROOT 之内的绝对路径恒等返回，防
      `<JBROOT><JBROOT>/…` 双前缀（上游不存在该输入，行为是安全超集）。
    - `jbrand()` 对未初始化 (JBRAND==NULL) 返回 0，不再解引用。
-3. `symredirect.cpp`（改写逻辑逐字保留）
+3. `vroot.c`（其余逻辑逐字保留）
+   - 去掉 `#include <util.h>`：本仓顶层 HEADER_SEARCH_PATHS 含 `$(SRCROOT)/ZSign/common`，
+     角括号 `<util.h>` 先命中 ZSign 的 util.h → 其 common.h → `<set>`（C++ 头）在
+     C 编译单元报 "'set' file not found"（CI run 43548247600 实锤）。本文件不使用
+     util.h 的任何符号（forkpty/openpty 族），直接移除。
+4. `symredirect.cpp`（改写逻辑逐字保留）
    - CLI `main()` → 库函数 `symredirect_process_file(target, tmpdir, errbuf, errbufsize)`；
      临时目录参数化（iOS 沙盒无可写的 `/tmp`），诊断改 errbuf。
-4. `TDRootHideInit.{h,c}`（本仓自有）
+5. `TDRootHideInit.{h,c}`（本仓自有）
    - brand 生成遵守上游 `common.c` 校验代数（低字节 == 高 7 字节异或），
      目录名保持 `.jbroot-<16大写hex>`。
    - TDLibVrootApi.dylib 的 constructor 调 `TDRootHideInstallFromEnvIfRequested()`，
