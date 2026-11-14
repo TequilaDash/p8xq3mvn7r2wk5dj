@@ -240,7 +240,4 @@ private struct TDSurfaceRowView: View {
         }
         .padding(.vertical, 2)
     }
-            }
-        }
-    }
 }
