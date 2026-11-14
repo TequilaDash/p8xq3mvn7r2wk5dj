@@ -1,0 +1,53 @@
+name: TD Build
+on:
+  push:
+    tags: ['TD_v0.4.*']
+  workflow_dispatch:
+
+# 只 Tag 不 Release; 产物名 = tag 名 (包体即 tag); 不复用任何旧产物.
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Xcode
+        run: sudo xcode-select -s /Applications/Xcode_27.2.app/Contents/Developer
+      - name: Build IPA
+        run: |
+          set -e
+          # 构建逻辑占位: 把 Sources 打成最小 IPA 骨架（后续接 xcodegen 真构建）.
+          mkdir -p Payload/TDSandbox.app
+          plutil -create xml1 Payload/TDSandbox.app/Info.plist
+          plutil -replace CFBundleExecutable -string TDSandbox Payload/TDSandbox.app/Info.plist
+          plutil -replace CFBundleIdentifier -string org.tequila.sandbox Payload/TDSandbox.app/Info.plist
+          plutil -replace CFBundleName -string TDSandbox Payload/TDSandbox.app/Info.plist
+          plutil -replace CFBundlePackageType -string APPL Payload/TDSandbox.app/Info.plist
+          plutil -replace CFBundleShortVersionString -string 0.4 Payload/TDSandbox.app/Info.plist
+          plutil -replace CFBundleVersion -string 1 Payload/TDSandbox.app/Info.plist
+          plutil -replace MinimumOSVersion -string 16.0 Payload/TDSandbox.app/Info.plist
+          plutil -replace CFBundleIconName -string "" Payload/TDSandbox.app/Info.plist
+          plutil -replace UILaunchStoryboardName -string "" Payload/TDSandbox.app/Info.plist
+          printf '#!/bin/bash\nexit 0\n' > Payload/TDSandbox.app/TDSandbox
+          chmod +x Payload/TDSandbox.app/TDSandbox
+          TAG="${GITHUB_REF_NAME}"
+          OUT="${TAG}.ipa"
+          zip -r "$OUT" Payload
+          echo "IPA_NAME=$OUT" >> "$GITHUB_ENV"
+      - name: Upload IPA (tag-named, never reused)
+        uses: actions/upload-artifact@v4
+        with:
+          name: "${{ env.IPA_NAME }}"
+          path: "${{ env.IPA_NAME }}"
+      - name: Tag notes (GitHub tag page shows this body)
+        run: |
+          python3 - <<'PY'
+          import os, subprocess, datetime
+          tag = os.environ["GITHUB_REF_NAME"]
+          now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+          body = subprocess.run(["git","log","--format=%s","-5"],capture_output=True,text=True).stdout
+          lines = "\n".join(f"{i+1}. {l}" for i,l in enumerate(body.strip().split("\n")))
+          notes = f"{now} 版本号 Update：\n[Update日志]\n{lines}\n\n[编译环境]\nXcode: 27.2\nBuild: {tag}\nSDK: iphoneos27.2\n"
+          os.environ["TD_NOTES"] = notes
+          with open("TD_NOTES.txt","w") as f: f.write(notes)
+          print(notes)
+          PY
