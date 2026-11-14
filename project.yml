@@ -43,8 +43,8 @@ settings:
     TD_HOST_BUNDLE_ID: com.tequila.dash
     PRODUCT_BUNDLE_IDENTIFIER: com.tequila.dash
     PRODUCT_NAME: TequilaDash
-    MARKETING_VERSION: "0.3.882"
-    CURRENT_PROJECT_VERSION: "1171"
+    MARKETING_VERSION: "0.3.883"
+    CURRENT_PROJECT_VERSION: "1172"
     # 注：这里**刻意不写** `SWIFT_VERSION` —— 实测顶层 `settings.base` 的它**不被 xcodegen 采纳**，
     # 真正生效的是下面 target 层那一份（当前 `"6.0"` = Swift 6 语言模式）。
     # 另注：**编译器版本 ≠ 语言模式** —— CI 用 Xcode 27 自带的 Swift 6.4 编译器，
@@ -71,6 +71,9 @@ settings:
       - "$(SRCROOT)/vendor/litehook/src"
       - "$(SRCROOT)/vendor/litehook/external/include"
       - "$(SRCROOT)/vendor/fishhook"
+      # roothide 路径层 (Tier B-3)：LCBootstrap #import "TDRootHideInit.h"、
+      # symredirect.cpp #include "vroot.h"、TDRootfsUnpack.m #import "TDRootHideInit.h"
+      - "$(SRCROOT)/vendor/roothide"
       # Asspp 本地 SAP 登录：unicorn 头由 prepare.sap.py 生成在 DERIVED_FILE_DIR/SAP 下
       - "$(DERIVED_FILE_DIR)/SAP/source/include"
     # 对齐 Theos 的 LDFLAGS：系统 framework。
@@ -165,6 +168,16 @@ targets:
       # 上游 LC 本来就不链接它们: LCBootstrap.m:637/645 用 dlopen(绝对路径),
       # 所以这里也必须 embed:false —— 链接是错的, 加载由 dlopen 负责.
       - target: TequilaDashTweakLoader
+        embed: true
+        link: false
+      # roothide (Tier B-3) symredirect shim 库: 只 embed 不链接 —— TDRootfsUnpack 把
+      # TDLibVrootApi/TDLibVroot 两件拷进 rootfs 的 usr/lib/ (跳板产物复制为
+      # libvrootapi.dylib), 被改写的二进制经 @loader_path/.jbroot/usr/lib/libvrootapi.dylib
+      # 解析; 链接是错的 (同 TweakLoader).
+      - target: TDLibVrootApi
+        embed: true
+        link: false
+      - target: TDLibVroot
         embed: true
         link: false
       - target: TestJITLess
@@ -262,6 +275,30 @@ targets:
       # vroot (Tier A): LCBootstrap.m 同时编进主 App, 这两个符号必须同样可链.
       # 主 App 进程 TD_VROOT 未设置 => shim 停用; interpose 表也不会影响已装载的宿主自身镜像.
       - path: TequilaDashLCUIAdapters/VRoot
+      # roothide 路径层 (Tier B-3, MIT, 见 vendor/roothide/ 文件头改造台账):
+      # 宿主侧只需要路径代数 (jbroot/rootfs 换算 + 随机根命名) 与 symredirect 引擎;
+      # vroot_* interpose 实现族只编进 TDLibVrootApi.dylib (symredirect 的 shim 库).
+      # LICENSE 不编进产物 (许可正文在文件本身 + NOTICE 条目).
+      - path: vendor/roothide
+        excludes:
+          - "LICENSE"
+          - "README.md"
+          # 头文件一律不进主 target 的 header 集 (显式模块会为目标头生成 module map,
+          # 两个 common.h —— ZSign/common 与本目录 —— 会让 ZSign 的 signing.cpp
+          # 摸错 common.h, ZUtil/assert 全部 undeclared, CI run 43552731758 实锤)。
+          # 消费方经顶层 HEADER_SEARCH_PATHS 的 $(SRCROOT)/vendor/roothide 文本包含。
+          - "cache.h"
+          - "common.h"
+          - "roothide.h"
+          - "vroot.h"
+          - "TDRootHideInit.h"
+          - "vroot.c"
+          - "vroot.cpp"
+          - "vrootapi.c"
+          - "vroot_mktemp.c"
+          - "vroot_rootfs.c"
+          - "vroot_exec.c"
+          - "vroot_dlfcn.c"
       # litehook / fishhook（v0.3.783）：与 LiveContainer 同源同版本，
       # 只做 dyld_shared_cache 符号解析 / GOT 重绑 / 函数分支改写，无其它依赖。
       # 注意 litehook.c 会 #include "dyld_cache_format.h"，靠上面的 HEADER_SEARCH_PATHS 找到。
@@ -441,8 +478,8 @@ targets:
         # 版本号三处同步（HARD-RULES 22）：主 App 的 settings.base 与 Resources/Info.plist 之外，
         # 扩展 target 是第三处 —— 原先这里停在 0.3.587/881（落后主 App 33 个版本），
         # 会让 .appex 的 CFBundleVersion 与主 App 不一致，iOS 安装/升级可拒或把扩展判过期。
-        MARKETING_VERSION: "0.3.882"
-        CURRENT_PROJECT_VERSION: "1171"
+        MARKETING_VERSION: "0.3.883"
+        CURRENT_PROJECT_VERSION: "1172"
         IPHONEOS_DEPLOYMENT_TARGET: "18.0"
         # 与主 target 同口径的 Swift 6 严格并发（详见主 target 的说明）.
         SWIFT_VERSION: "6.0"
@@ -478,6 +515,10 @@ targets:
       # vroot (Tier A): 三个文件只编进扩展进程 —— __DATA,__interpose 只应作用于访客,
       # 不进主 App / LiveContainerSwiftUI.framework (后者已 excludes "VRoot").
       - path: TequilaDashLCUIAdapters/VRoot
+      # roothide init (Tier B-3): LCBootstrap 的 roothide init 调用只落在扩展,
+      # 只带 setter + brand 名字代数两个 TU, 不带 jbroot/vroot 实现 (扩展进程不消费).
+      - path: vendor/roothide/TDRootHideInit.c
+      - path: vendor/roothide/common.c
       - path: TequilaDash/Services/MachOLoader/uloader.c
       - path: vendor/litehook/src
       - path: vendor/fishhook
@@ -495,8 +536,8 @@ targets:
         PRODUCT_NAME: LiveProcess
         # 版本号三处同步 (HARD-RULES 22): 与 Tunnel 同款纪律, 缺写则 .appex 的 CFBundleVersion 为空,
         # iOS 会因主 App 与扩展版本不一致拒装/判过期.
-        MARKETING_VERSION: "0.3.882"
-        CURRENT_PROJECT_VERSION: "1171"
+        MARKETING_VERSION: "0.3.883"
+        CURRENT_PROJECT_VERSION: "1172"
         IPHONEOS_DEPLOYMENT_TARGET: "18.0"
         SWIFT_VERSION: "6.0"
         SWIFT_STRICT_CONCURRENCY: complete
@@ -551,8 +592,8 @@ targets:
         DYLIB_CURRENT_VERSION: 1
         DYLIB_INSTALL_NAME_BASE: "@rpath"
         SKIP_INSTALL: "YES"
-        MARKETING_VERSION: "0.3.882"
-        CURRENT_PROJECT_VERSION: "1171"
+        MARKETING_VERSION: "0.3.883"
+        CURRENT_PROJECT_VERSION: "1172"
         IPHONEOS_DEPLOYMENT_TARGET: "18.0"
         CLANG_ENABLE_OBJC_ARC: "YES"
         CLANG_ENABLE_MODULES: "YES"
@@ -574,6 +615,86 @@ targets:
         OTHER_CFLAGS:
           - "-fcommon"
 
+  # roothide (Tier B-3) symredirect 的 shim 库, 按上游三件套拆成两个 dylib —— **不能合一**:
+  # vroot.c 的实现调用真 libc (open/stat/...); 若与 vrootapi.c 的 libc 同名裸跳板同链,
+  # 静态链接器会把实现里的 open 引用绑到本镜像的 open 跳板 -> vroot_open -> open -> 无限递归.
+  # 上游正是 libvroot.dylib(实现) + libvrootapi.dylib(跳板) 分体 (Makefile 同构).
+  #
+  # 运行时链: 被改写的 rootfs 二进制 -> @loader_path/.jbroot/usr/lib/libvrootapi.dylib
+  # (TDLibVrootApi, libc 同名跳板, LC_LOAD_DYLIB 指向 @loader_path/TDLibVroot.dylib)
+  # -> TDLibVroot (vroot_* 实现 + jbroot 路径代数). 两件都由 TDRootfsUnpack 拷入
+  # <jbroot>/usr/lib/ (TDLibVrootApi 产物复制为 libvrootapi.dylib), 构造器从
+  # TD_VROOT/TD_VROOT_MODE 自举 __roothideinit_JBROOT. 主 App 只 embed 不链接.
+  TDLibVroot:
+    type: library.dynamic
+    platform: iOS
+    sources:
+      - path: vendor/roothide/TDRootHideInit.c
+      - path: vendor/roothide/common.c
+      - path: vendor/roothide/cache.c
+      - path: vendor/roothide/jbroot.c
+      - path: vendor/roothide/vroot.c
+      # C++ fstream/ofstream std::string 重载 (vroot.h 表内的 mangled 名条目):
+      # 缺它则 gvrootapiaddrs 引用 _vroot__ZNSt3__1... 未定义 (CI run 43550922694).
+      - path: vendor/roothide/vroot.cpp
+      - path: vendor/roothide/vroot_mktemp.c
+      - path: vendor/roothide/vroot_rootfs.c
+      - path: vendor/roothide/vroot_exec.c
+      - path: vendor/roothide/vroot_dlfcn.c
+    settings:
+      base:
+        PRODUCT_NAME: TDLibVroot
+        EXECUTABLE_PREFIX: ""
+        DYLIB_COMPATIBILITY_VERSION: 1
+        DYLIB_CURRENT_VERSION: 1
+        # libvrootapi 的 LC_LOAD_DYLIB 按 @loader_path 解析我们 (两件同落 <jbroot>/usr/lib).
+        DYLIB_INSTALL_NAME_BASE: "@loader_path"
+        SKIP_INSTALL: "YES"
+        MARKETING_VERSION: "0.3.879"
+        CURRENT_PROJECT_VERSION: "1168"
+        IPHONEOS_DEPLOYMENT_TARGET: "18.0"
+        # vroot_* 必须按名导出 (跳板 b _vroot_NAME 二级绑定); 同主 App 口径.
+        GCC_SYMBOLS_PRIVATE_EXTERN: "NO"
+        # 纯 C 库不需要 modules; 且 vroot.c 尾部符号表把 vroot.h include 在初始化器内
+        # (上游同构), Explicit Modules 依赖扫描会把它当初始化器内的模块导入报错
+        # (CI run 43549070193) —— 关掉, 回到上游 theos 的纯预处理模式.
+        CLANG_ENABLE_MODULES: "NO"
+        # 顶层 OTHER_LDFLAGS 含 $(DERIVED_FILE_DIR)/SAP/lib/libunicorn.a —— 本 target 无
+        # prepare.sap 脚本, 继承必炸 (TestJITLess 同款整段覆盖, CI run 42663291263).
+        OTHER_LDFLAGS:
+          - "-lc++"
+
+  # libc 同名裸跳板层 (vrootapi.c): symredirect 改写后的二进制把 /usr/lib、/System 的
+  # vroot API 导入重绑到这里; 跳板 b 指令转 TDLibVroot 的 vroot_* 实现.
+  TDLibVrootApi:
+    type: library.dynamic
+    platform: iOS
+    sources:
+      - path: vendor/roothide/vrootapi.c
+    dependencies:
+      - target: TDLibVroot
+        embed: false
+        link: true
+    settings:
+      base:
+        PRODUCT_NAME: TDLibVrootApi
+        EXECUTABLE_PREFIX: ""
+        DYLIB_COMPATIBILITY_VERSION: 1
+        DYLIB_CURRENT_VERSION: 1
+        # 本件的 install name 不被消费者引用 (symredirect 在二进制里硬编码
+        # @loader_path/.jbroot/usr/lib/libvrootapi.dylib), @rpath 即可.
+        DYLIB_INSTALL_NAME_BASE: "@rpath"
+        SKIP_INSTALL: "YES"
+        MARKETING_VERSION: "0.3.879"
+        CURRENT_PROJECT_VERSION: "1168"
+        IPHONEOS_DEPLOYMENT_TARGET: "18.0"
+        GCC_SYMBOLS_PRIVATE_EXTERN: "NO"
+        # 同 TDLibVroot: 纯 C 跳板, 关 modules (初始化器内 include 模式与显式模块扫描不兼容).
+        CLANG_ENABLE_MODULES: "NO"
+        # 同 TDLibVroot: 顶层 libunicorn.a 继承必炸, 整段覆盖.
+        OTHER_LDFLAGS:
+          - "-lc++"
+
   # JIT-less 探针 dylib: LC 的 TestJITLess 等价物 (LiveContainer.xcodeproj:643, settings :1345-1372).
   # 职责: constructor 里置 LC_JITLESS_TEST_LOADED 标记 (TestJITLess.m:3-7), 由主 App 拷进临时目录
   # 再签进测试包, 用来验证 JIT-less 环境是否能加载注入库 (LCUtils.m:262-272 读
@@ -593,8 +714,8 @@ targets:
         DYLIB_CURRENT_VERSION: 1
         DYLIB_INSTALL_NAME_BASE: "@rpath"
         SKIP_INSTALL: "YES"
-        MARKETING_VERSION: "0.3.882"
-        CURRENT_PROJECT_VERSION: "1171"
+        MARKETING_VERSION: "0.3.883"
+        CURRENT_PROJECT_VERSION: "1172"
         IPHONEOS_DEPLOYMENT_TARGET: "15.0"
         # 顶层 settings 的 OTHER_LDFLAGS 含 $(DERIVED_FILE_DIR)/SAP/lib/libunicorn.a
         # (主 App 的 SAP 登录底座). 本 target 无 prepare.sap 脚本, 继承该键会在链接期
@@ -638,8 +759,8 @@ targets:
         
         SKIP_INSTALL: YES
         CODE_SIGN_ENTITLEMENTS: vendor/LiveContainer/ShareExtension/ShareExtension.entitlements
-        MARKETING_VERSION: "0.3.882"
-        CURRENT_PROJECT_VERSION: "1171"
+        MARKETING_VERSION: "0.3.883"
+        CURRENT_PROJECT_VERSION: "1172"
         IPHONEOS_DEPLOYMENT_TARGET: "16.0"
         SWIFT_VERSION: "5.0"
         SWIFT_OBJC_BRIDGING_HEADER: "$(SRCROOT)/vendor/LiveContainer/ShareExtension/ShareExtension-Bridging-Header.h"
@@ -700,8 +821,8 @@ targets:
         INFOPLIST_KEY_CFBundleDisplayName: LaunchAppExtension
         SKIP_INSTALL: YES
         CODE_SIGN_ENTITLEMENTS: vendor/LiveContainer/LaunchAppExtension/LaunchAppExtension.entitlements
-        MARKETING_VERSION: "0.3.882"
-        CURRENT_PROJECT_VERSION: "1171"
+        MARKETING_VERSION: "0.3.883"
+        CURRENT_PROJECT_VERSION: "1172"
         IPHONEOS_DEPLOYMENT_TARGET: "16.0"
         SWIFT_VERSION: "5.0"
         SWIFT_OBJC_BRIDGING_HEADER: "$(SRCROOT)/vendor/LiveContainer/LaunchAppExtension/LaunchAppExtension-Bridging-Header.h"
@@ -753,8 +874,8 @@ targets:
         PRODUCT_MODULE_NAME: LiveContainerSwiftUI
         PRODUCT_NAME: LiveContainerSwiftUI
         DEFINES_MODULE: "YES"
-        MARKETING_VERSION: "0.3.882"
-        CURRENT_PROJECT_VERSION: "1171"
+        MARKETING_VERSION: "0.3.883"
+        CURRENT_PROJECT_VERSION: "1172"
         IPHONEOS_DEPLOYMENT_TARGET: "18.0"
         # 上游用 SWIFT_VERSION 5.0 (pbxproj:1197/1240); 本仓主 target 是 6.0 complete,
         # framework 单独用 5.0 保持上游源码原样可编 (Swift 6 严格并发会炸上游 Swift 5 代码).

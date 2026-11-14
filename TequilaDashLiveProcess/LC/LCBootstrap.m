@@ -47,6 +47,9 @@ static void TDGuestSnapshotMaybe(NSString *newHomePath, NSDictionary *guestAppIn
     }
 }
 
+// roothide (Tier B-3): TD_VROOT 同门控的 __roothideinit_JBROOT 安装 (vendored libroothide).
+#import "TDRootHideInit.h"
+
 #include <mach/mach.h>
 #include <mach-o/dyld.h>
 #include <mach-o/dyld_images.h>
@@ -343,6 +346,8 @@ NSString *LCPrepareGuestExtension(NSDictionary *request) {
 
     // vroot (Tier A): 与 invokeAppMain 同一点 —— 在扩展的 DyldHooksInit 之前强制重读配置.
     TDVRootInstallIfRequested();
+    // roothide (Tier B-3): TDVRootInstallIfRequested 同点安装 —— TD_VROOT 已就位时设置
+    TDRootHideInstallFromEnvIfRequested();
     // M37a: 扩展路径同样清洗 (TD_NET_BLOCK hook 已在此前安装).
     TDScrubGuestEnv();
     if (checkJITEnabled()) init_bypassDyldLibValidation();
@@ -705,6 +710,8 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
     // vroot (Tier A): __DATA,__interpose 在镜像装载时已生效; 这里在访客 dlopen 之前
     // 按当前环境变量强制重读配置 (进程早期可能还没拿到宿主 userInfo 落下的 TD_VROOT).
     TDVRootInstallIfRequested();
+    // roothide (Tier B-3): TDVRootInstallIfRequested 同点安装 (扩展与访客同一条链),
+    TDRootHideInstallFromEnvIfRequested();
     // M37a: vroot 配置已进内存, TD_NET_BLOCK 的 hook 已装好 —— 现在清 env, guest 不可见.
     TDScrubGuestEnv();
     BOOL hookDlopen = !isSideStore && !isSharedBundle && LCSharedUtils.certificatePassword && isLiveProcess;

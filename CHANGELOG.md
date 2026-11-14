@@ -1,3 +1,62 @@
+## [0.3.883] - 2026-11-14
+
+### roothide 路径层 + rootfs 解包（Tier B-3）
+- vendor `roothide/libroothide`（MIT，commit cb236f9，LICENSE 保留 + NOTICE 第 9 条）：
+  jbroot 路径代数（`jbroot_alloc/rootfs_alloc`）+ vroot interpose 实现族 + symredirect
+  引擎；改造点见 `vendor/roothide/README.md` 台账 —— 去掉
+  `/var/containers/Bundle/Application` 硬编码、`__roothideinit_JBROOT` 改由外部设置
+  （`TD_VROOT/TD_VROOT_MODE` 同 Tier A 门控，默认关）。
+- 新 `TequilaDash/Engine/TDRootfsUnpack.{h,m}`（宿主侧后台调用）：libarchive
+  （系统 `libarchive.2.dylib`，dlopen 解析）解包 procursus binpack/最小 rootfs 到
+  `Documents/rootfs/.jbroot-<16hex>`（per-guest 随机根）；解包 flags 在上游 decomp
+  0xD（TIME|ACL|FFLAGS）之上叠加 `SECURE_NODOTDOT|SECURE_NOABSOLUTEPATHS`；zstd
+  明确不支持（iOS 无系统 libzstd，SWCompression/Apple libarchive 均无 zstd 解码）。
+  解包树统一收紧 0755（清 suid/sgid/sticky 与组/其他可写）。
+- 重签链路（开关参数 `TDRootfsUnpackOptionResignWithHostIdentity`）：rootfs 内 Mach-O
+  一批 `ZSigner signMachOPathArr` 按宿主证书重签（LCUtils.m:234 同款入口），无证书时
+  回落 `zsign_adhoc_file`（MachoReSign.swift:44 同款）。
+- symredirect 链路（开关参数 `TDRootfsUnpackOptionSymredirect`）：新 dylib target
+  `TDLibVroot`（vroot 实现族 + 路径代数）+ `TDLibVrootApi`（libc 同名裸跳板，上游
+  libvroot/libvrootapi 分体同构，防止实现-跳板同链互指递归），embed 不链接；解包时拷到
+  `<jbroot>/usr/lib/{libvrootapi,TDLibVroot}.dylib`，对 rootfs Mach-O 就地改写符号绑定到
+  `@loader_path/.jbroot/usr/lib/libvrootapi.dylib`，被改写目录落 `.jbroot` 相对链接；
+  改写后统一重签。
+- 访客/扩展接线：`main.m` 与 `LCBootstrap.m` 两处 `TDVRootInstallIfRequested()` 同点
+  追加 `TDRootHideInstallFromEnvIfRequested()`（TD_VROOT 未设即空操作，链路零变化）。
+- 扩展失败路径追加 `popExtensionRequestWithReason`（iOS 17+，运行时探测）：访客起不来
+  时请求宿主即时收走扩展进程，不再挂到 watchdog。
+- 冒烟：`Resources/Scripts/make_rootfs_sample.py`（Windows 可跑，纯标准库）产出
+  `Documents/rootfs.tar` 样例（usr/bin/curl+ksh / etc / var/jb 符号链接；--src 可打
+  真 binpack，--verify 做 SECURE_* 契约 round-trip 校验）。
+
+### Surface-lite 虚拟进程面（Tier B-1，默认无开关即登记）
+- 新增 `TequilaDash/Surface/TDProcTable.{h,m}`：轻量虚拟进程表（Nyxian ksurface_proc
+  的 clean-room 函数级平价重写，parity 清单见头注）。register(spawned pid, name,
+  bundleId, containerUUID, kind)/list/kill/wait/lookup 全部落地；线程安全（进程内
+  NSRecursiveLock + 跨进程 flock），持久化 `Documents/TDSurface/proc_table.json`
+  （原子 rename 写入），加载时对账 kern.boottime 与 kill(pid,0) 存活位，崩溃/重启可重建。
+- spawn 接线：宿主 `LiveProcessDebugLauncher` 在 beginExtensionRequest 回执拿到 pid 后
+  登记 extension 条目；扩展 `TequilaDashLiveProcess/main.m` 自登记 extension+visitor
+  两条目（dlopen 访客与扩展同 pid），atexit 时落 state=exited，异常死亡由宿主
+  reconcile 的 kill(pid,0) 轮询收口（扩展非宿主子进程，waitpid 必 ECHILD）。
+- kill/wait 语义：kill 只对表内 running 条目发真 `kill(pid, SIGKILL)`（表外 pid 一律
+  ESRCH 拒绝，越界护栏）；wait = kill(pid,0) 100ms 轮询 + pid 重用检测（p_starttime
+  对账），无假实现。退出状态真实可查：扩展正常退出经 atexit 记录；smoke 脚本
+  （`Resources/Scripts/tdproc_smoke.sh`）用 waitpid WIFSIGNALED+SIGKILL 作死因证据。
+- 调试页：`TequilaDashLCUIAdapters/TDSurfaceViews.swift`（TDProcTable 类编在主 App
+  二进制，framework 经 dynamic_lookup 运行时解析，不重复编译）—— 列出 pid/name/kind/
+  state/退出说明，kill 按钮与「清除已退出」；入口挂在 设置 → 实验性功能 →「模拟内核」。
+- PTY 底座（Tier B-2 起点，不接 UI）：`TequilaDash/Surface/TDPTY.{h,m}` —
+  posix_openpt/grantpt(EINTR 重试)/unlockpt/ptsname + fileport 导出/导入 API
+  （weak_import + ENOSYS 退化）；冒烟脚本 `Resources/Scripts/tdpty_smoke.sh`。
+
+### vroot 开关上界面（M36）
+- App 设置 → 实验性：新增「vroot 模式」三态 Picker（关闭 / 路径映射 / 完整伪 root），
+  写入 `LCAppInfo.plist` 的 `TDVRoot`（off|path|full）；0.3.878 的宿主/扩展链路
+  （launcher 透传 + LCBootstrap 安装）无需改动即可生效。
+- 说明文案明确：路径映射只改 libc 层；完整模式额外伪 uid=0 并改写 HOME/PATH；
+  Swift FileManager 等 Foundation 内部路径要 Tier B 才覆盖。
+
 ## [0.3.882] - 2026-11-14
 
 ### 巢中巢 bookmark 崩溃防御 (M40)
@@ -83,33 +142,6 @@
 
 ## [0.3.879] - 2026-11-14
 
-### Surface-lite 虚拟进程面（Tier B-1，默认无开关即登记）
-- 新增 `TequilaDash/Surface/TDProcTable.{h,m}`：轻量虚拟进程表（Nyxian ksurface_proc
-  的 clean-room 函数级平价重写，parity 清单见头注）。register(spawned pid, name,
-  bundleId, containerUUID, kind)/list/kill/wait/lookup 全部落地；线程安全（进程内
-  NSRecursiveLock + 跨进程 flock），持久化 `Documents/TDSurface/proc_table.json`
-  （原子 rename 写入），加载时对账 kern.boottime 与 kill(pid,0) 存活位，崩溃/重启可重建。
-- spawn 接线：宿主 `LiveProcessDebugLauncher` 在 beginExtensionRequest 回执拿到 pid 后
-  登记 extension 条目；扩展 `TequilaDashLiveProcess/main.m` 自登记 extension+visitor
-  两条目（dlopen 访客与扩展同 pid），atexit 时落 state=exited，异常死亡由宿主
-  reconcile 的 kill(pid,0) 轮询收口（扩展非宿主子进程，waitpid 必 ECHILD）。
-- kill/wait 语义：kill 只对表内 running 条目发真 `kill(pid, SIGKILL)`（表外 pid 一律
-  ESRCH 拒绝，越界护栏）；wait = kill(pid,0) 100ms 轮询 + pid 重用检测（p_starttime
-  对账），无假实现。退出状态真实可查：扩展正常退出经 atexit 记录；smoke 脚本
-  （`Resources/Scripts/tdproc_smoke.sh`）用 waitpid WIFSIGNALED+SIGKILL 作死因证据。
-- 调试页：`TequilaDashLCUIAdapters/TDSurfaceViews.swift`（TDProcTable 类编在主 App
-  二进制，framework 经 dynamic_lookup 运行时解析，不重复编译）—— 列出 pid/name/kind/
-  state/退出说明，kill 按钮与「清除已退出」；入口挂在 设置 → 实验性功能 →「模拟内核」。
-- PTY 底座（Tier B-2 起点，不接 UI）：`TequilaDash/Surface/TDPTY.{h,m}` —
-  posix_openpt/grantpt(EINTR 重试)/unlockpt/ptsname + fileport 导出/导入 API
-  （weak_import + ENOSYS 退化）；冒烟脚本 `Resources/Scripts/tdpty_smoke.sh`。
-
-### vroot 开关上界面（M36）
-- App 设置 → 实验性：新增「vroot 模式」三态 Picker（关闭 / 路径映射 / 完整伪 root），
-  写入 `LCAppInfo.plist` 的 `TDVRoot`（off|path|full）；0.3.878 的宿主/扩展链路
-  （launcher 透传 + LCBootstrap 安装）无需改动即可生效。
-- 说明文案明确：路径映射只改 libc 层；完整模式额外伪 uid=0 并改写 HOME/PATH；
-  Swift FileManager 等 Foundation 内部路径要 Tier B 才覆盖。
 
 ## [0.3.878] - 2026-11-14
 

@@ -23,6 +23,9 @@
 // Tier B-1 (Surface-lite): 自登记扩展子进程与 dlopen 访客的虚拟进程表.
 #import "Surface/TDProcTable.h"
 
+// roothide (Tier B-3): TD_VROOT 落 env 后同点安装 __roothideinit_JBROOT.
+#import "TDRootHideInit.h"
+
 #pragma mark - 访客参数键名
 
 // 宿主经 NSExtensionItem.userInfo 传入的六个键.
@@ -151,6 +154,12 @@ static int TequilaDashLiveProcessMain(int argc, char *argv[]) {
                   getenv("TD_VROOT"), getenv("TD_VROOT_MODE"));
         }
     }
+    // roothide (Tier B-3): TD_VROOT 已落 env, 这里是进程内最早的 roothide 安装点
+    // (LCBootstrap 的 TDVRootInstallIfRequested 同点调用是第二道, 幂等).
+    if (TDRootHideInstallFromEnvIfRequested()) {
+        NSLog(@"[TequilaDashLiveProcess] roothide JBROOT=%s",
+              TDRootHideJBRootPath());
+    }
     if (mappedHostScheme) {
         [defaults setObject:mappedHostScheme forKey:@"hostUrlScheme"];
     }
@@ -207,6 +216,16 @@ static int TequilaDashLiveProcessMain(int argc, char *argv[]) {
         [context cancelRequestWithError:
             [NSError errorWithDomain:@"TequilaDashLiveProcess" code:2
                             userInfo:@{NSLocalizedDescriptionKey: message}]];
+        // 扩展进程即时释放 (本仓增量): cancelRequest 后系统仍可能让进程挂到 watchdog,
+        // popExtensionRequestWithReason (iOS 17+) 请求宿主立即收走请求. 选择器运行时
+        // 探测, 旧系统/私有面变化时静默跳过.
+        if (@available(iOS 17.0, *)) {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Warc-performSelector-leaks"
+            [context performSelector:NSSelectorFromString(@"popExtensionRequestWithReason:")
+                          withObject:message];
+#pragma clang diagnostic pop
+        }
     }
     return ret;
 }

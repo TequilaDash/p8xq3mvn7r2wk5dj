@@ -55,3 +55,17 @@ because tunnel/applist code is adapted from StikDebug (AGPL-3.0). See LICENSE.
    Used to rebind imported symbols at load time; same role it has in LiveContainer.
    Copied verbatim; local edits are none.
    License text: Resources/Licenses/fishhook.txt.
+
+9. vendor/roothide (roothide path layer, Tier B-3)
+   Vendored from roothide/libroothide (github.com/roothide/libroothide) at main
+   commit cb236f9, MIT License, Copyright (c) 2023 RootHide.
+   Used as the jbroot path-algebra core and the symredirect engine for the
+   per-guest rootfs (Documents/rootfs/.jbroot-<rand>): path mapping, random
+   root naming, and offline Mach-O symbol rebinding to the vroot shim library.
+   Local edits (documented in vendor/roothide/README.md): the hardcoded
+   /var/containers/Bundle/Application assumption is removed, __roothideinit_JBROOT
+   is set externally (TD_VROOT/TD_VROOT_MODE, same gate as Tier A), and the
+   symredirect CLI main() became a callable library function. TDRootHideInit.{h,c}
+   in that directory is our own code, not upstream.
+   License text: Resources/Licenses/roothide.txt.
+   https://github.com/roothide/libroothide
