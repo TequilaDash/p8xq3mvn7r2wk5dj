@@ -90,13 +90,13 @@
 | 3b | `LiveContainer/Tweaks/Dyld.m` | M33 | `hideLiveContainer` 诊断日志（hide 标志/路径/被改写的镜像） | v0.3.870 |
 | 3 | `LiveContainer/Tweaks/NSFileManager+GuestHooks.m` | M16 + M17 | ①保存真实 IMP 防两套 hook 成环 ②iOS 26+ 不装 createDirectory swizzle ③`lcAppGroupPath` 判空 | v0.3.848 |
 | 4 | `LiveContainer/Tweaks/Tweaks.h` | C7 | `NetBlockGuestHooksInit` 声明（宿主联网拦截，上游无） | v0.3.840 |
-| 5 | `LiveContainerSwiftUI/Models/LCAppInfo.h` | M18 + M22 | `nestedLCCompat` / `netBlock` 属性 | v0.3.850 |
-| 6 | `LiveContainerSwiftUI/Models/LCAppInfo.m` | M18 + M22 | `nestedLCCompat`(键 LCNestedLCCompat) / `netBlock`(键 TDNetBlock) | v0.3.850 |
-| 7 | `LiveContainerSwiftUI/Models/LCAppModel.swift` | M18 + M22 | `uiNestedLCCompat`/`uiNetBlock`；runApp 写 `TDGuestNetBlock` | v0.3.850 |
+| 5 | `LiveContainerSwiftUI/Models/LCAppInfo.h` | M18 + M22 + M36 | `nestedLCCompat` / `netBlock` / `vrootMode` 属性 | v0.3.879 |
+| 6 | `LiveContainerSwiftUI/Models/LCAppInfo.m` | M18 + M22 + M36 | `nestedLCCompat`(键 LCNestedLCCompat) / `netBlock`(键 TDNetBlock) / `vrootMode`(键 TDVRoot, 合法值 off|path|full) | v0.3.879 |
+| 7 | `LiveContainerSwiftUI/Models/LCAppModel.swift` | M18 + M22 + M36 | `uiNestedLCCompat`/`uiNetBlock`/`uiVRootMode`；runApp 写 `TDGuestNetBlock` | v0.3.879 |
 | 8 | `LiveContainerSwiftUI/Utilities/LCUtilsExtensions.swift` | M9 | `signTweaks` 移除签名预校验 | v0.3.835 |
 | 8b | `LiveContainerSwiftUI/Views/AppList/LCAppListView.swift` | M30 | 左上角返回按钮（仅 `TDHostedSandbox` 时显示，通知宿主关闭沙盒容器） | v0.3.862 |
 | 8c | `LiveContainerSwiftUI/Views/AppList/LCAppBanner/LCAppBannerViewController.swift` | M35 | 打开 App 设置时显式注入 `SharedModel`/`LCAppSortManager`（Menu 内容闭包丢失 EnvironmentObject 导致 SIGTRAP `EnvironmentObject.error()`） | v0.3.875 |
-| 9 | `LiveContainerSwiftUI/Views/AppList/AppSettings/LCAppSettingsView.swift` | M18 + M22 | 「实验性」段：巢中巢兼容 + 禁止联网 | v0.3.850 |
+| 9 | `LiveContainerSwiftUI/Views/AppList/AppSettings/LCAppSettingsView.swift` | M18 + M22 + M36 | 「实验性」段：巢中巢兼容 + 禁止联网 + vroot 模式三态（off/path/full，键 TDVRoot） | v0.3.879 |
 | 12 | `LiveContainerSwiftUI/Views/Settings/LCSettingsView.swift` | M5 + M25 + M32 | 证书失败详情；沙盒容器专属「日志」二级页（`Documents/sandbox.log`）与「实验性功能」二级页（呈现方式切换） | v0.3.866 |
 | 13 | `MultitaskSupport/AppSceneViewController.m` | M4r + M6r + M22 + M31 | bookmarks 判空 + userInfo 兜底 + 传 `tdNetBlock` + 多任务诊断日志（扩展 uuid/pid、hostingVC、scene） | v0.3.865 |
 

@@ -173,6 +173,20 @@
     [self save];
 }
 
+// 本仓功能 (M36): vroot 模式（TDVRoot: off|path|full）
+- (NSString*)vrootMode {
+    NSString *mode = _info[@"TDVRoot"];
+    return mode ?: @"off";
+}
+
+- (void)setVrootMode:(NSString *)vrootMode {
+    if (![vrootMode isEqualToString:@"path"] && ![vrootMode isEqualToString:@"full"]) {
+        vrootMode = @"off";
+    }
+    _info[@"TDVRoot"] = vrootMode;
+    [self save];
+}
+
 - (NSString*)selectedLanguage {
     return _info[@"LCSelectedLanguage"];
 }

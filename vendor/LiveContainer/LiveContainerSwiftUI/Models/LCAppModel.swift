@@ -59,6 +59,13 @@ class LCAppModel: ObservableObject, Hashable {
         }
     }
 
+    // 本仓功能 (M36): vroot 模式
+    @Published var uiVRootMode : String {
+        didSet {
+            appInfo.vrootMode = uiVRootMode
+        }
+    }
+
     @Published var uiNestedLCCompat : Bool {
         didSet {
             appInfo.nestedLCCompat = uiNestedLCCompat
@@ -207,6 +214,7 @@ class LCAppModel: ObservableObject, Hashable {
         self.uiUseLCBundleId = appInfo.doUseLCBundleId
         self.uiNestedLCCompat = appInfo.nestedLCCompat
         self.uiNetBlock = appInfo.netBlock
+        self.uiVRootMode = appInfo.vrootMode ?? "off"
         self.uiFixFilePickerNew = appInfo.fixFilePickerNew
         self.uiFixLocalNotification = appInfo.fixLocalNotification
         self.uiFixBackgroundTaskIdentifiers = appInfo.fixBackgroundTaskIdentifiers

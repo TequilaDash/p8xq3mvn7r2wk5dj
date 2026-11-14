@@ -44,6 +44,8 @@ typedef NS_ENUM(NSInteger, MultitaskSpecified){
 @property bool nestedLCCompat;
 // 本仓功能 (M22, 2026-11-13): 禁止访客联网（按 App 存，LCAppInfo.plist 键 TDNetBlock）.
 @property bool netBlock;
+// 本仓功能 (M36): vroot 模式 (TDVRoot: off|path|full)
+@property (copy) NSString *vrootMode;
 @property NSString* selectedLanguage;
 @property NSString* dataUUID;
 @property NSString* tweakFolder;

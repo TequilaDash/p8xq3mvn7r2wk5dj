@@ -327,10 +327,19 @@ struct LCAppSettingsView: View {
                 Toggle(isOn: $model.uiNetBlock) {
                     Text("lc.appSettings.netBlock".loc)
                 }
+                // 本仓功能 (M36): vroot 模式（Tier A 路径映射 + full 伪 root）
+                Picker(selection: $model.uiVRootMode) {
+                    Text("lc.appSettings.vrootOff".loc).tag("off")
+                    Text("lc.appSettings.vrootPath".loc).tag("path")
+                    Text("lc.appSettings.vrootFull".loc).tag("full")
+                } label: {
+                    Text("lc.appSettings.vroot".loc)
+                }
             } header: {
                 Text("lc.appSettings.experimental".loc)
             } footer: {
                 Text("lc.appSettings.netBlockDesc".loc)
+                Text("lc.appSettings.vrootDesc".loc)
             }
             
             if SharedModel.isPhone {

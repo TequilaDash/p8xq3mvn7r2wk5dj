@@ -1,3 +1,12 @@
+## [0.3.879] - 2026-11-14
+
+### vroot 开关上界面（M36）
+- App 设置 → 实验性：新增「vroot 模式」三态 Picker（关闭 / 路径映射 / 完整伪 root），
+  写入 `LCAppInfo.plist` 的 `TDVRoot`（off|path|full）；0.3.878 的宿主/扩展链路
+  （launcher 透传 + LCBootstrap 安装）无需改动即可生效。
+- 说明文案明确：路径映射只改 libc 层；完整模式额外伪 uid=0 并改写 HOME/PATH；
+  Swift FileManager 等 Foundation 内部路径要 Tier B 才覆盖。
+
 ## [0.3.878] - 2026-11-14
 
 ### vroot Tier A（默认关）
