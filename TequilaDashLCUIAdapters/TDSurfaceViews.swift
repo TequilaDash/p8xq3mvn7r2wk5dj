@@ -174,7 +174,7 @@ struct TDSurfaceView: View {
             DispatchQueue.main.async {
                 rootfsBusy = false
                 if let result {
-                    rootfsStatus = "完成 jbroot=\(result.jbrootURL?.path ?? "?") 条目=\(result.entryCount) macho=\(result.machoCount) 重签=\(result.resignedCount) 改写=\(result.symredirectedCount)"
+                    rootfsStatus = "完成 jbroot=\(result.jbrootURL.path) 条目="\(result.entryCount) macho=\(result.machoCount) 重签=\(result.resignedCount) 改写=\(result.symredirectedCount)"
                 } else {
                     rootfsStatus = "解包失败 (详见 exploit.log)"
                 }
