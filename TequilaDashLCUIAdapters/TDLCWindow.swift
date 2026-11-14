@@ -38,16 +38,28 @@ public final class TDLCWindowController: NSObject {
     /// 直接传 window.rootViewController 会因 "already has a parent" 层级断言闪退）.
     @objc public func showAndGetHost() -> UIViewController? {
         show()
-        guard let window else { return nil }
+        guard let window, let rootVC = window.rootViewController else { return nil }
         if guestContainer == nil {
             let c = UIViewController()
             c.view.backgroundColor = .clear
-            c.view.frame = window.bounds
-            c.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-            window.addSubview(c.view)
             guestContainer = c
         }
-        guestContainer?.view.frame = window.bounds
+        // M44c (owner 真机: 多任务手势消失 + 白屏): 容器 view 必须挂在
+        // **rootVC.view 下**而不是 window 直挂 —— window 直挂的 view 游离于
+        // rootVC 的 VC 链之外，与"overlay 搬家断 presenter 链"同构:
+        // SwiftUI Tab 的视图与容器互相遮挡 (dock 手势收不到/白屏).
+        // 挂进 rootVC.view 后 VC 链 = window.root → guestContainer(无父 VC 的
+        // 独立 VC, 其 view 仅作为视图挂载) → DecoratedAppScene VC, 链一致.
+        if guestContainer?.view.superview !== rootVC.view {
+            guestContainer?.view.removeFromSuperview()
+            guestContainer?.view.frame = rootVC.view.bounds
+            guestContainer?.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+            // zPosition 置顶: 容器 (含 dock 与访客 scene) 盖过 Tab 内容.
+            rootVC.view.addSubview(guestContainer!.view)
+            guestContainer?.view.layer.zPosition = 9999
+            NSLog("[TD-Multitask] guestContainer re-homed into window.rootVC.view (M44c)")
+        }
+        guestContainer?.view.frame = rootVC.view.bounds
         // M44b (0.3.886 .ips 162906 实证): DecoratedAppSceneViewController 先
         // `[windowHostingView addSubview:self.view]` 再 `[rootVC addChildViewController:self]`。
         // UIKit 层级检查要求 self.view.superview 的 VC 链 == rootVC；dock 的
@@ -57,7 +69,7 @@ public final class TDLCWindowController: NSObject {
         // 链一致；仍是同窗口（非同窗口搬家才不会断 scene presenter）。
         let dockHost = MultitaskDockManager.shared.windowHostingView
         if dockHost.superview !== guestContainer?.view {
-            dockHost.frame = guestContainer?.view.bounds ?? window.bounds
+            dockHost.frame = guestContainer?.view.bounds ?? rootVC.view.bounds
             dockHost.autoresizingMask = [.flexibleWidth, .flexibleHeight]
             guestContainer?.view.addSubview(dockHost)
             NSLog("[TD-Multitask] dock windowHostingView re-homed into LC guestContainer (same window)")
