@@ -564,6 +564,8 @@ targets:
           - "$(SRCROOT)/TequilaDashLCUIAdapters/VRoot"
           # Tier B-1 Surface-lite: main.m 的 #import "Surface/TDProcTable.h".
           - "$(SRCROOT)/TequilaDash"
+          # M46: 桥接头 #include "TequilaDash/Engine/TDRootfsUnpack.h" 需要 SRCROOT 根.
+          - "$(SRCROOT)"
         # LC 同款 (LiveContainer.xcodeproj:1910/1952): dyld_bypass_validation.h 的
         # orig_dyld_* 函数指针是头内暂定定义, Dyld.m 与 dyld_bypass_validation.m 两个 TU
         # 都 include 它 —— LC 靠 -fcommon 让暂定定义跨 TU 合并 (run 42478527343 实锤
