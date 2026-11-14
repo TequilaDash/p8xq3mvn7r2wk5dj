@@ -136,6 +136,11 @@ static int TequilaDashLiveProcessMain(int argc, char *argv[]) {
     }
     // vroot (Tier A, 默认关): 宿主填 tdVRoot (绝对路径) / tdVRootMode (off|path|full),
     // 这里落成 LCBootstrap 与 TDVRootShim 读取的环境变量; 缺键就不写 (保持 env 干净).
+    // M41 门控数据源: per-app hideLiveContainer -> TD_DYLD_TRIM (shim 镜像裁剪开关);
+    // 独立于 vroot 开关 (隐藏是另一维), 用同一 LCAppInfo 字典.
+    if ([appInfo[@"hideLiveContainer"] boolValue]) {
+        setenv("TD_DYLD_TRIM", "1", 1);
+    }
     NSString *vrootPath = appInfo[TDLPVRootPathKey];
     if (![vrootPath isKindOfClass:NSString.class]) {
         vrootPath = appInfo[@"TD_VROOT"];

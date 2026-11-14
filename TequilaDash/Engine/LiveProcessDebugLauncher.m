@@ -144,6 +144,10 @@ NSString *TequilaDashLiveProcessDebugLaunch(NSDictionary<NSString *, id> *userIn
     if (TDReadVRootSwitch(payload, &vrootPath, &vrootMode)) {
         payload[TDLPVRootPathKey] = vrootPath;
         payload[TDLPVRootModeKey] = vrootMode;
+        // M41 门控数据源: per-app hideLiveContainer -> TD_DYLD_TRIM (shim 镜像裁剪开关).
+        if ([appInfo[@"hideLiveContainer"] boolValue]) {
+            payload[@"tdDyldTrim"] = @"1";
+        }
     }
 
     // ── 定位扩展: [NSExtension extensionWithIdentifier:error:] (反射, 不链接) ──

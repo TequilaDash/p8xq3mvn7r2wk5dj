@@ -13,7 +13,7 @@
 // TD_VROOT 的 shim 配置已在 TDVRootInstallIfRequested 里缓存进内存.
 static void TDScrubGuestEnv(void) {
     static const char *kKeys[] = {
-        "TD_NET_BLOCK", "TD_VROOT", "TD_VROOT_MODE",
+        "TD_NET_BLOCK", "TD_VROOT", "TD_VROOT_MODE", "TD_DYLD_TRIM",
         "LC_HOME_PATH", "LP_HOME_PATH",
     };
     int removed = 0;

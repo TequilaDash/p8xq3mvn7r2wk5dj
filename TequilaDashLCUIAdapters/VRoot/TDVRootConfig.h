@@ -33,6 +33,8 @@ typedef enum {
 
 /// 环境变量是否已打开 vroot (TD_VROOT 为绝对路径且 mode != off).
 bool TDVRootIsEnabled(void);
+// M41: dyld 镜像裁剪是否启用 (TD_DYLD_TRIM=1, 由 launcher 按 per-app hideLiveContainer 透传).
+bool TDVDyldTrimEnabled(void);
 
 /// 当前模式; 未启用返回 TDVRootModeOff.
 TDVRootMode TDVRootCurrentMode(void);

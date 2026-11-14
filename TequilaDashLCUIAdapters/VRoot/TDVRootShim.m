@@ -434,11 +434,11 @@ static bool tdv_dyld_hidden_path(const char *path) {
 // M41 门控 (0.3.884): 与上游完全同构 —— 只有该访客开了 hideLiveContainer 才裁剪
 // 镜像清单; 默认关闭, 保证基线行为与上游 LC 逐字节一致 (owner 2026-11-14 指令).
 static bool tdv_dyld_trim_enabled(void) {
-    @try {
-        return [[NSUserDefaults.standardUserDefaults lcGuestAppInfo][@"hideLiveContainer"] boolValue];
-    } @catch (__unused NSException *e) {
-        return false;
-    }
+    // M41 门控数据源: launcher 读 per-app LCAppInfo["hideLiveContainer"] -> payload ->
+    // main.m setenv("TD_DYLD_TRIM") -> TDVRootConfig 在 install 时捕获进内存.
+    // (不能在这里读 LC 分类: TDVRootShim 属 LCUIAdapters target, 看不见 vendor utils.h.)
+    extern bool TDVDyldTrimEnabled(void);
+    return TDVDyldTrimEnabled();
 }
 
 static void tdv_dyld_rebuild_locked(void) {

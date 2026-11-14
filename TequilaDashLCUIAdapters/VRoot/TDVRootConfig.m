@@ -153,8 +153,18 @@ static void tdv_capture_homes_locked(void) {
     }
 }
 
+// M41 门控数据源: TD_DYLD_TRIM env (launcher 透传 per-app hideLiveContainer).
+static bool gTDVDyldTrim = false;
+
+bool TDVDyldTrimEnabled(void) {
+    tdv_init_once();
+    return gTDVDyldTrim;
+}
+
 static void tdv_init_locked(void) {
     __atomic_store_n(&gTDVRootEnabled, false, __ATOMIC_RELAXED);
+    // M41 门控独立于 vroot: TD_DYLD_TRIM 由 launcher 按 per-app hideLiveContainer 透传.
+    gTDVDyldTrim = getenv("TD_DYLD_TRIM") && getenv("TD_DYLD_TRIM")[0] == '1';
     gTDVRootMode = TDVRootModeOff;
     gTDVRootRoot[0] = '\0';
 
