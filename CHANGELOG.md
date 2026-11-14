@@ -1,3 +1,23 @@
+## [0.3.881] - 2026-11-14
+
+### Tier B-1: 模拟内核·进程面（Surface-lite）
+- `TequilaDash/Surface/TDProcTable.{h,m}`: 虚拟进程表 —— register / list / kill /
+  wait / reconcile，JSON 落盘 `Documents/TDSurface/proc_table.json`（flock 原子 rename，
+  宿主与扩展共享同一份）。kill = 真 `kill(pid, SIGKILL)`，**只放行表内 running 条目**
+  （越界护栏，parity `_proc_kill__impl @0x42d20` 的 ESRCH 分支）；wait = `kill(pid,0)`
+  轮询 + pid 重用检测（`sysctl(KERN_PROC_PID)` p_starttime 对账），parity `_proc_reap @0x42e38`。
+- spawn 接线：`LiveProcessDebugLauncher` 成功拉起扩展即登记（kind=hostExtension）；
+  扩展进程 `main.m` 自登记（kind=guestVisitor）+ `atexit` 落 exited；异常死亡由宿主
+  reconcile（kill(pid,0) + bootTime 对账 + 7 天剪枝）收口。
+- PTY 底座 `TequilaDash/Surface/TDPTY.{h,m}`：posix_openpt/grantpt/unlockpt +
+  fileport 导出/导入（Tier B-2 起点，仅 C API）。
+- 宿主控制页：设置 → 实验性 → **模拟内核**（`TDSurfaceView`：pid/name/kind/state/
+  kill 按钮/清除已退出，2s 自动刷新）。
+- 冒烟脚本：`Resources/Scripts/tdproc_smoke.sh`（真 fork 子进程 → 表内 kill →
+  waitpid WIFSIGNALED+SIGKILL 断言 + JSON 回环 + 表外拒杀）、`tdpty_smoke.sh`。
+  两脚本需 macOS/真机执行（Windows 无 posix_openpt）。
+- 零 EPSL 文本拷贝：文件头带 parity 对照表（函数地址/行为差异）。
+
 ## [0.3.880] - 2026-11-14
 
 ### 沙盒收紧 + 隐藏性六件套（M37–M39）
