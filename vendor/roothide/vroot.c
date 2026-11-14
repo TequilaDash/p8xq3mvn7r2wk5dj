@@ -107,6 +107,19 @@ int oflag_to_atflag(int oflag)
     return atflag;
 }
 
+// 本仓改造: iOS 27.2 SDK 把 posix_spawn_file_actions_addchdir_np 显式标记为
+// unavailable (spawn.h:184, CI run 43549070193 实锤) —— vroot_ 包装器的函数体会
+// 调它, 触发 availability 错误。用同签名静态桩替换真函数: 符号面 (vroot_ 包装器 +
+// vrootapi.c 跳板) 保持完整, 行为 = ENOSYS (该 np 扩展在本仓环境本就不可用)。
+#include <TargetConditionals.h>
+#if defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE
+static int _td_vroot_addchdir_np_stub(posix_spawn_file_actions_t *file_actions, const char *path) {
+    (void)file_actions; (void)path;
+    return ENOSYS;
+}
+#define posix_spawn_file_actions_addchdir_np _td_vroot_addchdir_np_stub
+#endif
+
 #define VROOT_INTERNAL
 #include "vroot.h"
 

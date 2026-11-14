@@ -635,7 +635,10 @@ targets:
         IPHONEOS_DEPLOYMENT_TARGET: "18.0"
         # vroot_* 必须按名导出 (跳板 b _vroot_NAME 二级绑定); 同主 App 口径.
         GCC_SYMBOLS_PRIVATE_EXTERN: "NO"
-        CLANG_ENABLE_MODULES: "YES"
+        # 纯 C 库不需要 modules; 且 vroot.c 尾部符号表把 vroot.h include 在初始化器内
+        # (上游同构), Explicit Modules 依赖扫描会把它当初始化器内的模块导入报错
+        # (CI run 43549070193) —— 关掉, 回到上游 theos 的纯预处理模式.
+        CLANG_ENABLE_MODULES: "NO"
         # 顶层 OTHER_LDFLAGS 含 $(DERIVED_FILE_DIR)/SAP/lib/libunicorn.a —— 本 target 无
         # prepare.sap 脚本, 继承必炸 (TestJITLess 同款整段覆盖, CI run 42663291263).
         OTHER_LDFLAGS:
@@ -666,7 +669,8 @@ targets:
         CURRENT_PROJECT_VERSION: "1168"
         IPHONEOS_DEPLOYMENT_TARGET: "18.0"
         GCC_SYMBOLS_PRIVATE_EXTERN: "NO"
-        CLANG_ENABLE_MODULES: "YES"
+        # 同 TDLibVroot: 纯 C 跳板, 关 modules (初始化器内 include 模式与显式模块扫描不兼容).
+        CLANG_ENABLE_MODULES: "NO"
         # 同 TDLibVroot: 顶层 libunicorn.a 继承必炸, 整段覆盖.
         OTHER_LDFLAGS:
           - "-lc++"

@@ -26,7 +26,16 @@ MACRO_define VROOT_H
 #define VROOT_API_NAME(NAME) vroot_##NAME
 #define VROOTAT_API_NAME(NAME) vroot_##NAME
 
+// 本仓改造: Availability.h 只在真正需要它的上下文 (vrootapi.c / vroot.c 定义遍,
+// 两者都在顶层) 展开。上游无条件下含 —— 但本仓 symredirect.cpp 的符号表数组与
+// vroot.c 尾部符号表把本文件 include 在**初始化器内部**, 模块化编译 (Xcode 27
+// Explicit Modules) 下 Availability.h 的展开体进了初始化器即报
+// "expected expression / expected '}'" (CI run 43549070193 实锤)。
+// 判据: 走 VROOT_API_ALL (纯符号表) 或 __IPHONE_16_0 已定义 (顶层遍已展开过) 时跳过;
+// 两种上下文都不消费 Availability.h 的任何实体。
+#if !defined(VROOT_API_ALL) && !defined(__IPHONE_16_0)
 #include <Availability.h>
+#endif
 
 #if !defined(VROOT_API_ALL) && !defined(__IPHONE_16_0)
 #error "ios sdk version too old"

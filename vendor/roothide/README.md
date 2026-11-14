@@ -57,10 +57,20 @@
      角括号 `<util.h>` 先命中 ZSign 的 util.h → 其 common.h → `<set>`（C++ 头）在
      C 编译单元报 "'set' file not found"（CI run 43548247600 实锤）。本文件不使用
      util.h 的任何符号（forkpty/openpty 族），直接移除。
-4. `symredirect.cpp`（改写逻辑逐字保留）
+   - iOS 27.2 SDK 把 `posix_spawn_file_actions_addchdir_np` 标记 unavailable；
+     定义同签名静态桩（ENOSYS）替换真函数，保持 vroot_* 符号面与跳板层 ABI 完整
+     （CI run 43549070193 实锤）。
+4. `vroot.h`（API 表逐字保留）
+   - `#include <Availability.h>` 与 "ios sdk version too old" #error 改为
+     `VROOT_API_ALL`/`__IPHONE_16_0` 双判据门控：vroot.c 尾部符号表与 symredirect.cpp
+     的符号表数组把本文件 include 在**初始化器内部**，模块化编译下 Availability.h
+     的展开体进初始化器即报 "expected expression/'}'"（CI run 43549070193 实锤）。
+     两种上下文都不消费 Availability.h 实体，顶层遍（vrootapi.c / vroot.c 定义遍）
+     行为不变。
+5. `symredirect.cpp`（改写逻辑逐字保留）
    - CLI `main()` → 库函数 `symredirect_process_file(target, tmpdir, errbuf, errbufsize)`；
      临时目录参数化（iOS 沙盒无可写的 `/tmp`），诊断改 errbuf。
-5. `TDRootHideInit.{h,c}`（本仓自有）
+6. `TDRootHideInit.{h,c}`（本仓自有）
    - brand 生成遵守上游 `common.c` 校验代数（低字节 == 高 7 字节异或），
      目录名保持 `.jbroot-<16大写hex>`。
    - TDLibVrootApi.dylib 的 constructor 调 `TDRootHideInstallFromEnvIfRequested()`，
