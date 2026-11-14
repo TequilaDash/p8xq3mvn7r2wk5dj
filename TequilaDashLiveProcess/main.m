@@ -141,6 +141,10 @@ static int TequilaDashLiveProcessMain(int argc, char *argv[]) {
     if ([appInfo[@"hideLiveContainer"] boolValue]) {
         setenv("TD_DYLD_TRIM", "1", 1);
     }
+    // 交接点 (对方 sysctl 扩表): per-app sysctlSpoof -> TD_SYSCTL_SPOOF.
+    if ([appInfo[@"sysctlSpoof"] boolValue]) {
+        setenv("TD_SYSCTL_SPOOF", "1", 1);
+    }
     NSString *vrootPath = appInfo[TDLPVRootPathKey];
     if (![vrootPath isKindOfClass:NSString.class]) {
         vrootPath = appInfo[@"TD_VROOT"];

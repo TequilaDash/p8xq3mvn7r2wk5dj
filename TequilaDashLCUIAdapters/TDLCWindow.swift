@@ -18,6 +18,7 @@ public final class TDLCWindowController: NSObject {
     @objc public static let shared = TDLCWindowController()
 
     private var window: UIWindow?
+    private var guestContainer: UIViewController?
     private var observer: NSObjectProtocol?
 
     @objc public var hostViewController: UIViewController? {
@@ -32,10 +33,22 @@ public final class TDLCWindowController: NSObject {
         NotificationCenter.default.post(name: Notification.Name("TDShowSandboxOverlay"), object: nil)
     }
 
-    /// show + 返回窗口 root VC（供 LCUtils 的 DecoratedAppSceneViewController 当 rootVC）.
+    /// show + 返回**无父级的访客容器 VC**（供 DecoratedAppSceneViewController 的
+    /// `[rootVC addChildViewController:self]` 用 —— 0.3.884 .ips 150942 实证：
+    /// 直接传 window.rootViewController 会因 "already has a parent" 层级断言闪退）.
     @objc public func showAndGetHost() -> UIViewController? {
         show()
-        return hostViewController
+        guard let window else { return nil }
+        if guestContainer == nil {
+            let c = UIViewController()
+            c.view.backgroundColor = .clear
+            c.view.frame = window.bounds
+            c.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+            window.addSubview(c.view)
+            guestContainer = c
+        }
+        guestContainer?.view.frame = window.bounds
+        return guestContainer
     }
 
     @objc public func hide() {

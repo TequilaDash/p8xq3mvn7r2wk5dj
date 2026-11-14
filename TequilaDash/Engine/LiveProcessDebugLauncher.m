@@ -164,6 +164,10 @@ NSString *TequilaDashLiveProcessDebugLaunch(NSDictionary<NSString *, id> *userIn
             if ([ai[@"hideLiveContainer"] boolValue]) {
                 payload[@"tdDyldTrim"] = @"1";
             }
+            // 交接点 (对方 sysctl 扩表): per-app sysctlSpoof -> TD_SYSCTL_SPOOF.
+            if ([ai[@"sysctlSpoof"] boolValue]) {
+                payload[@"tdSysctlSpoof"] = @"1";
+            }
         }
     }
 
