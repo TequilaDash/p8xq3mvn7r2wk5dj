@@ -25,6 +25,27 @@
 
 ## [0.3.879] - 2026-11-14
 
+### Surface-lite 虚拟进程面（Tier B-1，默认无开关即登记）
+- 新增 `TequilaDash/Surface/TDProcTable.{h,m}`：轻量虚拟进程表（Nyxian ksurface_proc
+  的 clean-room 函数级平价重写，parity 清单见头注）。register(spawned pid, name,
+  bundleId, containerUUID, kind)/list/kill/wait/lookup 全部落地；线程安全（进程内
+  NSRecursiveLock + 跨进程 flock），持久化 `Documents/TDSurface/proc_table.json`
+  （原子 rename 写入），加载时对账 kern.boottime 与 kill(pid,0) 存活位，崩溃/重启可重建。
+- spawn 接线：宿主 `LiveProcessDebugLauncher` 在 beginExtensionRequest 回执拿到 pid 后
+  登记 extension 条目；扩展 `TequilaDashLiveProcess/main.m` 自登记 extension+visitor
+  两条目（dlopen 访客与扩展同 pid），atexit 时落 state=exited，异常死亡由宿主
+  reconcile 的 kill(pid,0) 轮询收口（扩展非宿主子进程，waitpid 必 ECHILD）。
+- kill/wait 语义：kill 只对表内 running 条目发真 `kill(pid, SIGKILL)`（表外 pid 一律
+  ESRCH 拒绝，越界护栏）；wait = kill(pid,0) 100ms 轮询 + pid 重用检测（p_starttime
+  对账），无假实现。退出状态真实可查：扩展正常退出经 atexit 记录；smoke 脚本
+  （`Resources/Scripts/tdproc_smoke.sh`）用 waitpid WIFSIGNALED+SIGKILL 作死因证据。
+- 调试页：`TequilaDashLCUIAdapters/TDSurfaceViews.swift`（TDProcTable 类编在主 App
+  二进制，framework 经 dynamic_lookup 运行时解析，不重复编译）—— 列出 pid/name/kind/
+  state/退出说明，kill 按钮与「清除已退出」；入口挂在 设置 → 实验性功能 →「模拟内核」。
+- PTY 底座（Tier B-2 起点，不接 UI）：`TequilaDash/Surface/TDPTY.{h,m}` —
+  posix_openpt/grantpt(EINTR 重试)/unlockpt/ptsname + fileport 导出/导入 API
+  （weak_import + ENOSYS 退化）；冒烟脚本 `Resources/Scripts/tdpty_smoke.sh`。
+
 ### vroot 开关上界面（M36）
 - App 设置 → 实验性：新增「vroot 模式」三态 Picker（关闭 / 路径映射 / 完整伪 root），
   写入 `LCAppInfo.plist` 的 `TDVRoot`（off|path|full）；0.3.878 的宿主/扩展链路

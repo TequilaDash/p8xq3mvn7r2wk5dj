@@ -144,6 +144,19 @@ struct TDSandboxExperimentalView: View {
             } header: {
                 Text("图例")
             }
+
+            // Tier B-1 (Surface-lite): 虚拟进程表入口 (TequilaDashLCUIAdapters/TDSurfaceViews.swift).
+            Section {
+                NavigationLink {
+                    TDSurfaceView()
+                } label: {
+                    Label("虚拟进程 (Surface-lite)", systemImage: "list.bullet.rectangle.portrait")
+                }
+            } header: {
+                Text("模拟内核")
+            } footer: {
+                Text("Surface-lite 虚拟进程表: 扩展子进程与 dlopen 访客的登记、观察与真 kill (SIGKILL).")
+            }
         }
         .navigationTitle("实验性功能")
         .navigationBarTitleDisplayMode(.inline)

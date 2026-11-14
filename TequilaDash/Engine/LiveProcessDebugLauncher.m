@@ -8,6 +8,7 @@
 //
 
 #import "LiveProcessDebugLauncher.h"
+#import "Surface/TDProcTable.h"
 #import <Foundation/Foundation.h>
 #import <CommonCrypto/CommonDigest.h>
 
@@ -216,5 +217,29 @@ NSString *TequilaDashLiveProcessDebugLaunch(NSDictionary<NSString *, id> *userIn
     if (outErrorText) {
         return outErrorText;
     }
+
+    // Tier B-1 (Surface-lite): spawn 成功即登记虚拟进程表 (state=running).
+    // 退出状态不在这里收 —— 扩展进程由 FrontBoard 拉起, 不是宿主 fork 的子进程,
+    // waitpid 必返回 ECHILD; 退出由扩展侧 atexit 自报 + 表内 kill(pid,0) 轮询收口
+    // (TDProcTable.h parity 注记).
+    {
+        NSString *surfaceName = [payload[TDLPGuestFolderNameKey] isKindOfClass:NSString.class]
+            ? payload[TDLPGuestFolderNameKey] : nil;
+        NSString *surfaceBundleId = [payload[TDLPGuestBundleIDKey] isKindOfClass:NSString.class]
+            ? payload[TDLPGuestBundleIDKey] : nil;
+        NSString *surfaceContainer = [payload[TDLPContainerUUIDKey] isKindOfClass:NSString.class]
+            ? payload[TDLPContainerUUIDKey] : nil;
+        NSError *surfaceError = nil;
+        if (![[TDProcTable shared] registerPid:outPid
+                                          name:surfaceName
+                                      bundleId:surfaceBundleId
+                                 containerUUID:surfaceContainer
+                                          kind:TDProcKindHostExtension
+                                         error:&surfaceError]) {
+            NSLog(@"[Surface] register pid=%d failed: %@",
+                  outPid, surfaceError.localizedDescription ?: @"unknown");
+        }
+    }
+
     return [NSString stringWithFormat:@"pid=%d", outPid];
 }
