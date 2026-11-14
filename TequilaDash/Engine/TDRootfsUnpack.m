@@ -12,6 +12,8 @@
 
 #import <dlfcn.h>
 #import <stdio.h>
+#import <string.h>
+#import <sys/stat.h>
 
 NSErrorDomain const TDRootfsUnpackErrorDomain = @"TDRootfsUnpackErrorDomain";
 
