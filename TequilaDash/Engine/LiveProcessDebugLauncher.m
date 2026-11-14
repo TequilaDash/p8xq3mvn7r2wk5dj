@@ -161,27 +161,23 @@ NSString *TequilaDashLiveProcessDebugLaunch(NSDictionary<NSString *, id> *userIn
                 stringByAppendingPathComponent:trimFolder]
                 stringByAppendingPathComponent:@"LCAppInfo.plist"];
             NSDictionary *ai = [NSDictionary dictionaryWithContentsOfFile:trimPlist];
-            if ([ai[@"hideLiveContainer"] boolValue]) {
-                payload[@"tdDyldTrim"] = @"1";
-            }
-            // 交接点 (对方 sysctl 扩表): per-app sysctlSpoof -> TD_SYSCTL_SPOOF.
-            if ([ai[@"sysctlSpoof"] boolValue]) {
-                payload[@"tdSysctlSpoof"] = @"1";
-            }
-            // SecTask entitlement 隐藏 + csops 伪 CS flags (691c07b): 同门控模式.
-            if ([ai[@"secTaskSpoof"] boolValue]) {
-                payload[@"tdSecTaskSpoof"] = @"1";
-            }
-            if ([ai[@"csopsSpoof"] boolValue]) {
-                payload[@"tdCsopsSpoof"] = @"1";
-            }
-            if ([ai[@"csopsKeepDebugged"] boolValue]) {
-                payload[@"tdCsopsKeepDebugged"] = @"1";
-            }
-            // proc 族伪值 (第四批二刀): proc_pidpath/listallpids/bootstrap 隐藏.
-            if ([ai[@"procSpoof"] boolValue]) {
-                payload[@"tdProcSpoof"] = @"1";
-            }
+            // 全局开关 (TDSandboxExperimentalView): 宿主设置-实验性功能里的一键
+            // 总开 (TDGlobalSpoof=1 -> 全部门控开). per-app LCAppInfo 键可逐项
+            // 覆盖/关闭 —— 读序: per-app 显式键 > 全局开关.
+            NSUserDefaults *suite = [[NSUserDefaults alloc] initWithSuiteName:[LCSharedUtils appGroupID]];
+            BOOL globalSpoof = [suite boolForKey:@"TDGlobalSpoof"];
+            BOOL trim  = ai[@"hideLiveContainer"] != nil ? [ai[@"hideLiveContainer"] boolValue] : globalSpoof;
+            BOOL sysc  = ai[@"sysctlSpoof"]       != nil ? [ai[@"sysctlSpoof"] boolValue]       : globalSpoof;
+            BOOL sect  = ai[@"secTaskSpoof"]      != nil ? [ai[@"secTaskSpoof"] boolValue]      : globalSpoof;
+            BOOL csop  = ai[@"csopsSpoof"]        != nil ? [ai[@"csopsSpoof"] boolValue]        : globalSpoof;
+            BOOL proc_ = ai[@"procSpoof"]         != nil ? [ai[@"procSpoof"] boolValue]         : globalSpoof;
+            BOOL keepDbg = globalSpoof ? NO : [ai[@"csopsKeepDebugged"] boolValue]; // 全局开=伪到底
+            if (trim)   payload[@"tdDyldTrim"] = @"1";
+            if (sysc)   payload[@"tdSysctlSpoof"] = @"1";
+            if (sect)   payload[@"tdSecTaskSpoof"] = @"1";
+            if (csop)   payload[@"tdCsopsSpoof"] = @"1";
+            if (keepDbg) payload[@"tdCsopsKeepDebugged"] = @"1";
+            if (proc_)  payload[@"tdProcSpoof"] = @"1";
         }
     }
 

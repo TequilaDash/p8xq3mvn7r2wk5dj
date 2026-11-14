@@ -343,6 +343,19 @@ struct LCAppSettingsView: View {
                 Toggle(isOn: $model.uiCoWSnapshot) {
                     Text("lc.appSettings.cowSnapshot".loc)
                 }
+                // 本仓功能 (隐藏体系): 四门控 (sysctl/SecTask/csops/proc)
+                Toggle(isOn: $model.uiSysctlSpoof) {
+                    Text("lc.appSettings.sysctlSpoof".loc)
+                }
+                Toggle(isOn: $model.uiSecTaskSpoof) {
+                    Text("lc.appSettings.secTaskSpoof".loc)
+                }
+                Toggle(isOn: $model.uiCsopsSpoof) {
+                    Text("lc.appSettings.csopsSpoof".loc)
+                }
+                Toggle(isOn: $model.uiProcSpoof) {
+                    Text("lc.appSettings.procSpoof".loc)
+                }
             } header: {
                 Text("lc.appSettings.experimental".loc)
             } footer: {
@@ -350,6 +363,10 @@ struct LCAppSettingsView: View {
                 Text("lc.appSettings.vrootDesc".loc)
                 Text("lc.appSettings.tmpIsolateDesc".loc)
                 Text("lc.appSettings.cowSnapshotDesc".loc)
+                Text("lc.appSettings.sysctlSpoofDesc".loc)
+                Text("lc.appSettings.secTaskSpoofDesc".loc)
+                Text("lc.appSettings.csopsSpoofDesc".loc)
+                Text("lc.appSettings.procSpoofDesc".loc)
             }
             
             if SharedModel.isPhone {

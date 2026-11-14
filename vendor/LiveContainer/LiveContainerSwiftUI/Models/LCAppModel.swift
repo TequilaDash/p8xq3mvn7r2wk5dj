@@ -67,6 +67,28 @@ class LCAppModel: ObservableObject, Hashable {
     }
 
     // 本仓功能 (M38/M39): TMPDIR 隔离 / APFS 快照
+    // 本仓功能 (隐藏体系): sysctl/SecTask/csops/proc 四门控开关
+    @Published var uiSysctlSpoof : Bool {
+        didSet {
+            appInfo.sysctlSpoof = uiSysctlSpoof
+        }
+    }
+    @Published var uiSecTaskSpoof : Bool {
+        didSet {
+            appInfo.secTaskSpoof = uiSecTaskSpoof
+        }
+    }
+    @Published var uiCsopsSpoof : Bool {
+        didSet {
+            appInfo.csopsSpoof = uiCsopsSpoof
+        }
+    }
+    @Published var uiProcSpoof : Bool {
+        didSet {
+            appInfo.procSpoof = uiProcSpoof
+        }
+    }
+
     @Published var uiIsolateTmpDir : Bool {
         didSet {
             appInfo.isolateTmpDir = uiIsolateTmpDir
@@ -234,6 +256,10 @@ class LCAppModel: ObservableObject, Hashable {
         self.uiFixLocalNotification = appInfo.fixLocalNotification
         self.uiFixBackgroundTaskIdentifiers = appInfo.fixBackgroundTaskIdentifiers
         self.uiHideLiveContainer = appInfo.hideLiveContainer
+        self.uiSysctlSpoof = appInfo.sysctlSpoof
+        self.uiSecTaskSpoof = appInfo.secTaskSpoof
+        self.uiCsopsSpoof = appInfo.csopsSpoof
+        self.uiProcSpoof = appInfo.procSpoof
         self.uiDontInjectTweakLoader = appInfo.dontInjectTweakLoader
         self.uiTweakLoaderInjectFailed = appInfo.info()["LCTweakLoaderCantInject"] as? Bool ?? false
         self.uiDontLoadTweakLoader = appInfo.dontLoadTweakLoader

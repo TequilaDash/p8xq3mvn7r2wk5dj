@@ -49,6 +49,12 @@ typedef NS_ENUM(NSInteger, MultitaskSpecified){
 // 本仓功能 (M38/M39): TMPDIR 隔离 / APFS 快照 (CoW), 均 per-app opt-in
 @property bool isolateTmpDir;
 @property bool cowSnapshot;
+// 本仓功能 (隐藏体系 M41+): sysctl 伪值表 / SecTask entitlement 隐藏 /
+// csops 伪 CS flags / proc 族伪值, 均 per-app opt-in (audit v2 §四).
+@property bool sysctlSpoof;
+@property bool secTaskSpoof;
+@property bool csopsSpoof;
+@property bool procSpoof;
 @property NSString* selectedLanguage;
 @property NSString* dataUUID;
 @property NSString* tweakFolder;

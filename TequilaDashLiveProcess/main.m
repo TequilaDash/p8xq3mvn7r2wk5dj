@@ -139,6 +139,10 @@ static int TequilaDashLiveProcessMain(int argc, char *argv[]) {
     // M41 门控数据源: per-app hideLiveContainer -> TD_DYLD_TRIM (shim 镜像裁剪开关);
     // 独立于 vroot 开关 (隐藏是另一维). 双路径键兼容: LC 原生 userInfo 直带
     // hideLiveContainer; 本仓 launcher 塞 tdDyldTrim —— 两者都认.
+    // 全局开关 (宿主设置-实验性功能 "全局隐藏模式"): 存 app group suite,
+    // LC 原生路径 (无 launcher payload) 也回落该键.
+    NSUserDefaults *_gSuite = [[NSUserDefaults alloc] initWithSuiteName:[LCSharedUtils appGroupID]];
+    BOOL _globalSpoof = [_gSuite boolForKey:@"TDGlobalSpoof"];
     if ([appInfo[@"hideLiveContainer"] boolValue] || [appInfo[@"tdDyldTrim"] boolValue]) {
         setenv("TD_DYLD_TRIM", "1", 1);
     }
@@ -154,11 +158,12 @@ static int TequilaDashLiveProcessMain(int argc, char *argv[]) {
     if ([appInfo[@"procSpoof"] boolValue] || [appInfo[@"tdProcSpoof"] boolValue]) {
         setenv("TD_PROC_SPOOF", "1", 1);
     }
-    if ([appInfo[@"csopsSpoof"] boolValue] || [appInfo[@"tdCsopsSpoof"] boolValue]) {
+    if ([appInfo[@"csopsSpoof"] boolValue] || [appInfo[@"tdCsopsSpoof"] boolValue] || _globalSpoof) {
         setenv("TD_CSOPS_SPOOF", "1", 1);
         // 调试器位保留开关 (宿主自己的 JIT 探测链路依赖 CS_DEBUGGED,
         // 见 TequilaDash-Bridging-Header.h v0.3.8): per-app 键 csopsKeepDebugged.
-        if ([appInfo[@"csopsKeepDebugged"] boolValue] || [appInfo[@"tdCsopsKeepDebugged"] boolValue]) {
+        // 全局开时不保留 (伪到底); per-app 显式键优先.
+        if (!_globalSpoof && ([appInfo[@"csopsKeepDebugged"] boolValue] || [appInfo[@"tdCsopsKeepDebugged"] boolValue])) {
             setenv("TD_CSOPS_KEEP_DEBUGGED", "1", 1);
         }
     }

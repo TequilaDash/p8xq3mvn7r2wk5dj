@@ -117,9 +117,33 @@ struct TDSandboxLogView: View {
 struct TDSandboxExperimentalView: View {
     /// true = 从下往上弹出（fullScreenCover）；false = 原生平滑推入（push，支持左滑返回）.
     @AppStorage("TDPresentSandboxAsSheet") private var presentAsSheet = false
+    @State private var globalSpoof = {
+        let suite = UserDefaults(suiteName: [LCSharedUtils appGroupID] ?? "group.com.tequila.dash")
+        return suite?.bool(forKey: "TDGlobalSpoof") ?? false
+    }()
 
     var body: some View {
         List {
+            Section {
+                Toggle(isOn: $globalSpoof) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("全局隐藏模式")
+                        Text(globalSpoof ? "开：所有沙盒 App 默认启用全部隐藏层（sysctl / SecTask / csops / proc + dyld 裁剪）"
+                                         : "关：逐 App 在其设置里单独开")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                }
+                .onChange(of: globalSpoof) { nv in
+                    let suite = UserDefaults(suiteName: [LCSharedUtils appGroupID] ?? "group.com.tequila.dash")
+                    suite?.set(nv, forKey: "TDGlobalSpoof")
+                }
+            } header: {
+                Text("隐藏 (隐藏体系总开关)")
+            } footer: {
+                Text("开启后新启动的沙盒 App 即生效；已运行的 App 需重开。个别 App 可在其 App 设置里关掉某层。")
+            }
+
             Section {
                 Toggle(isOn: $presentAsSheet) {
                     VStack(alignment: .leading, spacing: 4) {
@@ -145,17 +169,17 @@ struct TDSandboxExperimentalView: View {
                 Text("图例")
             }
 
-            // Tier B-1 (Surface-lite): 虚拟进程表入口 (TequilaDashLCUIAdapters/TDSurfaceViews.swift).
+            // Tier B-1 (Surface-lite) + 隐藏状态面板: 合并为"沙盒内核状态"页.
             Section {
                 NavigationLink {
                     TDSurfaceView()
                 } label: {
-                    Label("虚拟进程 (Surface-lite)", systemImage: "list.bullet.rectangle.portrait")
+                    Label("沙盒内核状态 (进程 + 隐藏层)", systemImage: "list.bullet.rectangle.portrait")
                 }
             } header: {
-                Text("模拟内核")
+                Text("沙盒状态")
             } footer: {
-                Text("Surface-lite 虚拟进程表: 扩展子进程与 dlopen 访客的登记、观察与真 kill (SIGKILL).")
+                Text("查看沙盒里正在运行的进程（可结束它们），以及每一层隐藏功能是否生效。\"清除已退出\"= 清掉列表里已关闭 App 的残留行，不影响任何正在运行的程序。")
             }
         }
         .navigationTitle("实验性功能")

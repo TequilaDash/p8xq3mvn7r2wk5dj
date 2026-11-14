@@ -10,6 +10,8 @@
 
 | # | 文件 | 上游行号 | 改动 | 原因 | 引入版本 | 真机验证 |
 |---|---|---|---|---|---|---|
+| TD-HIDE-UI | `LiveContainerSwiftUI/Models/LCAppInfo.{h,m}` + `LiveContainerSwiftUI/Models/LCAppModel.swift` + `LiveContainerSwiftUI/Views/AppList/AppSettings/LCAppSettingsView.swift` | LCAppInfo.h:32 后 +4 property / LCAppInfo.m: isolateTmpDir 前 +4 getter-setter / LCAppModel: +4 @Published + init 赋值 / SettingsView: 实验性 Section +4 Toggle + 4 footer | 隐藏体系四门控 per-app 开关 UI（sysctl/SecTask/csops/proc），管线已在 launcher/main.m/shim 全部接好，此处补 UI 入口 | v0.3.888 | ⏳ 待真机 |
+
 | M1 | `LiveContainerSwiftUI/Views/AppList/LCAppListView.swift` | `:12`（`class SearchContext`） | 加 `static let shared` | `@ObservedObject` 的默认值在视图重建时重新求值 → 新 `SearchContext` → `query` 归零 → SwiftUI `.searchable` 重新激活搜索框 | v0.3.809 | ✅ 2026-11-11 owner 实测「修复好了」 |
 
 **M1 / M1b / M1c / M1d 属于同一处修复，必须同时应用。**

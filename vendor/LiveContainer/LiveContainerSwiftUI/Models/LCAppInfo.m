@@ -188,6 +188,54 @@
 }
 
 // 本仓功能 (M38): per-guest TMPDIR 隔离
+- (bool)sysctlSpoof {
+    if(_info[@"sysctlSpoof"] != nil) {
+        return [_info[@"sysctlSpoof"] boolValue];
+    } else {
+        return NO;
+    }
+}
+- (void)setSysctlSpoof:(bool)sysctlSpoof {
+    _info[@"sysctlSpoof"] = [NSNumber numberWithBool:sysctlSpoof];
+    [self save];
+}
+
+- (bool)secTaskSpoof {
+    if(_info[@"secTaskSpoof"] != nil) {
+        return [_info[@"secTaskSpoof"] boolValue];
+    } else {
+        return NO;
+    }
+}
+- (void)setSecTaskSpoof:(bool)secTaskSpoof {
+    _info[@"secTaskSpoof"] = [NSNumber numberWithBool:secTaskSpoof];
+    [self save];
+}
+
+- (bool)csopsSpoof {
+    if(_info[@"csopsSpoof"] != nil) {
+        return [_info[@"csopsSpoof"] boolValue];
+    } else {
+        return NO;
+    }
+}
+- (void)setCsopsSpoof:(bool)csopsSpoof {
+    _info[@"csopsSpoof"] = [NSNumber numberWithBool:csopsSpoof];
+    [self save];
+}
+
+- (bool)procSpoof {
+    if(_info[@"procSpoof"] != nil) {
+        return [_info[@"procSpoof"] boolValue];
+    } else {
+        return NO;
+    }
+}
+- (void)setProcSpoof:(bool)procSpoof {
+    _info[@"procSpoof"] = [NSNumber numberWithBool:procSpoof];
+    [self save];
+}
+
 - (bool)isolateTmpDir {
     return [_info[@"TDIsolateTMPDIR"] boolValue];
 }
