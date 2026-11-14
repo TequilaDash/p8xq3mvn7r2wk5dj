@@ -31,5 +31,6 @@
 // Tier B-1 (Surface-lite): 虚拟进程表 —— 类实现编在主 App 二进制 (framework 走
 // dynamic_lookup 运行时解析), 头文件经 HEADER_SEARCH_PATHS 的 $(SRCROOT)/TequilaDash 解析.
 #include "Surface/TDProcTable.h"
+#include "TequilaDash/Engine/TDRootfsUnpack.h"
 
 #endif

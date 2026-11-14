@@ -54,7 +54,7 @@ struct TDSurfaceView: View {
         .navigationTitle("虚拟进程")
         .fileImporter(isPresented: $showRootfsPicker,
                       allowedContentTypes: [.data],
-                      allowMultipleSelection: false) { result in
+                      allowsMultipleSelection: false) { result in
             guard case let .success(urls) = result, let url = urls.first else { return }
             unpackRootfs(from: url)
         }
