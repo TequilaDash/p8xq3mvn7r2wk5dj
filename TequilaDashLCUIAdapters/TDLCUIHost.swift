@@ -18,6 +18,11 @@ import UIKit
 @objc(TDLCUIHost)
 public final class TDLCUIHost: NSObject {
 
+    /// M44: 沙盒容器 = LC 独占原生窗口 (TDLCWindowController). 供宿主反射调用.
+    @objc public static func showSandboxWindow() {
+        TDLCWindowController.shared.show()
+    }
+
     /// 供宿主反射调用: 返回包好 LC 原生 UI 的 UIViewController.
     @objc public static func makeTabViewController() -> UIViewController {
         // 标记「由本仓宿主承载」：LC 原生导航栏据此显示返回键（M30）.

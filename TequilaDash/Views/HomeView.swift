@@ -446,7 +446,11 @@ struct HomeView: View {
     private var sandboxRow: some View {
         Button {
             AppHaptics.tap()
-            TDLCWindowController.shared.show()
+            // TDLCWindowController 在 LiveContainerSwiftUI framework 里;
+            // 宿主 target 用反射调 @objc(TDLCUIHost) 的窗口包装.
+            if let host = NSClassFromString("TDLCUIHost") as? NSObject.Type {
+                _ = host.perform(NSSelectorFromString("showSandboxWindow"))
+            }
         } label: {
             AppNavRow(icon: "square.stack.3d.up.fill",
                       title: "沙盒容器",

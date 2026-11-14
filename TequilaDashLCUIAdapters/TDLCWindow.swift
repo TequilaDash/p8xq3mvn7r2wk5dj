@@ -13,7 +13,8 @@
 
 import UIKit
 
-@objc public final class TDLCWindowController: NSObject {
+@objc(TDLCWindowController)
+public final class TDLCWindowController: NSObject {
     @objc public static let shared = TDLCWindowController()
 
     private var window: UIWindow?
