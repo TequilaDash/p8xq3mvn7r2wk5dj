@@ -611,6 +611,8 @@ static intptr_t tdv_dyld_slide_impl(uint32_t i) {
     return r < 0 ? 0 : tdv_real_dyld_get_image_vmaddr_slide((uint32_t)r);
 }
 
+
+
 #pragma mark - interpose 表
 
 // dyld 用 replacee 的符号名做替换; replacement 指向本文件的实现.
@@ -647,9 +649,19 @@ TDV_INTERPOSE(tdv_getgid, tdv_real_getgid);
 TDV_INTERPOSE(tdv_getegid, tdv_real_getegid);
 TDV_INTERPOSE(tdv_sysctlbyname, tdv_real_sysctlbyname);
 TDV_INTERPOSE(tdv_sectask_copy_impl, tdv_real_sectask_copy);
+static CFDictionaryRef tdv_sectask_copy_values_impl(tdv_SecTaskRef task,
+                                                    CFArrayRef entitlements,
+                                                    void **error);
+extern CFDictionaryRef tdv_real_sectask_copy_values(tdv_SecTaskRef task,
+                                                    CFArrayRef entitlements,
+                                                    void **error);
 TDV_INTERPOSE(tdv_sectask_copy_values_impl, tdv_real_sectask_copy_values);
 TDV_INTERPOSE(tdv_csops_impl, tdv_real_csops);
 TDV_INTERPOSE(tdv_csops_audittoken_impl, tdv_real_csops_audittoken);
+TDV_INTERPOSE(tdv_dyld_count_impl, _dyld_image_count);
+TDV_INTERPOSE(tdv_dyld_name_impl, _dyld_get_image_name);
+TDV_INTERPOSE(tdv_dyld_header_impl, _dyld_get_image_header);
+TDV_INTERPOSE(tdv_dyld_slide_impl, _dyld_get_image_vmaddr_slide);
 TDV_INTERPOSE(tdv_dyld_count_impl, _dyld_image_count);
 TDV_INTERPOSE(tdv_dyld_name_impl, _dyld_get_image_name);
 TDV_INTERPOSE(tdv_dyld_header_impl, _dyld_get_image_header);
