@@ -156,6 +156,24 @@ static void tdv_capture_homes_locked(void) {
 // M41 门控数据源: TD_DYLD_TRIM env (launcher 透传 per-app hideLiveContainer).
 static bool gTDVDyldTrim = false;
 
+// sysctl 伪值表数据源: TD_SYSCTL_SPOOF env (launcher 透传 per-app sysctlSpoof).
+// 内置默认表 = 检测器高频查询键 (libBroadpatch/Reveil 审计结论);
+// TD_SYSCTL_<NAME> env (名大写化 '.'->'_') 可逐键覆盖, 未设用默认.
+typedef struct {
+    const char *name;    // sysctl 名, 精确匹配
+    const char *value;   // 伪值 NUL 结尾字符串; 数值型 sysctl 同样按字符串返回,
+} TDVSysctlSpoofEntry;
+
+static const TDVSysctlSpoofEntry kTDVSysctlSpoofs[] = {
+    {"kern.bootargs", ""},
+    {"kern.osversion", "27.2"},
+    {"kern.osrelease", "24B101"},
+    {"hw.machine", "iPhone15,4"},
+    {"hw.model", "iPhone15,4"},
+};
+
+static bool gTDVSysctlSpoof = false;
+
 static void tdv_init_once(void);
 
 bool TDVDyldTrimEnabled(void) {
@@ -163,10 +181,67 @@ bool TDVDyldTrimEnabled(void) {
     return gTDVDyldTrim;
 }
 
+bool TDVSysctlSpoofEnabled(void) {
+    tdv_init_once();
+    return gTDVSysctlSpoof;
+}
+
+bool TDVSysctlSpoofLookup(const char *name, char *out, size_t outSize) {
+    if (!name || !out || outSize == 0) {
+        return false;
+    }
+    if (!TDVSysctlSpoofEnabled()) {
+        return false;
+    }
+    // 1) per-app 覆盖: TD_SYSCTL_<NAME> 大写化, 存在即用.
+    char envName[128];
+    size_t w = 0;
+    const char *prefix = "TD_SYSCTL_";
+    size_t plen = strlen(prefix);
+    if (plen + strlen(name) + 1 <= sizeof(envName)) {
+        memcpy(envName, prefix, plen);
+        w = plen;
+        for (const char *p = name; *p && w + 1 < sizeof(envName); p++) {
+            char c = (*p == '.') ? '_' : *p;
+            if (c >= 'a' && c <= 'z') c = (char)(c - 'a' + 'A');
+            envName[w++] = c;
+        }
+        envName[w] = '\0';
+        const char *override = getenv(envName);
+        if (override) {
+            if (strcmp(override, "__REAL__") == 0) {
+                // 显式透传: 该键不伪装, 回退真实现.
+                return false;
+            }
+            size_t n = strlen(override);
+            if (n < outSize) {
+                memcpy(out, override, n + 1);
+                return true;
+            }
+            return false; // 覆盖值放不下: 透传真值 (不返回截断垃圾)
+        }
+    }
+    // 2) 内置默认表:
+
+    for (size_t i = 0; i < sizeof(kTDVSysctlSpoofs) / sizeof(kTDVSysctlSpoofs[0]); i++) {
+        if (strcmp(name, kTDVSysctlSpoofs[i].name) == 0) {
+            size_t n = strlen(kTDVSysctlSpoofs[i].value);
+            if (n < outSize) {
+                memcpy(out, kTDVSysctlSpoofs[i].value, n + 1);
+                return true;
+            }
+            return false;
+        }
+    }
+    return false;
+}
+
 static void tdv_init_locked(void) {
     __atomic_store_n(&gTDVRootEnabled, false, __ATOMIC_RELAXED);
     // M41 门控独立于 vroot: TD_DYLD_TRIM 由 launcher 按 per-app hideLiveContainer 透传.
     gTDVDyldTrim = getenv("TD_DYLD_TRIM") && getenv("TD_DYLD_TRIM")[0] == '1';
+    // sysctl 伪值表独立于 vroot: TD_SYSCTL_SPOOF 由 launcher 按 per-app sysctlSpoof 透传.
+    gTDVSysctlSpoof = getenv("TD_SYSCTL_SPOOF") && getenv("TD_SYSCTL_SPOOF")[0] == '1';
     gTDVRootMode = TDVRootModeOff;
     gTDVRootRoot[0] = '\0';
 

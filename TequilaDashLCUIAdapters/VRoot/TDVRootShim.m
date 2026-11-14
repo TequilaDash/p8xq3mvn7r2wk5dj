@@ -387,6 +387,35 @@ static gid_t tdv_getegid(void) {
     return TDVRootCurrentMode() == TDVRootModeFull ? 0 : tdv_real_getegid();
 }
 
+#pragma mark - sysctl 伪值表 (TD_SYSCTL_SPOOF)
+
+// 检测器高频查询: hw.machine / kern.osversion / kern.bootargs.
+// 拦截面 = sysctlbyname (按名查询; 检测器全部走这条). 裸 MIB 通道 (sysctl(3)) 的
+// 二级 MIB 与键名映射随 SDK 变化且检测器不用, 不拦, 纯透传.
+// 未启用/未命中一律透传真实现 (fail-open 与本 shim 其余层一致).
+// 门控数据源与伪值表在 TDVRootConfig (TDVSysctlSpoofEnabled / TDVSysctlSpoofLookup).
+extern int tdv_real_sysctlbyname(const char *, void *, size_t *, void *, size_t)
+    __asm("_sysctlbyname");
+
+static int tdv_sysctlbyname(const char *name, void *oldp, size_t *oldlenp,
+                            void *newp, size_t newlen) {
+    if (name && oldp && oldlenp && *oldlenp > 0 && !newp) {
+        char spoof[128];
+        if (TDVSysctlSpoofLookup(name, spoof, sizeof(spoof))) {
+            size_t want = strlen(spoof) + 1; // 含 NUL, 与内核字符串 sysctl 语义一致
+            if (*oldlenp >= want) {
+                memcpy(oldp, spoof, want);
+                *oldlenp = want;
+                return 0;
+            }
+            // 缓冲不足: 与真实 sysctl 一致, 返回 ENOMEM 并回写需要的长度.
+            *oldlenp = want;
+            return -1;
+        }
+    }
+    return tdv_real_sysctlbyname(name, oldp, oldlenp, newp, newlen);
+}
+
 #pragma mark - dyld 镜像清单裁剪 (M41)
 
 // 目标: 访客 _dyld_image_count/_dyld_get_image_* 看不到宿主注入层.
@@ -547,6 +576,7 @@ TDV_INTERPOSE(tdv_getuid, tdv_real_getuid);
 TDV_INTERPOSE(tdv_geteuid, tdv_real_geteuid);
 TDV_INTERPOSE(tdv_getgid, tdv_real_getgid);
 TDV_INTERPOSE(tdv_getegid, tdv_real_getegid);
+TDV_INTERPOSE(tdv_sysctlbyname, tdv_real_sysctlbyname);
 TDV_INTERPOSE(tdv_dyld_count_impl, _dyld_image_count);
 TDV_INTERPOSE(tdv_dyld_name_impl, _dyld_get_image_name);
 TDV_INTERPOSE(tdv_dyld_header_impl, _dyld_get_image_header);

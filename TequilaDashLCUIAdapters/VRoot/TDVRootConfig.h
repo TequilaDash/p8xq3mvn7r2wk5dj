@@ -36,6 +36,16 @@ bool TDVRootIsEnabled(void);
 // M41: dyld 镜像裁剪是否启用 (TD_DYLD_TRIM=1, 由 launcher 按 per-app hideLiveContainer 透传).
 bool TDVDyldTrimEnabled(void);
 
+// sysctl 伪值表 (TD_SYSCTL_SPOOF=1, 由 launcher 按 per-app sysctlSpoof 透传):
+// 访客 sysctl/sysctlbyname 命中下表键时返回伪值 (检测器读 hw.machine /
+// kern.osversion / kern.bootargs 一查一个准 —— libBroadpatch 190 符号审计结论).
+// 命中伪值表返回 true 并写 out; 未启用/未命中返回 false (调用方透传真值).
+// 伪值来源: TD_SYSCTL_<NAME> env (大写化, '.'->'_'), 未设则用内置默认.
+bool TDVSysctlSpoofEnabled(void);
+// name = 请求的 sysctl 名 (如 "hw.machine"). out/outSize 为伪值缓冲.
+// 返回 true = 已伪值化 (调用方直接返回); false = 透传真 sysctl.
+bool TDVSysctlSpoofLookup(const char *name, char *out, size_t outSize);
+
 /// 当前模式; 未启用返回 TDVRootModeOff.
 TDVRootMode TDVRootCurrentMode(void);
 
