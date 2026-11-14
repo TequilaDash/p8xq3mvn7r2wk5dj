@@ -12,6 +12,12 @@
 #import <Foundation/Foundation.h>
 #import <CommonCrypto/CommonDigest.h>
 
+// LCSharedUtils 编在主 App 二进制; launcher TU 局部声明取 appGroupID
+// (HostGuestEntry.m 同款, 避免 import 头文件引入桥接头依赖链).
+@interface LCSharedUtils : NSObject
++ (NSString *)appGroupID;
+@end
+
 #include <stdlib.h>
 
 // 与 TequilaDashLiveProcess/main.m 逐字对齐的六个键 (防串味, 不用 LC 的键名).

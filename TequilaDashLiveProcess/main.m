@@ -74,6 +74,11 @@ static NSDictionary *_tdlpRetrievedAppInfo;
 
 @end
 
+// LCSharedUtils 编在主 App 二进制; 扩展 TU 局部声明 (HostGuestEntry.m 同款).
+@interface LCSharedUtils : NSObject
++ (NSString *)appGroupID;
+@end
+
 #pragma mark - 进程主体
 
 static char **_tdlpEnvp, **_tdlpApple = NULL;
@@ -141,7 +146,7 @@ static int TequilaDashLiveProcessMain(int argc, char *argv[]) {
     // hideLiveContainer; 本仓 launcher 塞 tdDyldTrim —— 两者都认.
     // 全局开关 (宿主设置-实验性功能 "全局隐藏模式"): 存 app group suite,
     // LC 原生路径 (无 launcher payload) 也回落该键.
-    NSUserDefaults *_gSuite = [[NSUserDefaults alloc] initWithSuiteName:[LCSharedUtils appGroupID]];
+    NSUserDefaults *_gSuite = [[NSUserDefaults alloc] initWithSuiteName:[LCSharedUtils appGroupID] ?: @"group.com.tequila.dash"];
     BOOL _globalSpoof = [_gSuite boolForKey:@"TDGlobalSpoof"];
     if ([appInfo[@"hideLiveContainer"] boolValue] || [appInfo[@"tdDyldTrim"] boolValue]) {
         setenv("TD_DYLD_TRIM", "1", 1);
