@@ -1,3 +1,23 @@
+## [0.3.888] - 2026-11-14
+
+### 全局隐藏模式 (设置 → 沙盒容器 → 实验性功能)
+- 一键总开: 所有沙盒 App 默认启用全部隐藏层 (sysctl 伪值表 / SecTask entitlement 隐藏 /
+  csops 伪 CS flags / proc 族+bootstrap / dyld 裁剪); app group suite 键 TDGlobalSpoof.
+- per-app LCAppInfo 显式键仍优先; csopsKeepDebugged 仅全局关时生效.
+- 访客 App 设置的实验性区新增四个逐层开关 UI (i18n en/zh-Hans/zh-Hant).
+
+### 第四批隐藏面 (TD_PROC_SPOOF, 8d1ade3)
+- proc_listallpids 只留自身 / proc_pidpath+proc_name 非自身 ENOENT
+- bootstrap_look_up2: 宿主/注入框架前缀服务名 → BOOTSTRAP_UNKNOWN_SERVICE
+- posix_spawn/spawnp env 重放: 访客子进程继承全部 TD_* 门控 (旁路封堵)
+
+### 多任务修复链
+- M44c: guestContainer 挂 rootVC.view (非 window 直挂) + zPosition
+- M44d: dock 预热顺序 (上游 init 强解包挂 keyWindow, 必须在 LC 窗口创建前触碰)
+
+### 隐藏状态面板 (bfc601b)
+- 虚拟进程页顶部自动检测 L1-L8 运行时真值; "清除已退出"=清列表残留行.
+
 ## [0.3.887] - 2026-11-14
 
 ### 多任务层级断言第二个根因（M44b）
