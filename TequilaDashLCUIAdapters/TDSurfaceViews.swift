@@ -361,7 +361,7 @@ enum TDHideStatusProvider {
             detail: "把 /usr /bin /etc 等系统路径重定向进沙盒容器私有根; 访客读系统目录看到的都是容器内副本.",
             state: vrootOn ? .active : .off,
             howToEnable: vrootOn ? "" : "对应容器 → App 设置 → TDVRoot = path/full",
-            note: vrootOn ? "根: \(String(cString: TDVRootRootPath()))  模式: \(TDVRootCurrentMode() == .full ? "full(含 uid 伪 0)" : "path")" : ""))
+            note: vrootOn ? "根: \(String(cString: TDVRootRootPath()))  模式: \(TDVRootCurrentMode() == TDVRootModeFull ? "full(含 uid 伪 0)" : "path")" : ""))
         out.append(.init(id: "dyldTrim", icon: "list.bullet.rectangle",
             title: "L2 dyld 镜像清单裁剪",
             detail: "访客枚举已加载镜像时隐藏宿主 bundle 与 LC/ZSign/TweakLoader 注入层条目.",
