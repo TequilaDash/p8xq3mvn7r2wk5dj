@@ -1,5 +1,34 @@
 ## [0.3.879] - 2026-11-14
 
+### roothide 路径层 + rootfs 解包（Tier B-3）
+- vendor `roothide/libroothide`（MIT，commit cb236f9，LICENSE 保留 + NOTICE 第 9 条）：
+  jbroot 路径代数（`jbroot_alloc/rootfs_alloc`）+ vroot interpose 实现族 + symredirect
+  引擎；改造点见 `vendor/roothide/README.md` 台账 —— 去掉
+  `/var/containers/Bundle/Application` 硬编码、`__roothideinit_JBROOT` 改由外部设置
+  （`TD_VROOT/TD_VROOT_MODE` 同 Tier A 门控，默认关）。
+- 新 `TequilaDash/Engine/TDRootfsUnpack.{h,m}`（宿主侧后台调用）：libarchive
+  （系统 `libarchive.2.dylib`，dlopen 解析）解包 procursus binpack/最小 rootfs 到
+  `Documents/rootfs/.jbroot-<16hex>`（per-guest 随机根）；解包 flags 在上游 decomp
+  0xD（TIME|ACL|FFLAGS）之上叠加 `SECURE_NODOTDOT|SECURE_NOABSOLUTEPATHS`；zstd
+  明确不支持（iOS 无系统 libzstd，SWCompression/Apple libarchive 均无 zstd 解码）。
+  解包树统一收紧 0755（清 suid/sgid/sticky 与组/其他可写）。
+- 重签链路（开关参数 `TDRootfsUnpackOptionResignWithHostIdentity`）：rootfs 内 Mach-O
+  一批 `ZSigner signMachOPathArr` 按宿主证书重签（LCUtils.m:234 同款入口），无证书时
+  回落 `zsign_adhoc_file`（MachoReSign.swift:44 同款）。
+- symredirect 链路（开关参数 `TDRootfsUnpackOptionSymredirect`）：新 dylib target
+  `TDLibVroot`（vroot 实现族 + 路径代数）+ `TDLibVrootApi`（libc 同名裸跳板，上游
+  libvroot/libvrootapi 分体同构，防止实现-跳板同链互指递归），embed 不链接；解包时拷到
+  `<jbroot>/usr/lib/{libvrootapi,TDLibVroot}.dylib`，对 rootfs Mach-O 就地改写符号绑定到
+  `@loader_path/.jbroot/usr/lib/libvrootapi.dylib`，被改写目录落 `.jbroot` 相对链接；
+  改写后统一重签。
+- 访客/扩展接线：`main.m` 与 `LCBootstrap.m` 两处 `TDVRootInstallIfRequested()` 同点
+  追加 `TDRootHideInstallFromEnvIfRequested()`（TD_VROOT 未设即空操作，链路零变化）。
+- 扩展失败路径追加 `popExtensionRequestWithReason`（iOS 17+，运行时探测）：访客起不来
+  时请求宿主即时收走扩展进程，不再挂到 watchdog。
+- 冒烟：`Resources/Scripts/make_rootfs_sample.py`（Windows 可跑，纯标准库）产出
+  `Documents/rootfs.tar` 样例（usr/bin/curl+ksh / etc / var/jb 符号链接；--src 可打
+  真 binpack，--verify 做 SECURE_* 契约 round-trip 校验）。
+
 ### vroot 开关上界面（M36）
 - App 设置 → 实验性：新增「vroot 模式」三态 Picker（关闭 / 路径映射 / 完整伪 root），
   写入 `LCAppInfo.plist` 的 `TDVRoot`（off|path|full）；0.3.878 的宿主/扩展链路

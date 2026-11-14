@@ -5,6 +5,8 @@
 #import "utils.h"
 // vroot (Tier A): 纯路径前缀映射 + full 模式 HOME/PATH 切换. 默认关 (TD_VROOT 未设即空操作).
 #import "TDVRootConfig.h"
+// roothide (Tier B-3): TD_VROOT 同门控的 __roothideinit_JBROOT 安装 (vendored libroothide).
+#import "TDRootHideInit.h"
 
 #include <mach/mach.h>
 #include <mach-o/dyld.h>
@@ -302,6 +304,9 @@ NSString *LCPrepareGuestExtension(NSDictionary *request) {
 
     // vroot (Tier A): 与 invokeAppMain 同一点 —— 在扩展的 DyldHooksInit 之前强制重读配置.
     TDVRootInstallIfRequested();
+    // roothide (Tier B-3): TDVRootInstallIfRequested 同点安装 —— TD_VROOT 已就位时设置
+    // __roothideinit_JBROOT (vendored libroothide 路径代数); 未设/mode=off 时空操作.
+    TDRootHideInstallFromEnvIfRequested();
     if (checkJITEnabled()) init_bypassDyldLibValidation();
     DyldHooksInit(false, true, 0);
     appMainImageIndex = _dyld_image_count();
@@ -647,6 +652,9 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
     // vroot (Tier A): __DATA,__interpose 在镜像装载时已生效; 这里在访客 dlopen 之前
     // 按当前环境变量强制重读配置 (进程早期可能还没拿到宿主 userInfo 落下的 TD_VROOT).
     TDVRootInstallIfRequested();
+    // roothide (Tier B-3): TDVRootInstallIfRequested 同点安装 (扩展与访客同一条链),
+    // 给 vendored libroothide 的 jbroot 路径代数设置 __roothideinit_JBROOT.
+    TDRootHideInstallFromEnvIfRequested();
     BOOL hookDlopen = !isSideStore && !isSharedBundle && LCSharedUtils.certificatePassword && isLiveProcess;
     DyldHooksInit([guestAppInfo[@"hideLiveContainer"] boolValue], hookDlopen, [guestAppInfo[@"spoofSDKVersion"] unsignedIntValue]);
     
