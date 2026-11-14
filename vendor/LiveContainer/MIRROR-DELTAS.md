@@ -90,6 +90,7 @@
 | 3b | `LiveContainer/Tweaks/Dyld.m` | M33 | `hideLiveContainer` 诊断日志（hide 标志/路径/被改写的镜像） | v0.3.870 |
 | 3 | `LiveContainer/Tweaks/NSFileManager+GuestHooks.m` | M16 + M17 | ①保存真实 IMP 防两套 hook 成环 ②iOS 26+ 不装 createDirectory swizzle ③`lcAppGroupPath` 判空 | v0.3.848 |
 | 4 | `LiveContainer/Tweaks/Tweaks.h` | C7 | `NetBlockGuestHooksInit` 声明（宿主联网拦截，上游无） | v0.3.840 |
+| 3a | `LiveContainer/utils.h` | M42 | `swizzle`/`swizzleClassMethod` 幂等化（按 class+sel 去重，只交换一次；嵌套反复 swizzle 在 iOS 26 段错误，0.3.881 .ips 实证） | v0.3.882 |
 | 5 | `LiveContainerSwiftUI/Models/LCAppInfo.h` | M18 + M22 + M36 + M38 + M39 | `nestedLCCompat` / `netBlock` / `vrootMode` / `isolateTmpDir` / `cowSnapshot` 属性 | v0.3.880 |
 | 6 | `LiveContainerSwiftUI/Models/LCAppInfo.m` | M18 + M22 + M36 + M38 + M39 | `nestedLCCompat`(LCNestedLCCompat) / `netBlock`(TDNetBlock) / `vrootMode`(TDVRoot: off|path|full) / `isolateTmpDir`(TDIsolateTMPDIR) / `cowSnapshot`(TDCoWSnapshot) | v0.3.880 |
 | 7 | `LiveContainerSwiftUI/Models/LCAppModel.swift` | M18 + M22 + M36 + M38 + M39 | `uiNestedLCCompat`/`uiNetBlock`/`uiVRootMode`/`uiIsolateTmpDir`/`uiCoWSnapshot`；runApp 写 `TDGuestNetBlock` | v0.3.880 |

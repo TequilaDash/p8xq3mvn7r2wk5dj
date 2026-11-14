@@ -27,12 +27,37 @@ bool aarch64_emulate_add_imm(uint32_t instruction, uint32_t *dst, uint32_t *src,
 uint64_t aarch64_emulate_adrp_add(uint32_t instruction, uint32_t addInstruction, uint64_t pc);
 uint64_t aarch64_emulate_adrp_ldr(uint32_t instruction, uint32_t ldrInstruction, uint64_t pc);
 
+// 本仓适配 (M42, 2026-11-14): swizzle 幂等化.
+// 崩溃实证 (0.3.881 .ips 112035/112050/112131): 嵌套场景下 hook_setDelegate 每次
+// 都会再调 swizzle(UIWindow.makeKeyAndVisible/...)，method_exchangeImplementations
+// 在 iOS 26 上对同一 (class,selector) 重复交换时 cache flush 段错误；
+// 且重复交换会让 hook/orig 互换 (奇偶翻转)。这里按 (class,sel) 去重，只换一次。
+static inline void td_swizzle_once(NSMutableSet **seen, NSString *key, Class class,
+                                   SEL originalAction, SEL swizzledAction, BOOL classMethod) {
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{ *seen = [NSMutableSet new]; });
+    @synchronized (*seen) {
+        if ([*seen containsObject:key]) return;
+        [*seen addObject:key];
+    }
+    Method m1 = classMethod ? class_getClassMethod(class, originalAction) : class_getInstanceMethod(class, originalAction);
+    Method m2 = classMethod ? class_getClassMethod(class, swizzledAction) : class_getInstanceMethod(class, swizzledAction);
+    if (!m1 || !m2) return;
+    method_exchangeImplementations(m1, m2);
+}
+
 static inline void swizzle(Class class, SEL originalAction, SEL swizzledAction) {
-    method_exchangeImplementations(class_getInstanceMethod(class, originalAction), class_getInstanceMethod(class, swizzledAction));
+    static NSMutableSet *tdSeen = nil;
+    td_swizzle_once(&tdSeen,
+                    [NSString stringWithFormat:@"%@:%@", NSStringFromClass(class), NSStringFromSelector(originalAction)],
+                    class, originalAction, swizzledAction, NO);
 }
 
 static inline void swizzleClassMethod(Class class, SEL originalAction, SEL swizzledAction) {
-    method_exchangeImplementations(class_getClassMethod(class, originalAction), class_getClassMethod(class, swizzledAction));
+    static NSMutableSet *tdSeen = nil;
+    td_swizzle_once(&tdSeen,
+                    [NSString stringWithFormat:@"+%@:%@", NSStringFromClass(class), NSStringFromSelector(originalAction)],
+                    class, originalAction, swizzledAction, YES);
 }
 
 @interface NSUserDefaults(LiveContainer)

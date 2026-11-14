@@ -46,6 +46,16 @@
 - 仍无法用户态隐藏的固有侧载痕迹：包标识符/描述文件/可执行/权限文件
   被篡改、task 端口额外引用（AMFI/内核层）。
 
+### swizzle 幂等化 (M42)
+- 崩溃实证（0.3.881 `.ips` 112035/112050/112131）：zcontainer 内层访客启动时，
+  TweakLoader `hook_setDelegate` 对 `UIWindow.makeKeyAndVisible` 等选择器**反复**
+  `method_exchangeImplementations`，iOS 26 cache flush 段错误（SIGSEGV），
+  且重复交换会 hook/orig 互换。
+- `utils.h` 的 `swizzle`/`swizzleClassMethod` 按 (class,sel) 去重——同组合只交换
+  一次，重复调用直接返回；同时补了 method 缺失时的空保护。
+- 影响：全仓所有使用 `swizzle` 的运行期 hook（setDelegate/URL/Scene 等）一次性
+  获得幂等保护。
+
 ## [0.3.880] - 2026-11-14
 
 ### 沙盒收紧 + 隐藏性六件套（M37–M39）
