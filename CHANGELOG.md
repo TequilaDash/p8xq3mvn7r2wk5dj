@@ -1,3 +1,19 @@
+## [0.3.887] - 2026-11-14
+
+### 多任务层级断言第二个根因（M44b）
+- `.ips` 162906/163020 仍是 `_addChildViewController` 断言，但这次不是我漏发容器：
+  `DecoratedAppSceneViewController` 先 `[windowHostingView addSubview:self.view]`、
+  再 `[rootVC addChildViewController:self]`；UIKit 要求 `self.view.superview` 的 VC
+  链与 rootVC 一致，而 dock 的 windowHostingView 挂在 SwiftUI 子 hosting VC 下，
+  与传入的 guestContainer 不一致 → 仍断言。
+- 修法：`showAndGetHost` 里先把 `MultitaskDockManager.shared.windowHostingView`
+  挪进 **同一个 LC 窗口内**的 guestContainer.view（同窗口，不断 scene presenter），
+  再返回容器；日志 `[TD-Multitask] dock windowHostingView re-homed`。
+
+### 巢中巢二次进入（已知，待改善）
+- zcontainer 内层启动后需再手动进一次才能进其安装的 App —— 属内层 LC 的
+  生命周期行为（非崩溃），后续单独处理。
+
 ## [0.3.886] - 2026-11-14
 
 ### 多任务闪退真正修复（M44a 补发）

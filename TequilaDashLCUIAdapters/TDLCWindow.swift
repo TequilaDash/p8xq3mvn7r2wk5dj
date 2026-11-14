@@ -48,6 +48,20 @@ public final class TDLCWindowController: NSObject {
             guestContainer = c
         }
         guestContainer?.view.frame = window.bounds
+        // M44b (0.3.886 .ips 162906 实证): DecoratedAppSceneViewController 先
+        // `[windowHostingView addSubview:self.view]` 再 `[rootVC addChildViewController:self]`。
+        // UIKit 层级检查要求 self.view.superview 的 VC 链 == rootVC；dock 的
+        // windowHostingView 原先挂在 SwiftUI 子 hosting VC 下，与传入的容器 VC 不一致
+        // → "should have parent ... but requested parent is ..." 断言（仍然闪退）。
+        // 修法: 先把 dock 的 windowHostingView 挪进**同一个 LC 窗口内**的 guestContainer.view，
+        // 链一致；仍是同窗口（非同窗口搬家才不会断 scene presenter）。
+        let dockHost = MultitaskDockManager.shared.windowHostingView
+        if dockHost.superview !== guestContainer?.view {
+            dockHost.frame = guestContainer?.view.bounds ?? window.bounds
+            dockHost.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+            guestContainer?.view.addSubview(dockHost)
+            NSLog("[TD-Multitask] dock windowHostingView re-homed into LC guestContainer (same window)")
+        }
         return guestContainer
     }
 
