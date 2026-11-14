@@ -159,6 +159,14 @@ static bool gTDVDyldTrim = false;
 // sysctl 伪值表数据源: TD_SYSCTL_SPOOF env (launcher 透传 per-app sysctlSpoof).
 // 内置默认表 = 检测器高频查询键 (libBroadpatch/Reveil 审计结论);
 // TD_SYSCTL_<NAME> env (名大写化 '.'->'_') 可逐键覆盖, 未设用默认.
+//
+// 硬编码原则 (audit v2 修正): 表里只放**设备无关**的伪化动作.
+//   · kern.bootargs -> 空串: 真 iOS 设备该值恒为空, 非空 = 越狱机/USB 引导实锤,
+//     空串就是真值, 不存在"机型不符"问题.
+//   · hw.machine / hw.model / kern.osversion / kern.osrelease **不进默认表**:
+//     真机伪值应透传真机自身值 (检测器若持有宿主机型画像, 写死的机型反而露馅).
+//     需要伪装时由 TD_SYSCTL_HW_MACHINE 等 env 显式提供, 或 Launcher 侧
+//     读取宿主自身 sysctl 真值后落 env (透传 = 恒真).
 typedef struct {
     const char *name;    // sysctl 名, 精确匹配
     const char *value;   // 伪值 NUL 结尾字符串; 数值型 sysctl 同样按字符串返回,
@@ -166,10 +174,6 @@ typedef struct {
 
 static const TDVSysctlSpoofEntry kTDVSysctlSpoofs[] = {
     {"kern.bootargs", ""},
-    {"kern.osversion", "27.2"},
-    {"kern.osrelease", "24B101"},
-    {"hw.machine", "iPhone15,4"},
-    {"hw.model", "iPhone15,4"},
 };
 
 static bool gTDVSysctlSpoof = false;
