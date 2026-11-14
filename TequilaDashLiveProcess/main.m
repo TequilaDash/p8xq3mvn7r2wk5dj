@@ -17,6 +17,11 @@
 #import <UIKit/UIKit.h>
 #import <objc/runtime.h>
 #import <objc/message.h>
+// atexit / getpid: Surface 自登记的收口与 pid 来源.
+#include <stdlib.h>
+#include <unistd.h>
+// Tier B-1 (Surface-lite): 自登记扩展子进程与 dlopen 访客的虚拟进程表.
+#import "Surface/TDProcTable.h"
 
 #pragma mark - 访客参数键名
 
@@ -69,6 +74,21 @@ static NSDictionary *_tdlpRetrievedAppInfo;
 #pragma mark - 进程主体
 
 static char **_tdlpEnvp, **_tdlpApple = NULL;
+
+// Tier B-1 (Surface-lite): 本扩展进程是否已登记虚拟进程表 (atexit 兜底用).
+static pid_t _tdlpSurfacePid = -1;
+static BOOL _tdlpSurfaceRegistered = NO;
+
+// 进程正常退出 (访客 main 返回 / exit()) 时把两条目落 state=exited;
+// 异常死亡 (crash / SIGKILL) 不走 atexit, 由宿主 TDProcTable reconcile 的
+// kill(pid, 0) 轮询收口 —— 两路合起来覆盖全部退出形态.
+static void _tdlpSurfaceMarkSelfExited(void) {
+    if (_tdlpSurfacePid > 0 && _tdlpSurfaceRegistered) {
+        [[TDProcTable shared] markExitedForPid:_tdlpSurfacePid
+                                          note:@"atexit: process exit"
+                                         error:NULL];
+    }
+}
 
 // LCBootstrap 的编排入口 (LC/LCBootstrap.m:665): hook 顺序块 + 覆写 NSBundle/CFBundle/
 // ExecPath + dlopen_nolock 载入访客 + getAppEntryPoint + 跳进访客 main.
@@ -139,6 +159,41 @@ static int TequilaDashLiveProcessMain(int argc, char *argv[]) {
     }
     if (mappedContainer) {
         [defaults setObject:mappedContainer forKey:@"selectedContainer"];
+    }
+
+    // Tier B-1 (Surface-lite): 自登记扩展子进程 + dlopen 访客两条目 (state=running).
+    // 宿主 LiveProcessDebugLaunch 在 spawn 回执后也登记 extension 条目 (upsert 去重);
+    // 这里补访客条目 —— 访客与扩展同 pid, 仅 kind 不同, 生命周期一致.
+    // 注意: LC_HOME_PATH 已在上方 setenv (宿主 home), 表文件落在宿主 Documents/TDSurface,
+    // 与宿主 UI 读到同一份.
+    {
+        pid_t selfPid = getpid();
+        NSString *surfaceName = [mappedGuestName isKindOfClass:NSString.class] ? mappedGuestName : nil;
+        NSString *surfaceBundleId = [appInfo[TDLPGuestBundleIDKey] isKindOfClass:NSString.class]
+            ? appInfo[TDLPGuestBundleIDKey] : nil;
+        NSString *surfaceContainer = [mappedContainer isKindOfClass:NSString.class] ? mappedContainer : nil;
+        TDProcTable *surface = [TDProcTable shared];
+        NSError *surfaceError = nil;
+        if ([surface registerPid:selfPid
+                            name:surfaceName
+                        bundleId:surfaceBundleId
+                   containerUUID:surfaceContainer
+                            kind:TDProcKindHostExtension
+                           error:&surfaceError] &&
+            [surface registerPid:selfPid
+                            name:surfaceName
+                        bundleId:surfaceBundleId
+                   containerUUID:surfaceContainer
+                            kind:TDProcKindGuestVisitor
+                           error:&surfaceError]) {
+            _tdlpSurfacePid = selfPid;
+            _tdlpSurfaceRegistered = YES;
+            atexit(_tdlpSurfaceMarkSelfExited);
+            NSLog(@"[TequilaDashLiveProcess] Surface registered pid=%d name=%@", selfPid, surfaceName);
+        } else {
+            NSLog(@"[TequilaDashLiveProcess] Surface register failed: %@",
+                  surfaceError.localizedDescription ?: @"unknown");
+        }
     }
 
     // 跳! (成功 = 不返回)

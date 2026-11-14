@@ -470,6 +470,11 @@ targets:
           - "LC/main.c"
       # 复用主 App 已有的 C 底座, 逐个文件列, 不列目录 (方案 2.2: 列 Engine/ 会把整棵 Swift 树编进扩展).
       - path: TequilaDash/Engine/EscHookBridge.c
+      # Tier B-1 Surface-lite: 虚拟进程表 + PTY 底座. 主 App 经递归 path: TequilaDash
+      # 已自含; 这里逐文件列出 (方案 2.2: 不列目录, 防止把整棵 Swift 树编进扩展).
+      # main.m 自登记 extension/visitor 条目时要用.
+      - path: TequilaDash/Surface/TDProcTable.m
+      - path: TequilaDash/Surface/TDPTY.m
       # vroot (Tier A): 三个文件只编进扩展进程 —— __DATA,__interpose 只应作用于访客,
       # 不进主 App / LiveContainerSwiftUI.framework (后者已 excludes "VRoot").
       - path: TequilaDashLCUIAdapters/VRoot
@@ -516,6 +521,8 @@ targets:
         HEADER_SEARCH_PATHS:
           - "$(inherited)"
           - "$(SRCROOT)/TequilaDashLCUIAdapters/VRoot"
+          # Tier B-1 Surface-lite: main.m 的 #import "Surface/TDProcTable.h".
+          - "$(SRCROOT)/TequilaDash"
         # LC 同款 (LiveContainer.xcodeproj:1910/1952): dyld_bypass_validation.h 的
         # orig_dyld_* 函数指针是头内暂定定义, Dyld.m 与 dyld_bypass_validation.m 两个 TU
         # 都 include 它 —— LC 靠 -fcommon 让暂定定义跨 TU 合并 (run 42478527343 实锤
@@ -773,6 +780,9 @@ targets:
         HEADER_SEARCH_PATHS:
           # 主 App 适配副本优先: 与桥接头裸名 include 解析到同一物理路径, 避免重复 @interface.
           - "$(SRCROOT)/TequilaDashLiveProcess/LC"
+          # Tier B-1 Surface-lite: 桥接头 #include "Surface/TDProcTable.h"; 类实现编在
+          # 主 App 二进制 (走 -Wl,-undefined,dynamic_lookup 运行时解析, 不重复编).
+          - "$(SRCROOT)/TequilaDash"
           - "$(SRCROOT)/vendor/LiveContainer/LiveContainerSwiftUI"
           - "$(SRCROOT)/vendor/LiveContainer/LiveContainerSwiftUI/Models"
           - "$(SRCROOT)/vendor/LiveContainer/LiveContainerSwiftUI/Utilities"
