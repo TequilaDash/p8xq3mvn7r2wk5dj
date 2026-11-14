@@ -169,7 +169,7 @@ struct TDSurfaceView: View {
         DispatchQueue.global(qos: .userInitiated).async {
             let options: TDRootfsUnpackOptions = [.resignWithHostIdentity, .symredirect]
             let result = try? TDRootfsUnpack.unpackArchive(at: url,
-                                                          destination: nil,
+                                                          destinationURL: nil,
                                                           options: options)
             DispatchQueue.main.async {
                 rootfsBusy = false
