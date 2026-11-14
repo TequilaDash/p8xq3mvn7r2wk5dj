@@ -144,9 +144,26 @@ NSString *TequilaDashLiveProcessDebugLaunch(NSDictionary<NSString *, id> *userIn
     if (TDReadVRootSwitch(payload, &vrootPath, &vrootMode)) {
         payload[TDLPVRootPathKey] = vrootPath;
         payload[TDLPVRootModeKey] = vrootMode;
-        // M41 门控数据源: per-app hideLiveContainer -> TD_DYLD_TRIM (shim 镜像裁剪开关).
-        if ([appInfo[@"hideLiveContainer"] boolValue]) {
-            payload[@"tdDyldTrim"] = @"1";
+    }
+    // M41 门控数据源 (独立于 vroot!): 读 per-app LCAppInfo.plist 的
+    // hideLiveContainer -> tdDyldTrim. 单独读 plist, 不受 vroot 开关分支影响
+    // (审计 v2 §一 雷 1/雷 2).
+    {
+        NSString *trimFolder = payload[TDLPGuestFolderNameKey];
+        if ([trimFolder isKindOfClass:NSString.class] && trimFolder.length > 0) {
+            NSString *trimHome = payload[TDLPHomePathKey];
+            if (![trimHome isKindOfClass:NSString.class] || trimHome.length == 0) {
+                const char *envHome = getenv("LC_HOME_PATH");
+                trimHome = (envHome && envHome[0] == '/') ? [NSString stringWithUTF8String:envHome] : NSHomeDirectory();
+            }
+            NSString *trimPlist = [[[[trimHome stringByAppendingPathComponent:@"Documents"]
+                stringByAppendingPathComponent:@"Applications"]
+                stringByAppendingPathComponent:trimFolder]
+                stringByAppendingPathComponent:@"LCAppInfo.plist"];
+            NSDictionary *ai = [NSDictionary dictionaryWithContentsOfFile:trimPlist];
+            if ([ai[@"hideLiveContainer"] boolValue]) {
+                payload[@"tdDyldTrim"] = @"1";
+            }
         }
     }
 
