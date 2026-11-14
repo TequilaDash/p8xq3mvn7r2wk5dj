@@ -32,5 +32,7 @@
 // dynamic_lookup 运行时解析), 头文件经 HEADER_SEARCH_PATHS 的 $(SRCROOT)/TequilaDash 解析.
 #include "Surface/TDProcTable.h"
 #include "../TequilaDash/Engine/TDRootfsUnpack.h"
+// 隐藏状态面板: TDVRootConfig 门控 getter (纯 C 导出, 同 target LCUIAdapters 编译).
+#include "VRoot/TDVRootConfig.h"
 
 #endif

@@ -32,6 +32,8 @@ struct TDSurfaceView: View {
 
     var body: some View {
         List {
+            // 隐藏状态总览 (2026-11-14): 置顶, 自动检测, 零操作 —— 用户主诉求.
+            TDHideStatusSection()
             Section {
                 ForEach(rows) { row in
                     TDSurfaceRowView(row: row, busy: busyPid == row.pid) {
@@ -59,21 +61,28 @@ struct TDSurfaceView: View {
             unpackRootfs(from: url)
         }
         .safeAreaInset(edge: .bottom) {
-            VStack(spacing: 8) {
-                Button {
-                    showRootfsPicker = true
-                } label: {
-                    Label("解包 rootfs 归档 (tar → .jbroot-*)", systemImage: "shippingbox.fill")
-                        .frame(maxWidth: .infinity)
+            // rootfs 解包是运维操作, 不是日常交互 —— 收进折叠区 (用户反馈: "还要我去操作的?").
+            DisclosureGroup {
+                VStack(spacing: 8) {
+                    Button {
+                        showRootfsPicker = true
+                    } label: {
+                        Label("解包 rootfs 归档 (tar → .jbroot-*)", systemImage: "shippingbox.fill")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(rootfsBusy)
+                    if !rootfsStatus.isEmpty {
+                        Text(rootfsStatus)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
                 }
-                .buttonStyle(.borderedProminent)
-                .disabled(rootfsBusy)
-                if !rootfsStatus.isEmpty {
-                    Text(rootfsStatus)
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
+                .padding(.vertical, 4)
+            } label: {
+                Label("运维工具 (rootfs 解包)", systemImage: "wrench.and.screwdriver")
+                    .font(.footnote)
             }
             .padding(.horizontal)
             .padding(.bottom, 8)
@@ -239,5 +248,157 @@ private struct TDSurfaceRowView: View {
             }
         }
         .padding(.vertical, 2)
+    }
+}
+
+/// 隐藏状态总览 Section (TDSurfaceView 置顶): 完整面板在 TDHideStatusView.swift,
+/// 这里是嵌入宿主 List 的紧凑版 —— 只显示每层一行 (图标+名+徽标), 点击展开详情.
+struct TDHideStatusSection: View {
+    @State private var rows: [TDHideStatusView.LayerRow] = []
+    @State private var expanded: Set<String> = []
+
+    var body: some View {
+        Section {
+            ForEach(rows) { row in
+                compactRow(row)
+            }
+        } header: {
+            Text("隐藏状态 (自动检测)")
+        } footer: {
+            Text("绿=已生效 蓝=恒开 灰=未开启 黄=待接线. 点击行展开说明与开启方法.")
+        }
+        .task {
+            reload()
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                reload()
+            }
+        }
+    }
+
+    private func compactRow(_ row: TDHideStatusView.LayerRow) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 8) {
+                Image(systemName: row.icon)
+                    .foregroundColor(color(for: row.state))
+                    .frame(width: 20)
+                Text(row.title)
+                    .font(.subheadline)
+                Spacer()
+                Text(badgeLabel(row.state))
+                    .font(.caption2)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 2)
+                    .background(color(for: row.state).opacity(0.18))
+                    .foregroundColor(color(for: row.state))
+                    .clipShape(Capsule())
+            }
+            if expanded.contains(row.id) {
+                Text(row.detail)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                if !row.howToEnable.isEmpty {
+                    Text("开启: \(row.howToEnable)")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                }
+                if !row.note.isEmpty {
+                    Text(row.note)
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                }
+            }
+        }
+        .contentShape(Rectangle())
+        .onTapGesture {
+            withAnimation(.easeInOut(duration: 0.15)) {
+                if expanded.contains(row.id) {
+                    expanded.remove(row.id)
+                } else {
+                    expanded.insert(row.id)
+                }
+            }
+        }
+    }
+
+    private func reload() {
+        // 与 TDHideStatusView 同一套运行时真值; 这里复制精简逻辑 (不共享 State 类).
+        rows = TDHideStatusProvider.currentRows()
+    }
+
+    private func color(for state: TDHideStatusView.LayerRow.State) -> Color {
+        switch state {
+        case .active: return .green
+        case .builtIn: return .blue
+        case .off: return .gray
+        case .pending: return .orange
+        }
+    }
+
+    private func badgeLabel(_ state: TDHideStatusView.LayerRow.State) -> String {
+        switch state {
+        case .active: return "已生效"
+        case .builtIn: return "恒开"
+        case .off: return "未开启"
+        case .pending: return "待接线"
+        }
+    }
+}
+
+/// 检测逻辑提供者: TDHideStatusView 与 TDHideStatusSection 共用同一份运行时真值,
+/// 避免"面板两处检测逻辑漂移".
+enum TDHideStatusProvider {
+    static func currentRows() -> [TDHideStatusView.LayerRow] {
+        var out: [TDHideStatusView.LayerRow] = []
+        let vrootOn = TDVRootIsEnabled()
+        let dyldTrim = TDVDyldTrimEnabled()
+        let sysctlSpoof = TDVSysctlSpoofEnabled()
+        let secTaskSpoof = TDVSecTaskSpoofEnabled()
+        let csopsSpoof = TDVCsopsSpoofEnabled()
+
+        out.append(.init(id: "vroot", icon: "externaldrive.connected.to.line.below",
+            title: "L1 路径虚拟化 (vroot)",
+            detail: "把 /usr /bin /etc 等系统路径重定向进沙盒容器私有根; 访客读系统目录看到的都是容器内副本.",
+            state: vrootOn ? .active : .off,
+            howToEnable: vrootOn ? "" : "对应容器 → App 设置 → TDVRoot = path/full",
+            note: vrootOn ? "根: \(String(cString: TDVRootRootPath()))  模式: \(TDVRootCurrentMode() == .full ? "full(含 uid 伪 0)" : "path")" : ""))
+        out.append(.init(id: "dyldTrim", icon: "list.bullet.rectangle",
+            title: "L2 dyld 镜像清单裁剪",
+            detail: "访客枚举已加载镜像时隐藏宿主 bundle 与 LC/ZSign/TweakLoader 注入层条目.",
+            state: dyldTrim ? .active : .off,
+            howToEnable: dyldTrim ? "" : "对应容器 → App 设置 → 隐藏 LiveContainer",
+            note: dyldTrim ? "宿主目录前缀 + 8 特征串过滤, 整行删除" : "默认关 = 与上游 LC 行为一致"))
+        out.append(.init(id: "envScrub", icon: "terminal",
+            title: "L3 访客环境变量清洗",
+            detail: "dlopen 访客前 unset TD_*/LC_HOME_PATH/LP_HOME_PATH, getenv 探测不到注入痕迹.",
+            state: .builtIn, howToEnable: "",
+            note: "扩展路径与访客路径同点执行"))
+        out.append(.init(id: "sysctl", icon: "cpu",
+            title: "L4 sysctl 伪值表",
+            detail: "sysctlbyname 查 kern.bootargs 等键返回伪值 (bootargs 非空 = 越狱实锤).",
+            state: sysctlSpoof ? .active : .pending,
+            howToEnable: sysctlSpoof ? "" : "per-app sysctlSpoof 开关",
+            note: "默认仅 bootargs→空 (设备无关); 机型/版本键不默认伪化, TD_SYSCTL_<NAME> 可覆盖"))
+        out.append(.init(id: "secTask", icon: "key.horizontal",
+            title: "L5 SecTask entitlement 隐藏",
+            detail: "访客读宿主私有 entitlement (get-task-allow / com.apple.private.*) 返回 NULL.",
+            state: secTaskSpoof ? .active : .pending,
+            howToEnable: secTaskSpoof ? "" : "per-app secTaskSpoof (透传待接线)",
+            note: "合法键恒透传, 宿主自身功能不受影响"))
+        out.append(.init(id: "csops", icon: "signature",
+            title: "L6 代码签名标志伪化",
+            detail: "csops 查询清除 CS_GET_TASK_ALLOW (可被调试) 与 CS_DEBUGGED (调试器已附加) 位.",
+            state: csopsSpoof ? .active : .pending,
+            howToEnable: csopsSpoof ? "" : "per-app csopsSpoof (透传待接线)",
+            note: "TD_CSOPS_KEEP_DEBUGGED=1 保留调试器位 (宿主 JIT 探测链路依赖)"))
+        out.append(.init(id: "tweaksHide", icon: "eye.slash",
+            title: "L7 Tweaks 目录隐藏",
+            detail: "访客镜像对 */Documents/Tweaks 的访问返回 ENOENT (fail-closed).",
+            state: .builtIn, howToEnable: "", note: "M37b"))
+        out.append(.init(id: "uncovered", icon: "exclamationmark.triangle",
+            title: "L8 尚未覆盖的检测面",
+            detail: "mach task_info (TASK_DYLD_INFO 直读 dyld 镜像表, interpose 拦不住, 需 fishhook); CFPreferences 域隔离 (org.tequila.* defaults 仍可见); 静态 LC_LOAD_DYLIB 依赖树 (patched Reveil 口径, 运行时裁剪无效).",
+            state: .off, howToEnable: "(第三批改造项)", note: "展开看逐项说明"))
+        return out
     }
 }
