@@ -117,10 +117,7 @@ struct TDSandboxLogView: View {
 struct TDSandboxExperimentalView: View {
     /// true = 从下往上弹出（fullScreenCover）；false = 原生平滑推入（push，支持左滑返回）.
     @AppStorage("TDPresentSandboxAsSheet") private var presentAsSheet = false
-    @State private var globalSpoof = {
-        let suite = UserDefaults(suiteName: [LCSharedUtils appGroupID] ?? "group.com.tequila.dash")
-        return suite?.bool(forKey: "TDGlobalSpoof") ?? false
-    }()
+    @State private var globalSpoof = UserDefaults(suiteName: "group.com.tequila.dash")?.bool(forKey: "TDGlobalSpoof") ?? false
 
     var body: some View {
         List {
@@ -135,8 +132,7 @@ struct TDSandboxExperimentalView: View {
                     }
                 }
                 .onChange(of: globalSpoof) { nv in
-                    let suite = UserDefaults(suiteName: [LCSharedUtils appGroupID] ?? "group.com.tequila.dash")
-                    suite?.set(nv, forKey: "TDGlobalSpoof")
+                    UserDefaults(suiteName: "group.com.tequila.dash")?.set(nv, forKey: "TDGlobalSpoof")
                 }
             } header: {
                 Text("隐藏 (隐藏体系总开关)")
