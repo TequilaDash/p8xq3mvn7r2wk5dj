@@ -650,8 +650,8 @@ targets:
         # libvrootapi 的 LC_LOAD_DYLIB 按 @loader_path 解析我们 (两件同落 <jbroot>/usr/lib).
         DYLIB_INSTALL_NAME_BASE: "@loader_path"
         SKIP_INSTALL: "YES"
-        MARKETING_VERSION: "0.3.879"
-        CURRENT_PROJECT_VERSION: "1168"
+        MARKETING_VERSION: "0.3.883"
+        CURRENT_PROJECT_VERSION: "1172"
         IPHONEOS_DEPLOYMENT_TARGET: "18.0"
         # vroot_* 必须按名导出 (跳板 b _vroot_NAME 二级绑定); 同主 App 口径.
         GCC_SYMBOLS_PRIVATE_EXTERN: "NO"
@@ -685,8 +685,8 @@ targets:
         # @loader_path/.jbroot/usr/lib/libvrootapi.dylib), @rpath 即可.
         DYLIB_INSTALL_NAME_BASE: "@rpath"
         SKIP_INSTALL: "YES"
-        MARKETING_VERSION: "0.3.879"
-        CURRENT_PROJECT_VERSION: "1168"
+        MARKETING_VERSION: "0.3.883"
+        CURRENT_PROJECT_VERSION: "1172"
         IPHONEOS_DEPLOYMENT_TARGET: "18.0"
         GCC_SYMBOLS_PRIVATE_EXTERN: "NO"
         # 同 TDLibVroot: 纯 C 跳板, 关 modules (初始化器内 include 模式与显式模块扫描不兼容).
