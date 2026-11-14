@@ -614,6 +614,7 @@ static intptr_t tdv_dyld_slide_impl(uint32_t i) {
 #pragma mark - proc 族伪值 (TD_PROC_SPOOF)
 
 #include <mach/mach.h>
+#include <spawn.h>
 // 私有 bootstrap_look_up2 (launchd bootstrap 子系统): iOS SDK 无
 // servers/bootstrap.h, 常量与类型手写 (broadpatch decomp 交叉验证).
 #ifndef BOOTSTRAP_UNKNOWN_SERVICE
