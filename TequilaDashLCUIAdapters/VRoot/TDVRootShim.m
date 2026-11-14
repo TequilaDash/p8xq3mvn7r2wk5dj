@@ -429,6 +429,16 @@ static bool tdv_dyld_hidden_path(const char *path) {
     return false;
 }
 
+// M41 门控 (0.3.884): 与上游完全同构 —— 只有该访客开了 hideLiveContainer 才裁剪
+// 镜像清单; 默认关闭, 保证基线行为与上游 LC 逐字节一致 (owner 2026-11-14 指令).
+static bool tdv_dyld_trim_enabled(void) {
+    @try {
+        return [[NSUserDefaults.standardUserDefaults lcGuestAppInfo][@"hideLiveContainer"] boolValue];
+    } @catch (__unused NSException *e) {
+        return false;
+    }
+}
+
 static void tdv_dyld_rebuild_locked(void) {
     uint32_t real = tdv_real_dyld_image_count();
     const char *img0 = real > 0 ? tdv_real_dyld_get_image_name(0) : NULL;
@@ -441,6 +451,16 @@ static void tdv_dyld_rebuild_locked(void) {
             memcpy(gTDVDyldHostDir, img0, n);
             gTDVDyldHostDir[n] = '\0';
         }
+    }
+    if (!tdv_dyld_trim_enabled()) {
+        // 与上游一致: 不过滤, kept = 0..real 全保留.
+        if (gTDVDyldRealCount != real || gTDVDyldKeptCount != real) {
+            gTDVDyldRealCount = real;
+            uint32_t kept = 0;
+            for (uint32_t i = 0; i < real && kept < 512; i++) gTDVDyldKept[kept++] = i;
+            gTDVDyldKeptCount = kept;
+        }
+        return;
     }
     if (real != gTDVDyldRealCount || gTDVDyldKeptCount == 0) {
         gTDVDyldRealCount = real;
