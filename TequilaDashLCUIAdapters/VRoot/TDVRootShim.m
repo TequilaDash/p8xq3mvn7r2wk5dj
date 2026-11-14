@@ -662,10 +662,6 @@ TDV_INTERPOSE(tdv_dyld_count_impl, _dyld_image_count);
 TDV_INTERPOSE(tdv_dyld_name_impl, _dyld_get_image_name);
 TDV_INTERPOSE(tdv_dyld_header_impl, _dyld_get_image_header);
 TDV_INTERPOSE(tdv_dyld_slide_impl, _dyld_get_image_vmaddr_slide);
-TDV_INTERPOSE(tdv_dyld_count_impl, _dyld_image_count);
-TDV_INTERPOSE(tdv_dyld_name_impl, _dyld_get_image_name);
-TDV_INTERPOSE(tdv_dyld_header_impl, _dyld_get_image_header);
-TDV_INTERPOSE(tdv_dyld_slide_impl, _dyld_get_image_vmaddr_slide);
 #pragma mark - SecTask 复数/audit-token 通道 (TD_SECTASK_SPOOF 同门控)
 
 // 绕过口子封堵: 单数 CopyValueForEntitlement 拦了, 但检测器可用
