@@ -11,7 +11,8 @@
 //      的 iOS 实测口径一致; 本镜像对自身 interpose 免疫, 直接调用不会递归.
 //    · getuid/geteuid/getgid/getegid 只在 mode=full 返回 0.
 //    · getmntinfo/getmntinfo_r_np 在真实挂载表末尾追加一条 vroot 项.
-//    · stat64 有意不拦截: 64 位 iOS SDK 不声明 struct stat64, 访客全是 arm64,
+//    · M41: dyld 镜像清单裁剪 (_dyld_image_count/get_image_name/header/vmaddr_slide)
+  · stat64 有意不拦截: 64 位 iOS SDK 不声明 struct stat64, 访客全是 arm64,
 //      没有安全的 interpose 拼写 (见交付报告).
 //
 //  明确不拦截: posix_spawn/exec (Tier B), fopen/NSFileManager (libc 底层已覆盖),
@@ -384,6 +385,107 @@ static gid_t tdv_getegid(void) {
     return TDVRootCurrentMode() == TDVRootModeFull ? 0 : tdv_real_getegid();
 }
 
+#pragma mark - dyld 镜像清单裁剪 (M41)
+
+// 目标: 访客 _dyld_image_count/_dyld_get_image_* 看不到宿主注入层.
+// Reveil 类检测器枚举镜像列表即现形 (owner 2026-11-14 截图实证)。
+// 过滤规则 (整行删除, 不是改名):
+//   · 宿主 app bundle 目录前缀 (image0 实路径推导, 主执行文件本身保留);
+//   · LC/内嵌工具链特征串 (LiveContainer/ZSign/OpenSSL/TweakLoader/CydiaSubstrate);
+//   · Documents/Tweaks/ 下的 tweak dylib。
+extern uint32_t tdv_real_dyld_image_count(void) __asm("_dyld_image_count");
+extern const char *tdv_real_dyld_get_image_name(uint32_t) __asm("_dyld_get_image_name");
+extern const struct mach_header *tdv_real_dyld_get_image_header(uint32_t) __asm("_dyld_get_image_header");
+extern intptr_t tdv_real_dyld_get_image_vmaddr_slide(uint32_t) __asm("_dyld_get_image_vmaddr_slide");
+
+static pthread_mutex_t gTDVDyldLock = PTHREAD_MUTEX_INITIALIZER;
+static uint32_t gTDVDyldRealCount = 0;
+static uint32_t gTDVDyldKept[512];
+static uint32_t gTDVDyldKeptCount = 0;
+static char gTDVDyldHostDir[PATH_MAX] = {0};
+
+static bool tdv_dyld_hidden_path(const char *path) {
+    if (!path || path[0] != '/') return false;
+    if (gTDVDyldHostDir[0] && strncmp(path, gTDVDyldHostDir, strlen(gTDVDyldHostDir)) == 0 &&
+        (path[strlen(gTDVDyldHostDir)] == '/' || path[strlen(gTDVDyldHostDir)] == '\0')) {
+        return true;
+    }
+    static const char *kMarks[] = {
+        "/Frameworks/LiveContainerSwiftUI",
+        "/Frameworks/LiveContainerShared",
+        "/Frameworks/LiveContainer",
+        "/Frameworks/TweakLoader",
+        "/Frameworks/CydiaSubstrate",
+        "/Frameworks/ZSign",
+        "/Frameworks/OpenSSL",
+        "/Documents/Tweaks/",
+    };
+    for (size_t i = 0; i < sizeof(kMarks) / sizeof(kMarks[0]); i++) {
+        if (strstr(path, kMarks[i])) return true;
+    }
+    return false;
+}
+
+static void tdv_dyld_rebuild_locked(void) {
+    uint32_t real = tdv_real_dyld_image_count();
+    const char *img0 = real > 0 ? tdv_real_dyld_get_image_name(0) : NULL;
+    if (img0 && !gTDVDyldHostDir[0]) {
+        // 主执行文件所在目录 = 宿主 .app 目录 (只记录一次).
+        const char *slash = strrchr(img0, '/');
+        if (slash) {
+            size_t n = (size_t)(slash - img0);
+            if (n >= sizeof(gTDVDyldHostDir)) n = sizeof(gTDVDyldHostDir) - 1;
+            memcpy(gTDVDyldHostDir, img0, n);
+            gTDVDyldHostDir[n] = '\0';
+        }
+    }
+    if (real != gTDVDyldRealCount || gTDVDyldKeptCount == 0) {
+        gTDVDyldRealCount = real;
+        uint32_t kept = 0;
+        for (uint32_t i = 0; i < real && kept < 512; i++) {
+            const char *p = tdv_real_dyld_get_image_name(i);
+            // image0 = 主执行文件, 永远保留 (UIKit/NSBundle 依赖 image0 语义).
+            if (i != 0 && tdv_dyld_hidden_path(p)) continue;
+            gTDVDyldKept[kept++] = i;
+        }
+        static int logged = 0;
+        if (logged++ < 3) {
+            NSLog(@"[TDVRoot] dyld 镜像裁剪: real=%u kept=%u hostDir=%s", real, kept, gTDVDyldHostDir);
+        }
+        gTDVDyldKeptCount = kept;
+    }
+}
+
+static uint32_t tdv_dyld_count(void) {
+    pthread_mutex_lock(&gTDVDyldLock);
+    tdv_dyld_rebuild_locked();
+    uint32_t n = gTDVDyldKeptCount;
+    pthread_mutex_unlock(&gTDVDyldLock);
+    return n;
+}
+
+static int32_t tdv_dyld_map(uint32_t idx) {
+    pthread_mutex_lock(&gTDVDyldLock);
+    tdv_dyld_rebuild_locked();
+    int32_t real = (idx < gTDVDyldKeptCount) ? (int32_t)gTDVDyldKept[idx] : -1;
+    pthread_mutex_unlock(&gTDVDyldLock);
+    return real;
+}
+
+static uint32_t tdv_dyld_count_impl(void) { return tdv_dyld_count(); }
+static const char *tdv_dyld_name_impl(uint32_t i) {
+    int32_t r = tdv_dyld_map(i);
+    return r < 0 ? NULL : tdv_real_dyld_get_image_name((uint32_t)r);
+}
+static const struct mach_header *tdv_dyld_header_impl(uint32_t i) {
+    int32_t r = tdv_dyld_map(i);
+    return r < 0 ? NULL : tdv_real_dyld_get_image_header((uint32_t)r);
+}
+static intptr_t tdv_dyld_slide_impl(uint32_t i) {
+    int32_t r = tdv_dyld_map(i);
+    return r < 0 ? 0 : tdv_real_dyld_get_image_vmaddr_slide((uint32_t)r);
+}
+
 #pragma mark - interpose 表
 
 // dyld 用 replacee 的符号名做替换; replacement 指向本文件的实现.
@@ -418,3 +520,7 @@ TDV_INTERPOSE(tdv_getuid, tdv_real_getuid);
 TDV_INTERPOSE(tdv_geteuid, tdv_real_geteuid);
 TDV_INTERPOSE(tdv_getgid, tdv_real_getgid);
 TDV_INTERPOSE(tdv_getegid, tdv_real_getegid);
+TDV_INTERPOSE(tdv_dyld_count_impl, tdv_real_dyld_image_count);
+TDV_INTERPOSE(tdv_dyld_name_impl, tdv_real_dyld_get_image_name);
+TDV_INTERPOSE(tdv_dyld_header_impl, tdv_real_dyld_get_image_header);
+TDV_INTERPOSE(tdv_dyld_slide_impl, tdv_real_dyld_get_image_vmaddr_slide);

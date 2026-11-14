@@ -35,6 +35,17 @@
   两脚本需 macOS/真机执行（Windows 无 posix_openpt）。
 - 零 EPSL 文本拷贝：文件头带 parity 对照表（函数地址/行为差异）。
 
+### dyld 镜像清单裁剪 (M41)
+- Reveil 实证：我们的隐藏层此前没覆盖 dyld 镜像枚举，宿主 4 张 dylib 全裸；
+  LC 原生 hide 只改名（/usr/lib/0x…），"多出可疑库"仍会被列出。
+- `TDVRootShim` interpose `_dyld_image_count / _dyld_get_image_name /
+  _dyld_get_image_header / _dyld_get_image_vmaddr_slide`：宿主 app bundle
+  目录下所有镜像（image0 主执行文件除外）、`Frameworks/LiveContainer* /
+  TweakLoader / CydiaSubstrate / ZSign / OpenSSL`、`Documents/Tweaks/` 下
+  tweak dylib **整行删除**；访客枚举结果 = 自己 + 系统库。
+- 仍无法用户态隐藏的固有侧载痕迹：包标识符/描述文件/可执行/权限文件
+  被篡改、task 端口额外引用（AMFI/内核层）。
+
 ## [0.3.880] - 2026-11-14
 
 ### 沙盒收紧 + 隐藏性六件套（M37–M39）
