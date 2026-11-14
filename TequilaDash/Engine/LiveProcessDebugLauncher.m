@@ -88,7 +88,8 @@ static BOOL TDReadVRootSwitch(NSDictionary *payload, NSString **outPath, NSStrin
         NSString *seed = [NSString stringWithFormat:@"%@|%@", guestFolder,
                           (payload[TDLPContainerUUIDKey] ?: @"")];
         unsigned char digest[CC_SHA256_DIGEST_LENGTH];
-        CC_SHA256(seed.UTF8String, (CC_LONG)seed.lengthOfBytesUsingEncoding:NSUTF8StringEncoding, digest);
+        NSUInteger seedLen = [seed lengthOfBytesUsingEncoding:NSUTF8StringEncoding];
+        CC_SHA256(seed.UTF8String, (CC_LONG)seedLen, digest);
         NSMutableString *hex = [NSMutableString stringWithCapacity:16];
         for (int i = 0; i < 8; i++) {
             [hex appendFormat:@"%02x", digest[i]];
