@@ -620,6 +620,7 @@ static intptr_t tdv_dyld_slide_impl(uint32_t i) {
 #ifndef BOOTSTRAP_UNKNOWN_SERVICE
 #define BOOTSTRAP_UNKNOWN_SERVICE 4451
 #endif
+typedef char tdv_name_t[128];
 
 // Reveil "Suspicious PFlag value" 走 kern.proc PFLAGS 通道; proc_pidpath 对
 // 非自身 pid 的查询暴露宿主进程路径. 拦截面:
@@ -660,11 +661,11 @@ static int tdv_proc_name_impl(int pid, void *buffer, uint32_t buffersize) {
 
 // 检测器探测 XPC 服务名 (bootstrap_look_up) 判断宿主身份: 命中宿主/注入框架
 // 前缀的服务名返回 unknown_service (与真实不存在的服务同形). 其它服务名透传.
-extern kern_return_t tdv_real_bootstrap_look_up(mach_port_t bp, name_t service_name,
+extern kern_return_t tdv_real_bootstrap_look_up(mach_port_t bp, tdv_name_t service_name,
                                                 mach_port_t *sp, uint64_t flags, uint64_t *version)
     __asm("_bootstrap_look_up2");
 
-static kern_return_t tdv_bootstrap_look_up2_impl(mach_port_t bp, name_t service_name,
+static kern_return_t tdv_bootstrap_look_up2_impl(mach_port_t bp, tdv_name_t service_name,
                                                  mach_port_t *sp, uint64_t flags, uint64_t *version) {
     if (TDVProcSpoofEnabled() && service_name) {
         static const char *kServicePrefixes[] = {
