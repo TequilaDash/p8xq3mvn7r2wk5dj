@@ -119,8 +119,10 @@ static BOOL td_path_is_macho(NSString *path) {
 // (setuid/setgid/sticky 清零, 组/其他可写位清零, 可执行位保留). 符号链接不动.
 static void td_tighten_tree(NSString *root) {
     NSFileManager *fm = NSFileManager.defaultManager;
+    // 不预取 URL resource keys (逐项用 attributesOfItemAtPath 重取); NSFileTypeKey
+    // 不是 URL resource key (CI run 43554287571 实锤, 正名是 NSFileType 字典键).
     NSDirectoryEnumerator *enumerator = [fm enumeratorAtURL:[NSURL fileURLWithPath:root]
-                                 includingPropertiesForKeys:@[NSFileTypeKey]
+                                 includingPropertiesForKeys:nil
                                                     options:0
                                                errorHandler:nil];
     for (NSURL *url in enumerator) {
@@ -132,7 +134,8 @@ static void td_tighten_tree(NSString *root) {
             continue; // 符号链接等不动
         }
         BOOL isDir = [ftype isEqualToString:NSFileTypeDirectory];
-        mode_t mode = (mode_t)[attrs.filePosixPermissions unsignedShortValue] & 07777;
+        // NSDictionary.filePosixPermissions 在 SDK 里直接是 NSUInteger (非 NSNumber).
+        mode_t mode = (mode_t)attrs.filePosixPermissions & 07777;
         mode_t clamped = isDir ? 0755 : (mode & 0755);
         if (clamped != mode) {
             chmod(path.fileSystemRepresentation, clamped);
@@ -189,8 +192,9 @@ static NSString *td_flatten_layout(NSString *root) {
 // 收集 root 内全部 Mach-O 文件 (不含符号链接).
 static NSArray<NSString *> *td_collect_machos(NSString *root) {
     NSFileManager *fm = NSFileManager.defaultManager;
+    // 同 td_tighten_tree: 不预取 URL resource keys.
     NSDirectoryEnumerator *enumerator = [fm enumeratorAtURL:[NSURL fileURLWithPath:root]
-                                 includingPropertiesForKeys:@[NSFileTypeKey]
+                                 includingPropertiesForKeys:nil
                                                     options:0
                                                errorHandler:nil];
     NSMutableArray<NSString *> *paths = [NSMutableArray array];
