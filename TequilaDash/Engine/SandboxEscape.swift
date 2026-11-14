@@ -50,6 +50,47 @@ final class SandboxEscape {
     private var liveHandles: Set<Int64> = []
     private let lock = NSLock()
 
+    // 本仓适配 (M37d): 用后即弃 —— 全部实例登记, 切后台一次性释放所有扩展句柄.
+    private static let instanceLock = NSLock()
+    private static var instances: [ObjectIdentifier: () -> Int] = [:]
+
+    private static func trackInstance(_ instance: SandboxEscape) {
+        instanceLock.lock()
+        defer { instanceLock.unlock() }
+        instances[ObjectIdentifier(instance)] = { [weak instance] in instance?.releaseAll() ?? 0 }
+    }
+
+    /// 释放所有实例持有的沙盒扩展句柄, 返回释放数量.
+    @discardableResult
+    static func releaseAllInstances(reason: String) -> Int {
+        instanceLock.lock()
+        let releasers = Array(instances.values)
+        instanceLock.unlock()
+        var total = 0
+        for release in releasers { total += release() }
+        if total > 0 {
+            ExploitLogger.shared.log("sandbox 扩展句柄已全部释放 count=\(total) reason=\(reason)")
+        }
+        return total
+    }
+
+    /// 释放本实例的全部句柄 (内部, 供静态清扫调用).
+    private func releaseAll() -> Int {
+        lock.lock()
+        let handles = liveHandles
+        liveHandles.removeAll()
+        lock.unlock()
+        guard !handles.isEmpty else { return 0 }
+        for raw in handles {
+            ExploitRegistry.all.first?.releaseExtension(raw)
+        }
+        return handles.count
+    }
+
+    init() {
+        Self.trackInstance(self)
+    }
+
     /// Consume a sandbox extension for `path`.
     /// - Parameters:
     ///   - path: Absolute path inside another app's container.

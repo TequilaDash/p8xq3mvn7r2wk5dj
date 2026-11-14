@@ -1,3 +1,28 @@
+## [0.3.880] - 2026-11-14
+
+### 沙盒收紧 + 隐藏性六件套（M37–M39）
+1. **访客环境清洗 (M37a)**: `dlopen` 访客前 `unsetenv` 掉 `TD_NET_BLOCK`/`TD_VROOT`/
+   `TD_VROOT_MODE`/`LC_HOME_PATH`/`LP_HOME_PATH` —— guest `getenv` 探测不到宿主痕迹；
+   NetBlock 钩子与 vroot 配置在此之前已装好，功能不受影响。
+2. **Tweaks 目录对访客隐藏 (M37b)**: `TDVRootShim` 对 stat/lstat/fstatat/access/
+   realpath/opendir/open/openat 做 caller 镜像判定 —— 只有**访客镜像**
+   （`/Documents/Applications/` 下）看到 `*/Documents/Tweaks` 返回 ENOENT；
+   LC 核心的 TweakLoader 仍可正常加载（宿主镜像不受影响）。
+3. **rootfs 根随机化 (M37c)**: 默认根从固定 `Documents/rootfs` 改为
+   `Documents/.jbroot-<sha256前16hex>`（来源=App+容器组合），roothide 式随机拓扑；
+   打开 vroot 开关时幂等创建该目录。
+4. **扩展句柄用后即弃 (M37d)**: `SandboxEscape` 全实例登记，App 切后台一次性
+   `sandbox_extension_release` 全部句柄并写 `exploit.log`。
+5. **per-guest TMPDIR 隔离 (M38, opt-in)**: App 设置开关；开启后访客 tmp 用真实目录
+   （替代指向宿主 TMPDIR 的 symlink），上游默认行为不变。
+6. **APFS 快照 (M39, opt-in)**: App 设置开关；全屏启动路径首启时对访客容器
+   `clonefile` 生成 `<container>.snapshot`（写时复制，秒级），保留不自动回滚；
+   多任务扩展路径暂不快照。
+
+### 已知边界
+- M37b 的镜像判定依赖 `dladdr`；caller 解析失败时放行（fail-open），不破坏 tweak 加载。
+- M39 暂无恢复 UI（快照在 `Data/Application/<uuid>.snapshot`，可手动替换回滚）。
+
 ## [0.3.879] - 2026-11-14
 
 ### vroot 开关上界面（M36）

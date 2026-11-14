@@ -66,6 +66,19 @@ class LCAppModel: ObservableObject, Hashable {
         }
     }
 
+    // 本仓功能 (M38/M39): TMPDIR 隔离 / APFS 快照
+    @Published var uiIsolateTmpDir : Bool {
+        didSet {
+            appInfo.isolateTmpDir = uiIsolateTmpDir
+        }
+    }
+
+    @Published var uiCoWSnapshot : Bool {
+        didSet {
+            appInfo.cowSnapshot = uiCoWSnapshot
+        }
+    }
+
     @Published var uiNestedLCCompat : Bool {
         didSet {
             appInfo.nestedLCCompat = uiNestedLCCompat
@@ -215,6 +228,8 @@ class LCAppModel: ObservableObject, Hashable {
         self.uiNestedLCCompat = appInfo.nestedLCCompat
         self.uiNetBlock = appInfo.netBlock
         self.uiVRootMode = appInfo.vrootMode ?? "off"
+        self.uiIsolateTmpDir = appInfo.isolateTmpDir
+        self.uiCoWSnapshot = appInfo.cowSnapshot
         self.uiFixFilePickerNew = appInfo.fixFilePickerNew
         self.uiFixLocalNotification = appInfo.fixLocalNotification
         self.uiFixBackgroundTaskIdentifiers = appInfo.fixBackgroundTaskIdentifiers

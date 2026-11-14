@@ -5,6 +5,47 @@
 #import "utils.h"
 // vroot (Tier A): 纯路径前缀映射 + full 模式 HOME/PATH 切换. 默认关 (TD_VROOT 未设即空操作).
 #import "TDVRootConfig.h"
+#include <sys/clonefile.h>
+
+// 本仓适配 (M37a): 访客环境清洗. dlopen 访客之前清掉宿主侧注入的环境变量,
+// 让 guest 代码 getenv 探测不到 LC/TD 痕迹 (hideLiveContainer 之外的 env 层隐藏).
+// 必须在所有依赖点之后调用: TD_NET_BLOCK 的 hook 安装/自检已在前面完成,
+// TD_VROOT 的 shim 配置已在 TDVRootInstallIfRequested 里缓存进内存.
+static void TDScrubGuestEnv(void) {
+    static const char *kKeys[] = {
+        "TD_NET_BLOCK", "TD_VROOT", "TD_VROOT_MODE",
+        "LC_HOME_PATH", "LP_HOME_PATH",
+    };
+    int removed = 0;
+    NSMutableString *names = [NSMutableString string];
+    for (size_t i = 0; i < sizeof(kKeys) / sizeof(kKeys[0]); i++) {
+        if (getenv(kKeys[i]) == NULL) continue;
+        unsetenv(kKeys[i]);
+        removed++;
+        [names appendFormat:@"%s,", kKeys[i]];
+    }
+    if (removed) {
+        NSLog(@"[TDScrubEnv] 清理访客环境变量 (%d): %@", removed, names);
+    }
+}
+
+// 本仓适配 (M39): APFS clonefile 快照 (CoW, opt-in). 首次启动时对访客容器整体克隆,
+// 生成 <container>.snapshot; 已有快照则跳过 (保留首份, 不自动回滚).
+static void TDGuestSnapshotMaybe(NSString *newHomePath, NSDictionary *guestAppInfo) {
+    if (![guestAppInfo[@"cowSnapshot"] boolValue]) return;
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSString *snapshotPath = [newHomePath stringByAppendingString:@".snapshot"];
+    if ([fm fileExistsAtPath:snapshotPath]) {
+        NSLog(@"[TDSnapshot] 快照已存在, 跳过 %@", snapshotPath);
+        return;
+    }
+    int rc = clonefile(newHomePath.fileSystemRepresentation, snapshotPath.fileSystemRepresentation, 0);
+    if (rc == 0) {
+        NSLog(@"[TDSnapshot] 快照完成 %@", snapshotPath);
+    } else {
+        NSLog(@"[TDSnapshot] clonefile 失败 rc=%d errno=%d path=%@", rc, errno, snapshotPath);
+    }
+}
 
 #include <mach/mach.h>
 #include <mach-o/dyld.h>
@@ -302,6 +343,8 @@ NSString *LCPrepareGuestExtension(NSDictionary *request) {
 
     // vroot (Tier A): 与 invokeAppMain 同一点 —— 在扩展的 DyldHooksInit 之前强制重读配置.
     TDVRootInstallIfRequested();
+    // M37a: 扩展路径同样清洗 (TD_NET_BLOCK hook 已在此前安装).
+    TDScrubGuestEnv();
     if (checkJITEnabled()) init_bypassDyldLibValidation();
     DyldHooksInit(false, true, 0);
     appMainImageIndex = _dyld_image_count();
@@ -533,6 +576,17 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
     NSString *newTmpPath = [newHomePath stringByAppendingPathComponent:@"tmp"];
     remove(newTmpPath.UTF8String);
     symlink(getenv("TMPDIR"), newTmpPath.UTF8String);
+
+    // 本仓适配 (M38, opt-in): per-guest TMPDIR 隔离 —— 用真实目录替换"指向宿主 TMPDIR 的
+    // symlink"; 上游故意不改 TMPDIR (#1040/#1125), 所以这里只在 per-app 打开时生效.
+    if ([guestAppInfo[@"isolateTmpDir"] boolValue]) {
+        remove(newTmpPath.UTF8String);
+        [fm createDirectoryAtPath:newTmpPath withIntermediateDirectories:YES attributes:nil error:nil];
+        setenv("TMPDIR", [[newTmpPath stringByAppendingString:@"/"] fileSystemRepresentation], 1);
+        NSLog(@"[TDSandbox] TMPDIR 隔离启用 -> %@", newTmpPath);
+    }
+    // 本仓适配 (M39, opt-in): APFS 快照 (仅全屏启动路径; 多任务扩展路径不做).
+    TDGuestSnapshotMaybe(newHomePath, guestAppInfo);
     
     if([guestAppInfo[@"doSymlinkInbox"] boolValue]) {
         NSString* inboxSymlinkPath = [NSString stringWithFormat:@"%s/%@-Inbox", getenv("TMPDIR"), [appBundle bundleIdentifier]];
@@ -638,6 +692,10 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
     // 联网管理 (本仓功能, LC 没有): 宿主按容器落 TD_NET_BLOCK, 命中即拦访客对外 connect
     // (重放于 v0.3.840 合入上游 9d6ea09b05; 判据为值 '1' 而非变量存在, 见 M2/C1)
     const char *netBlockEnv = getenv("TD_NET_BLOCK");
+    // M37a: TD_NET_BLOCK 在访客 dlopen 前会被 TDScrubGuestEnv 清掉, 这里先留档
+    // 供 dlopen 后的镜像重绑/自检日志使用 (不再回头 getenv).
+    static char tdNetBlockSaved = '0';
+    tdNetBlockSaved = (netBlockEnv && netBlockEnv[0]) ? netBlockEnv[0] : '0';
     if(netBlockEnv && netBlockEnv[0] == '1') {
         NetBlockGuestHooksInit();
     }
@@ -647,6 +705,8 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
     // vroot (Tier A): __DATA,__interpose 在镜像装载时已生效; 这里在访客 dlopen 之前
     // 按当前环境变量强制重读配置 (进程早期可能还没拿到宿主 userInfo 落下的 TD_VROOT).
     TDVRootInstallIfRequested();
+    // M37a: vroot 配置已进内存, TD_NET_BLOCK 的 hook 已装好 —— 现在清 env, guest 不可见.
+    TDScrubGuestEnv();
     BOOL hookDlopen = !isSideStore && !isSharedBundle && LCSharedUtils.certificatePassword && isLiveProcess;
     DyldHooksInit([guestAppInfo[@"hideLiveContainer"] boolValue], hookDlopen, [guestAppInfo[@"spoofSDKVersion"] unsignedIntValue]);
     
@@ -708,10 +768,10 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
     }
 
     // 联网管理 (本仓功能, LC 没有). 判据必须是**值**为 "1"，不能只看变量存在:
-    // HostGuestEntry.m 每次启动访客都 setenv("TD_NET_BLOCK","0"|"1",1), 变量恒存在.
+    // M37a 起 TD_NET_BLOCK 已在 dlopen 前被 TDScrubGuestEnv 清理, 这里用留档值.
     // (重放于 v0.3.840 合入上游 9d6ea09b05)
-    const char *netBlockEnvAfter = getenv("TD_NET_BLOCK");
-    if(netBlockEnvAfter && netBlockEnvAfter[0] == '1') {
+    const char *netBlockEnvAfter = (tdNetBlockSaved == '1') ? "1" : "0";
+    if(netBlockEnvAfter[0] == '1') {
         // 访客镜像已 dlopen：优先按镜像重绑（chained fixups 下 fishhook 无效）.
         struct mach_header_64 *guestHeader = LCGetLoadedImageHeader(0, appExecPath);
         if (guestHeader) {

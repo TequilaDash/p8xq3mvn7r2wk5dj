@@ -21,6 +21,7 @@
 #import "TDVRootConfig.h"
 
 #include <dirent.h>
+#include <dlfcn.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
@@ -63,6 +64,32 @@ extern uid_t tdv_real_geteuid(void) __asm("_geteuid");
 extern gid_t tdv_real_getgid(void) __asm("_getgid");
 extern gid_t tdv_real_getegid(void) __asm("_getegid");
 
+#pragma mark - 访客可见性裁剪 (M37b: 隐藏 Tweaks 目录)
+
+// LC 的 TweakLoader 在宿主/LC 核心镜像里运行, 必须能读 Tweaks;
+// 只有**访客镜像** (dlopen 进来的 guest 二进制/动态库) 一律 ENOENT.
+// 判据: __builtin_return_address(0) -> dladdr -> 镜像路径含 /Documents/Applications/.
+static bool tdv_guest_caller_image(void *caller) {
+    Dl_info info;
+    if (!caller || dladdr(caller, &info) == 0 || !info.dli_fname) return false;
+    return strstr(info.dli_fname, "/Documents/Applications/") != NULL;
+}
+
+static bool tdv_hide_tweaks(const char *path, void *caller) {
+    if (!path) return false;
+    if (!strstr(path, "/Documents/Tweaks")) return false;
+    return tdv_guest_caller_image(caller);
+}
+
+// 命中限流日志, 避免刷屏.
+static void tdv_log_tweaks_hit(const char *fn, const char *path) {
+    static _Atomic int hits = 0;
+    int n = hits++;
+    if (n < 5) {
+        NSLog(@"[TDVRoot] 隐藏 Tweaks 目录命中 (%s): %s", fn, path);
+    }
+}
+
 #pragma mark - 路径类替换
 
 // 把 path 映射到 vroot; 命中返回映射指针, 否则返回原指针.
@@ -83,6 +110,11 @@ static int tdv_open(const char *path, int flags, ...) {
         va_end(ap);
     }
     char buf[PATH_MAX];
+    if (tdv_hide_tweaks(path, __builtin_return_address(0))) {
+        tdv_log_tweaks_hit("open", path);
+        errno = ENOENT;
+        return -1;
+    }
     const char *use = tdv_mapped(path, buf, sizeof(buf));
     if (hasMode) {
         return tdv_real_open(use, flags, mode);
@@ -100,6 +132,11 @@ static int tdv_openat(int fd, const char *path, int flags, ...) {
         va_end(ap);
     }
     char buf[PATH_MAX];
+    if (tdv_hide_tweaks(path, __builtin_return_address(0))) {
+        tdv_log_tweaks_hit("openat", path);
+        errno = ENOENT;
+        return -1;
+    }
     // 相对路径不映射: 语义取决于 dirfd, 无法安全改写.
     const char *use = tdv_mapped(path, buf, sizeof(buf));
     if (hasMode) {
@@ -126,16 +163,31 @@ static int tdv_open_nocancel(const char *path, int flags, ...) {
 }
 
 static int tdv_stat(const char *path, struct stat *sb) {
+    if (tdv_hide_tweaks(path, __builtin_return_address(0))) {
+        tdv_log_tweaks_hit("stat", path);
+        errno = ENOENT;
+        return -1;
+    }
     char buf[PATH_MAX];
     return tdv_real_stat(tdv_mapped(path, buf, sizeof(buf)), sb);
 }
 
 static int tdv_lstat(const char *path, struct stat *sb) {
+    if (tdv_hide_tweaks(path, __builtin_return_address(0))) {
+        tdv_log_tweaks_hit("lstat", path);
+        errno = ENOENT;
+        return -1;
+    }
     char buf[PATH_MAX];
     return tdv_real_lstat(tdv_mapped(path, buf, sizeof(buf)), sb);
 }
 
 static int tdv_fstatat(int fd, const char *path, struct stat *sb, int flags) {
+    if (tdv_hide_tweaks(path, __builtin_return_address(0))) {
+        tdv_log_tweaks_hit("fstatat", path);
+        errno = ENOENT;
+        return -1;
+    }
     if (!path || path[0] != '/') {
         return tdv_real_fstatat(fd, path, sb, flags);
     }
@@ -144,6 +196,11 @@ static int tdv_fstatat(int fd, const char *path, struct stat *sb, int flags) {
 }
 
 static int tdv_access(const char *path, int mode) {
+    if (tdv_hide_tweaks(path, __builtin_return_address(0))) {
+        tdv_log_tweaks_hit("access", path);
+        errno = ENOENT;
+        return -1;
+    }
     char buf[PATH_MAX];
     return tdv_real_access(tdv_mapped(path, buf, sizeof(buf)), mode);
 }
@@ -157,6 +214,11 @@ static int tdv_faccessat(int fd, const char *path, int mode, int flags) {
 }
 
 static char *tdv_realpath(const char *path, char *resolved) {
+    if (tdv_hide_tweaks(path, __builtin_return_address(0))) {
+        tdv_log_tweaks_hit("realpath", path);
+        errno = ENOENT;
+        return NULL;
+    }
     char buf[PATH_MAX];
     return tdv_real_realpath(tdv_mapped(path, buf, sizeof(buf)), resolved);
 }
@@ -167,6 +229,11 @@ static ssize_t tdv_readlink(const char *path, char *buf, size_t bufSize) {
 }
 
 static DIR *tdv_opendir(const char *path) {
+    if (tdv_hide_tweaks(path, __builtin_return_address(0))) {
+        tdv_log_tweaks_hit("opendir", path);
+        errno = ENOENT;
+        return NULL;
+    }
     char buf[PATH_MAX];
     return tdv_real_opendir(tdv_mapped(path, buf, sizeof(buf)));
 }

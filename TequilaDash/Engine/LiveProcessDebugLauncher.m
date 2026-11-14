@@ -9,6 +9,7 @@
 
 #import "LiveProcessDebugLauncher.h"
 #import <Foundation/Foundation.h>
+#import <CommonCrypto/CommonDigest.h>
 
 #include <stdlib.h>
 
@@ -82,8 +83,23 @@ static BOOL TDReadVRootSwitch(NSDictionary *payload, NSString **outPath, NSStrin
         return NO;
     }
     if (path.length == 0) {
+        // M37c: 默认根用 roothide 式随机后缀 —— 每个 App+容器组合一个稳定随机目录名,
+        // 避免 "Documents/rootfs" 这种固定模式被扫出来. 来源 = SHA256(guestFolder|containerUUID).
+        NSString *seed = [NSString stringWithFormat:@"%@|%@", guestFolder,
+                          (payload[TDLPContainerUUIDKey] ?: @"")];
+        unsigned char digest[CC_SHA256_DIGEST_LENGTH];
+        CC_SHA256(seed.UTF8String, (CC_LONG)seed.lengthOfBytesUsingEncoding:NSUTF8StringEncoding, digest);
+        NSMutableString *hex = [NSMutableString stringWithCapacity:16];
+        for (int i = 0; i < 8; i++) {
+            [hex appendFormat:@"%02x", digest[i]];
+        }
         path = [[home stringByAppendingPathComponent:@"Documents"]
-            stringByAppendingPathComponent:@"rootfs"];
+            stringByAppendingPathComponent:[NSString stringWithFormat:@".jbroot-%@", hex]];
+        // root 必须存在, full 模式会把 HOME 指过来; 幂等创建.
+        [[NSFileManager defaultManager] createDirectoryAtPath:path
+                                  withIntermediateDirectories:YES
+                                                   attributes:nil
+                                                        error:nil];
     }
     if (![path hasPrefix:@"/"]) {
         return NO;

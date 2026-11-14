@@ -97,6 +97,8 @@ struct TequilaDashApp: App {
         let center = NotificationCenter.default
         center.addObserver(forName: UIApplication.didEnterBackgroundNotification,
                            object: nil, queue: .main) { _ in
+            // M37d: 切后台即释放全部沙盒扩展句柄 (用后即弃, 不留可枚举状态).
+            SandboxEscape.releaseAllInstances(reason: "切后台")
             if KeepAliveManager.shared.isEnabled {
                 KeepAliveManager.shared.start()
             }

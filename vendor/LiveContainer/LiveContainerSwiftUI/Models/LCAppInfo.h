@@ -46,6 +46,9 @@ typedef NS_ENUM(NSInteger, MultitaskSpecified){
 @property bool netBlock;
 // 本仓功能 (M36): vroot 模式 (TDVRoot: off|path|full)
 @property (copy) NSString *vrootMode;
+// 本仓功能 (M38/M39): TMPDIR 隔离 / APFS 快照 (CoW), 均 per-app opt-in
+@property bool isolateTmpDir;
+@property bool cowSnapshot;
 @property NSString* selectedLanguage;
 @property NSString* dataUUID;
 @property NSString* tweakFolder;

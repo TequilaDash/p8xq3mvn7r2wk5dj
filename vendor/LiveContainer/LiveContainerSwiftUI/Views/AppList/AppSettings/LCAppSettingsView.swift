@@ -335,11 +335,21 @@ struct LCAppSettingsView: View {
                 } label: {
                     Text("lc.appSettings.vroot".loc)
                 }
+                // 本仓功能 (M38): TMPDIR 隔离
+                Toggle(isOn: $model.uiIsolateTmpDir) {
+                    Text("lc.appSettings.tmpIsolate".loc)
+                }
+                // 本仓功能 (M39): APFS 快照
+                Toggle(isOn: $model.uiCoWSnapshot) {
+                    Text("lc.appSettings.cowSnapshot".loc)
+                }
             } header: {
                 Text("lc.appSettings.experimental".loc)
             } footer: {
                 Text("lc.appSettings.netBlockDesc".loc)
                 Text("lc.appSettings.vrootDesc".loc)
+                Text("lc.appSettings.tmpIsolateDesc".loc)
+                Text("lc.appSettings.cowSnapshotDesc".loc)
             }
             
             if SharedModel.isPhone {

@@ -187,6 +187,26 @@
     [self save];
 }
 
+// 本仓功能 (M38): per-guest TMPDIR 隔离
+- (bool)isolateTmpDir {
+    return [_info[@"TDIsolateTMPDIR"] boolValue];
+}
+
+- (void)setIsolateTmpDir:(bool)isolateTmpDir {
+    _info[@"TDIsolateTMPDIR"] = @(isolateTmpDir);
+    [self save];
+}
+
+// 本仓功能 (M39): APFS clonefile 快照 (CoW)
+- (bool)cowSnapshot {
+    return [_info[@"TDCoWSnapshot"] boolValue];
+}
+
+- (void)setCowSnapshot:(bool)cowSnapshot {
+    _info[@"TDCoWSnapshot"] = @(cowSnapshot);
+    [self save];
+}
+
 - (NSString*)selectedLanguage {
     return _info[@"LCSelectedLanguage"];
 }
