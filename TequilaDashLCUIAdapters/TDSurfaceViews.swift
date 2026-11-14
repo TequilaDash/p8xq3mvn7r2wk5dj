@@ -160,6 +160,24 @@ struct TDSurfaceView: View {
         f.dateFormat = "HH:mm:ss"
         return f
     }()
+
+    private func unpackRootfs(from url: URL) {
+        rootfsBusy = true
+        rootfsStatus = "解包中…"
+        let src = url.startAccessingSecurityScopedResource()
+        defer { if src { url.stopAccessingSecurityScopedResource() } }
+        DispatchQueue.global(qos: .userInitiated).async {
+            let options: TDRootfsUnpackOptions = [.resignWithHostIdentity, .symredirect]
+            let result = try? TDRootfsUnpack.unpackArchive(at: url,
+                                                          destination: nil,
+                                                          options: options)
+            DispatchQueue.main.async {
+                rootfsBusy = false
+                if let result {
+                    rootfsStatus = "完成 jbroot=\(result.jbrootURL?.path ?? "?") 条目=\(result.entryCount) macho=\(result.machoCount) 重签=\(result.resignedCount) 改写=\(result.symredirectedCount)"
+                } else {
+                    rootfsStatus = "解包失败 (详见 exploit.log)"
+                }
 }
 
 /// 单行: 名称 + 种类徽标 / pid 与容器详情 / 状态圆点 + kill 按钮.
@@ -219,23 +237,6 @@ private struct TDSurfaceRowView: View {
         }
         .padding(.vertical, 2)
     }
-    private func unpackRootfs(from url: URL) {
-        rootfsBusy = true
-        rootfsStatus = "解包中…"
-        let src = url.startAccessingSecurityScopedResource()
-        defer { if src { url.stopAccessingSecurityScopedResource() } }
-        DispatchQueue.global(qos: .userInitiated).async {
-            let options: TDRootfsUnpackOptions = [.resignWithHostIdentity, .symredirect]
-            let result = try? TDRootfsUnpack.unpackArchive(at: url,
-                                                          destination: nil,
-                                                          options: options)
-            DispatchQueue.main.async {
-                rootfsBusy = false
-                if let result {
-                    rootfsStatus = "完成 jbroot=\(result.jbrootURL?.path ?? "?") 条目=\(result.entryCount) macho=\(result.machoCount) 重签=\(result.resignedCount) 改写=\(result.symredirectedCount)"
-                } else {
-                    rootfsStatus = "解包失败 (详见 exploit.log)"
-                }
             }
         }
     }
