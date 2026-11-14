@@ -52,7 +52,8 @@ final class SandboxEscape {
 
     // 本仓适配 (M37d): 用后即弃 —— 全部实例登记, 切后台一次性释放所有扩展句柄.
     private static let instanceLock = NSLock()
-    private static var instances: [ObjectIdentifier: () -> Int] = [:]
+    // 由 instanceLock 保护; nonisolated(unsafe) 只告知编译器该不变式 (Swift 6 严格并发).
+    nonisolated(unsafe) private static var instances: [ObjectIdentifier: () -> Int] = [:]
 
     private static func trackInstance(_ instance: SandboxEscape) {
         instanceLock.lock()
