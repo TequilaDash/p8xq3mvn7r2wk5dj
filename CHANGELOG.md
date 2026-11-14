@@ -1,3 +1,16 @@
+## [0.3.885] - 2026-11-14
+
+### 嵌套双 bug 修复（0.3.884 真机实证）
+1. **M42b 跨镜像 swizzle 去重**：zcontainer 内层的 LC 自带**第二份 TweakLoader**，
+   两层各对 `UIApplication setDelegate` 交换一次后，`hook_setDelegate` 槽位指向
+   第一层 hook 的 IMP，尾调 `[self hook_setDelegate:]` 自指 → **21215 层递归爆栈**
+   （`.ips` 151423）。去重标记改用 `standardUserDefaults`（同进程所有镜像共享）：
+   同 (class,selector) 全进程只交换一次，第二层 hook 保持未接线，链终止于真 original。
+2. **M44a 多任务挂载容器**：DecoratedAppSceneViewController 的
+   `[rootVC addChildViewController:self]` 收到的是 LC 窗口 rootViewController
+   （已有 parent）→ 层级断言闪退（`.ips` 150942/151134/151138）。改传**无父级独立
+   容器 VC**（clear 视图，frame=窗口 bounds，加入 LC 窗口），仍零搬家。
+
 ## [0.3.884] - 2026-11-14
 
 ### 多任务白屏根因修复 (M44): 沙盒容器改 LC 独占原生窗口
