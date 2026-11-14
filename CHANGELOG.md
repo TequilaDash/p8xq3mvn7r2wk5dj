@@ -1,3 +1,35 @@
+## [0.3.884] - 2026-11-14
+
+### 多任务白屏根因修复 (M44): 沙盒容器改 LC 独占原生窗口
+- **根因实锤**（上游 zip `LiveContainer-main_2.zip` 与我们 vendor 全量 diff = **0 差异**，
+  且上游多任务在同设备可用）：上游的 dock + hosted scene 全部住在 LC 自己的
+  **一个原生窗口**里；我们却是 SwiftUI fullScreenCover + TDGuestOverlay 覆盖窗口
+  反复搬家 `windowHostingView` —— `_UISceneHostingView` 被拆离创建它的窗口,
+  presenter 链断, scene 永远白屏。颜色不同（我们白/zcontainer 黑）只是窗口背景。
+- 修复：新增 `TDLCWindowController`（LC 独占窗口, level normal+50, root =
+  `TDLCUIHost.makeTabViewController()`）；沙盒入口直接 `show()`；LC 返回键
+  `TDCloseSandboxContainer` → 窗口隐藏。`LCUtils` 多任务挂载直接用窗口 root 作
+  DecoratedAppSceneViewController 的 rootVC —— dock 的 windowHostingView 落在
+  本窗口 rootVC.view（keyWindow），**不再有任何搬家动作**，与上游同构。
+- 退役：`SandboxHostView.swift`、`TDGuestOverlay.{h,m}`、HomeView 的
+  push/cover/onChange-同步链路全部删除（"呈现方式"开关成为历史遗留键，无效）。
+
+### 嵌套全屏启动修复 (M45)
+- 内层 LC bootstrap 解包出的 bookmark 调 `startAccessingSecurityScopedResource`
+  在嵌套沙盒下返回 NO → "Unable to access the guest extension or its container"
+  中止（0.3.882 起 M40 兜底后从崩溃变成了干净失败, 但还是进不去）。
+- 兜底：`-[NSURL startAccessingSecurityScopedResource]` 失败且 URL 落在
+  `NSHomeDirectory()` 内（我们自己的容器, 本来就有权访问）时直接放行 YES；
+  日志 `[TDDefend] startAccessing 兜底放行`（限流 3 条）。
+
+### rootfs 解包入口上界面 (M46)
+- 设置 → 实验性 → 虚拟进程页底部新增 **「解包 rootfs 归档」**：fileImporter 选
+  `.tar/.zip` → `TDRootfsUnpack`（默认启用 **重签+symredirect** 两个开关）→
+  状态行显示 jbroot 路径/条目数/Mach-O 数/重签数/改写数。
+- `LiveProcessDebugLauncher` per-app vroot 默认根**优先复用解包产物**
+  （`Documents/rootfs/.jbroot-*` 第一个目录），没有解包产物才落到哈希根 ——
+  开关和解包 UI 现在落在**同一个根**上。
+
 ## [0.3.883] - 2026-11-14
 
 ### roothide 路径层 + rootfs 解包（Tier B-3）

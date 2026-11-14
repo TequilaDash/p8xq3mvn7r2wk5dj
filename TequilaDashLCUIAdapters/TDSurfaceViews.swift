@@ -13,6 +13,9 @@ struct TDSurfaceView: View {
     @State private var rows: [SurfaceRow] = []
     @State private var statusText = ""
     @State private var busyPid: Int32?
+    @State private var showRootfsPicker = false
+    @State private var rootfsBusy = false
+    @State private var rootfsStatus = ""
 
     /// 列表行模型 —— ForEach 身份键用结构体 (元组不支持 key path, objc_bridge_guard R2 同因).
     struct SurfaceRow: Identifiable {
@@ -49,6 +52,32 @@ struct TDSurfaceView: View {
             }
         }
         .navigationTitle("虚拟进程")
+        .fileImporter(isPresented: $showRootfsPicker,
+                      allowedContentTypes: [.data],
+                      allowMultipleSelection: false) { result in
+            guard case let .success(urls) = result, let url = urls.first else { return }
+            unpackRootfs(from: url)
+        }
+        .safeAreaInset(edge: .bottom) {
+            VStack(spacing: 8) {
+                Button {
+                    showRootfsPicker = true
+                } label: {
+                    Label("解包 rootfs 归档 (tar → .jbroot-*)", systemImage: "shippingbox.fill")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(rootfsBusy)
+                if !rootfsStatus.isEmpty {
+                    Text(rootfsStatus)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+            .padding(.horizontal)
+            .padding(.bottom, 8)
+        }
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
@@ -189,5 +218,25 @@ private struct TDSurfaceRowView: View {
             }
         }
         .padding(.vertical, 2)
+    }
+    private func unpackRootfs(from url: URL) {
+        rootfsBusy = true
+        rootfsStatus = "解包中…"
+        let src = url.startAccessingSecurityScopedResource()
+        defer { if src { url.stopAccessingSecurityScopedResource() } }
+        DispatchQueue.global(qos: .userInitiated).async {
+            let options: TDRootfsUnpackOptions = [.resignWithHostIdentity, .symredirect]
+            let result = try? TDRootfsUnpack.unpackArchive(at: url,
+                                                          destination: nil,
+                                                          options: options)
+            DispatchQueue.main.async {
+                rootfsBusy = false
+                if let result {
+                    rootfsStatus = "完成 jbroot=\(result.jbrootURL?.path ?? "?") 条目=\(result.entryCount) macho=\(result.machoCount) 重签=\(result.resignedCount) 改写=\(result.symredirectedCount)"
+                } else {
+                    rootfsStatus = "解包失败 (详见 exploit.log)"
+                }
+            }
+        }
     }
 }

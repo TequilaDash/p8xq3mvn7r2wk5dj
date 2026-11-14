@@ -120,6 +120,26 @@ static NSData *TDHookBookmarkData(id self, SEL _cmd, NSURLBookmarkCreationOption
     return data;
 }
 
+// M45: 嵌套全屏启动修复. 内层 LC (如 zcontainer) 的 bootstrap 对解包出的
+// bookmark 调 startAccessingSecurityScopedResource; 嵌套沙盒下经常返回 NO ->
+// LCBootstrap 以 "Unable to access the guest extension or its container" 中止.
+// 我们进程本来就已持有自家容器访问权, 对落在自家根内的 URL 直接放行.
+static IMP gOrigStartAccessing = nil;
+
+static BOOL TDHookStartAccessing(id self, SEL _cmd) {
+    BOOL orig = ((BOOL (*)(id, SEL))gOrigStartAccessing)(self, _cmd);
+    if (orig) return YES;
+    NSString *path = [(NSURL *)self path];
+    if (path.length == 0) return NO;
+    NSString *home = NSHomeDirectory();
+    if ([path hasPrefix:home]) {
+        static int alog = 0;
+        if (alog++ < 3) NSLog(@"[TDDefend] startAccessing 兜底放行 (容器内): %@", path);
+        return YES;
+    }
+    return NO;
+}
+
 static void TDNestedDefendInstall(void) {
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
@@ -132,6 +152,11 @@ static void TDNestedDefendInstall(void) {
         Method m2 = class_getInstanceMethod([NSURL class], bmSel);
         gOrigBookmarkData = method_getImplementation(m2);
         method_setImplementation(m2, (IMP)TDHookBookmarkData);
+
+        SEL saSel = @selector(startAccessingSecurityScopedResource);
+        Method m3 = class_getInstanceMethod([NSURL class], saSel);
+        gOrigStartAccessing = method_getImplementation(m3);
+        method_setImplementation(m3, (IMP)TDHookStartAccessing);
         NSLog(@"[TDDefend] 巢中巢防御层已安装 (URLsForDirectory 兜底 + bookmarkData 重试)");
     });
 }

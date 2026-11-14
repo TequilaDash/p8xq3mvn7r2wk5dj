@@ -11,7 +11,6 @@
 #import "LCSharedUtils.h"  // 本仓适配: 裸名由 HEADER_SEARCH_PATHS 解析
 #import "LCAppInfo.h"
 #import "DecoratedAppSceneViewController.h"  // 本仓适配: 裸名由 HEADER_SEARCH_PATHS 解析
-#import "TDGuestOverlay.h"
 
 extern void TDSandboxLogAppend(const char *message);
 #import "zsigner.h"  // 本仓适配: 裸名由 HEADER_SEARCH_PATHS 解析
@@ -108,37 +107,31 @@ extern void TDSandboxLogAppend(const char *message);
             }
         }
         
-        // 本仓适配 (M19/M24, 2026-11-13): 用**独立覆盖窗口**承载访客浮窗.
-        //
-        // 为什么不挂 SwiftUI 控制器：LC 的 DecoratedAppSceneViewController 在 init 里
-        // 会 `[rootVC addChildViewController:self]`；把 SwiftUI 的
-        // PresentationHostingController 当 rootVC，UIKit 层级检查会抛
-        // 「child view controller ... should have parent ... but requested parent is ...」
-        // （owner 2026-11-13 16:02 四个 .ips 同一处，SIGABRT）。
-        // 为什么不用 keyWindow.rootVC：本仓沙盒容器在 fullScreenCover 里，
-        // 挂上去落在封面之下 → 只见 dock 不见画面。
-        // 覆盖窗口方案两者都避开：容器是普通 UIViewController，窗口比宿主高一层，
-        // 且 hitTest 只拦截落在访客窗口内的触摸，其余穿透。
-        UIViewController *container = [TDGuestOverlay guestHostController];
-        if (!container) {
-            NSLog(@"[TD-Multitask] 无法创建覆盖窗口（无 windowScene），放弃启动 %@", displayName);
-            if (completionHandler) {
-                completionHandler(nil, [NSError errorWithDomain:@"TDMultitask" code:3
-                    userInfo:@{NSLocalizedDescriptionKey: @"宿主窗口未就绪"}]);
-            }
-            return;
+        // 本仓适配 (M44, 2026-11-14): 沙盒容器改为 **LC 独占原生窗口** (TDLCWindowController),
+// 与上游 LiveContainer "单窗口承载 dock + hosted scene" 完全同构.
+// 旧 overlay 方案把 windowHostingView 反复搬进/搬出窗口, 断开 _UISceneHostingView
+// 的 presenter 链 —— 这是我们长期白屏而上游不受影响的根因.
+// LC 窗口就是 keyWindow: dock 的 windowHostingView 会自然落进本窗口 rootVC.view,
+// 不需要任何搬家动作; DecoratedAppSceneViewController 的 rootVC 参数也直接用窗口 root.
+    UIViewController *container = [TDLCWindowController.shared showAndGetHost];
+    if (!container) {
+        NSLog(@"[TD-Multitask] 无法创建 LC 窗口（无 windowScene），放弃启动 %@", displayName);
+        if (completionHandler) {
+            completionHandler(nil, [NSError errorWithDomain:@"TDMultitask" code:3
+                userInfo:@{NSLocalizedDescriptionKey: @"宿主窗口未就绪"}]);
         }
-        [TDGuestOverlay adoptGuestHostingViews];
-        {
-            char buf[256];
-            snprintf(buf, sizeof(buf), "mount bundle=%s uuid=%s",
-                     bundleId.UTF8String ?: "-", dataUUID.UTF8String ?: "-");
-            TDSandboxLogAppend(buf);
-        }
-        NSLog(@"[TD-Multitask] 覆盖窗口挂载 (bundleId=%@, dataUUID=%@, mode=%ld)",
-              bundleId, dataUUID,
-              (long)[NSUserDefaults.lcSharedDefaults integerForKey:@"LCMultitaskMode"]);
-        DecoratedAppSceneViewController *launcherView = [[DecoratedAppSceneViewController alloc] initWindowName:displayName bundleId:bundleId dataUUID:dataUUID rootVC:container];
+        return;
+    }
+    {
+        char buf[256];
+        snprintf(buf, sizeof(buf), "mount bundle=%s uuid=%s",
+                 bundleId.UTF8String ?: "-", dataUUID.UTF8String ?: "-");
+        TDSandboxLogAppend(buf);
+    }
+    NSLog(@"[TD-Multitask] LC 窗口挂载 (bundleId=%@, dataUUID=%@, mode=%ld)",
+          bundleId, dataUUID,
+          (long)[NSUserDefaults.lcSharedDefaults integerForKey:@"LCMultitaskMode"]);
+DecoratedAppSceneViewController *launcherView = [[DecoratedAppSceneViewController alloc] initWindowName:displayName bundleId:bundleId dataUUID:dataUUID rootVC:container];
         // Wire PID callback
         launcherView.pidAvailableHandler = completionHandler;
         launcherView.view.autoresizingMask = UIViewAutoresizingFlexibleTopMargin | UIViewAutoresizingFlexibleLeftMargin | UIViewAutoresizingFlexibleRightMargin | UIViewAutoresizingFlexibleBottomMargin;

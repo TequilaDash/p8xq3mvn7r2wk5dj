@@ -95,13 +95,24 @@ static BOOL TDReadVRootSwitch(NSDictionary *payload, NSString **outPath, NSStrin
         for (int i = 0; i < 8; i++) {
             [hex appendFormat:@"%02x", digest[i]];
         }
-        path = [[home stringByAppendingPathComponent:@"Documents"]
-            stringByAppendingPathComponent:[NSString stringWithFormat:@".jbroot-%@", hex]];
-        // root 必须存在, full 模式会把 HOME 指过来; 幂等创建.
-        [[NSFileManager defaultManager] createDirectoryAtPath:path
-                                  withIntermediateDirectories:YES
-                                                   attributes:nil
-                                                        error:nil];
+        // M46: 优先复用 TDRootfsUnpack 解包出来的现成 jbroot 根 (Documents/rootfs/.jbroot-*),
+        // 让 per-app 开关和解包 UI 落到同一个根; 没有解包产物时才落到哈希根.
+        NSString *rootfsBase = [home stringByAppendingPathComponent:@"Documents/rootfs"];
+        NSArray<NSURL *> *roots = [[NSFileManager defaultManager]
+            contentsOfDirectoryAtURL:[NSURL fileURLWithPath:rootfsBase isDirectory:YES]
+            includingPropertiesForKeys:nil options:NSDirectoryEnumerationSkipsHiddenFiles error:nil];
+        NSURL *picked = [roots firstObject];
+        if (picked && [[picked lastPathComponent] containsString:@".jbroot-"]) {
+            path = picked.path;
+        } else {
+            path = [[home stringByAppendingPathComponent:@"Documents"]
+                stringByAppendingPathComponent:[NSString stringWithFormat:@".jbroot-%@", hex]];
+            // root 必须存在, full 模式会把 HOME 指过来; 幂等创建.
+            [[NSFileManager defaultManager] createDirectoryAtPath:path
+                                      withIntermediateDirectories:YES
+                                                       attributes:nil
+                                                            error:nil];
+        }
     }
     if (![path hasPrefix:@"/"]) {
         return NO;

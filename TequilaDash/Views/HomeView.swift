@@ -68,8 +68,6 @@ struct HomeView: View {
     @State private var showI4Advanced = false
     @State private var pendingI4Advanced = false
     /// 沙盒容器：整屏宿主（自带独立底栏），不走 push —— push 进本栈底部仍是主 App 的 TabBar.
-    @State private var showSandbox = false
-    @AppStorage("TDPresentSandboxAsSheet") private var presentSandboxAsSheet = false
 
     var body: some View {
         ScrollView {
@@ -188,29 +186,8 @@ struct HomeView: View {
         .navigationDestination(isPresented: $showI4Advanced) {
             I4AdvancedView()
         }
-        // 沙盒容器用整屏宿主：用户 2026-11-08 要求「这个界面底栏自己独立一个，
-        // 不要用默认界面的底栏」—— 只有 fullScreenCover 能盖掉 RootView 的 TabView 底栏
-        // （与 RootView.swift:75-80 模块宿主同一手段）.
-        // 本仓适配 (M30/M32): 呈现方式可在「沙盒容器 → 设置 → 实验性功能」切换.
-        // 默认原生平滑推入（push，支持左滑返回）；开启「从下往上呈现」时用 fullScreenCover.
-        .navigationDestination(isPresented: Binding(
-            get: { showSandbox && !presentSandboxAsSheet },
-            set: { if !$0 { showSandbox = false } }
-        )) {
-            SandboxHostView()
-        }
-        .fullScreenCover(isPresented: Binding(
-            get: { showSandbox && presentSandboxAsSheet },
-            set: { if !$0 { showSandbox = false } }
-        )) {
-            SandboxHostView()
-        }
-        // 返回/关闭时可靠地同步覆盖窗口（push 的 onDisappear 有时不触发）.
-        .onChange(of: showSandbox) { visible in
-            NotificationCenter.default.post(
-                name: Notification.Name(visible ? "TDShowSandboxOverlay" : "TDHideSandboxOverlay"),
-                object: nil)
-        }
+        // 沙盒容器入口 (M44): 改为 LC 独占原生窗口 (TDLCWindowController),
+        // 与上游"单窗口承载 dock+scene"同构; 旧 push/cover + overlay 搬家链路整体退役.
         // 进入主页自动静默体检（灵动球分数即时显示）
         // task id 直接绑隧道就绪状态 —— VPN 一开，分数扫描立刻自动重跑
         //（未开时 provisioning 项被闸门秒回「待复检」，不会撞隧道，也不卡主线程）.
@@ -469,7 +446,7 @@ struct HomeView: View {
     private var sandboxRow: some View {
         Button {
             AppHaptics.tap()
-            showSandbox = true
+            TDLCWindowController.shared.show()
         } label: {
             AppNavRow(icon: "square.stack.3d.up.fill",
                       title: "沙盒容器",

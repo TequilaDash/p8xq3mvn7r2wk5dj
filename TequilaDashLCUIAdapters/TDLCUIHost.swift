@@ -50,7 +50,7 @@ public final class TDLCUIHost: NSObject {
         // 上游靠系统 scene 配置给这个 window（App/AppDelegate.swift:36-40）；
         // 本仓在 framework 内注入，就显式指向宿主 key window.
         let sceneDelegate = SceneDelegate()
-        sceneDelegate.window = Self.makePresenterWindow()
+        sceneDelegate.window = TDLCWindowController.shared.isVisible || TDLCWindowController.shared.hostViewController != nil ? TDLCWindowController.shared.hostViewController?.view.window ?? Self.makePresenterWindow() : Self.makePresenterWindow()
         let root = LCTabView()
             .environmentObject(DataManager.shared.model)
             .environmentObject(LCAppSortManager.shared)
