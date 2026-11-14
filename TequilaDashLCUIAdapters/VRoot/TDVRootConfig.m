@@ -156,6 +156,8 @@ static void tdv_capture_homes_locked(void) {
 // M41 门控数据源: TD_DYLD_TRIM env (launcher 透传 per-app hideLiveContainer).
 static bool gTDVDyldTrim = false;
 
+static void tdv_init_once(void);
+
 bool TDVDyldTrimEnabled(void) {
     tdv_init_once();
     return gTDVDyldTrim;
