@@ -168,6 +168,16 @@ NSString *TequilaDashLiveProcessDebugLaunch(NSDictionary<NSString *, id> *userIn
             if ([ai[@"sysctlSpoof"] boolValue]) {
                 payload[@"tdSysctlSpoof"] = @"1";
             }
+            // SecTask entitlement 隐藏 + csops 伪 CS flags (691c07b): 同门控模式.
+            if ([ai[@"secTaskSpoof"] boolValue]) {
+                payload[@"tdSecTaskSpoof"] = @"1";
+            }
+            if ([ai[@"csopsSpoof"] boolValue]) {
+                payload[@"tdCsopsSpoof"] = @"1";
+            }
+            if ([ai[@"csopsKeepDebugged"] boolValue]) {
+                payload[@"tdCsopsKeepDebugged"] = @"1";
+            }
         }
     }
 

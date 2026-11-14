@@ -137,13 +137,27 @@ static int TequilaDashLiveProcessMain(int argc, char *argv[]) {
     // vroot (Tier A, 默认关): 宿主填 tdVRoot (绝对路径) / tdVRootMode (off|path|full),
     // 这里落成 LCBootstrap 与 TDVRootShim 读取的环境变量; 缺键就不写 (保持 env 干净).
     // M41 门控数据源: per-app hideLiveContainer -> TD_DYLD_TRIM (shim 镜像裁剪开关);
-    // 独立于 vroot 开关 (隐藏是另一维), 用同一 LCAppInfo 字典.
-    if ([appInfo[@"hideLiveContainer"] boolValue]) {
+    // 独立于 vroot 开关 (隐藏是另一维). 双路径键兼容: LC 原生 userInfo 直带
+    // hideLiveContainer; 本仓 launcher 塞 tdDyldTrim —— 两者都认.
+    if ([appInfo[@"hideLiveContainer"] boolValue] || [appInfo[@"tdDyldTrim"] boolValue]) {
         setenv("TD_DYLD_TRIM", "1", 1);
     }
-    // 交接点 (对方 sysctl 扩表): per-app sysctlSpoof -> TD_SYSCTL_SPOOF.
-    if ([appInfo[@"sysctlSpoof"] boolValue]) {
+    // 隐藏门控三键 (sysctl 伪值表 / SecTask entitlement 隐藏 / csops 伪 CS flags).
+    // 双路径兼容: launcher 塞 tdSysctlSpoof/tdSecTaskSpoof/tdCsopsSpoof,
+    // LC 原生路径直带 sysctlSpoof/secTaskSpoof/csopsSpoof (per-app LCAppInfo 键名).
+    if ([appInfo[@"sysctlSpoof"] boolValue] || [appInfo[@"tdSysctlSpoof"] boolValue]) {
         setenv("TD_SYSCTL_SPOOF", "1", 1);
+    }
+    if ([appInfo[@"secTaskSpoof"] boolValue] || [appInfo[@"tdSecTaskSpoof"] boolValue]) {
+        setenv("TD_SECTASK_SPOOF", "1", 1);
+    }
+    if ([appInfo[@"csopsSpoof"] boolValue] || [appInfo[@"tdCsopsSpoof"] boolValue]) {
+        setenv("TD_CSOPS_SPOOF", "1", 1);
+        // 调试器位保留开关 (宿主自己的 JIT 探测链路依赖 CS_DEBUGGED,
+        // 见 TequilaDash-Bridging-Header.h v0.3.8): per-app 键 csopsKeepDebugged.
+        if ([appInfo[@"csopsKeepDebugged"] boolValue] || [appInfo[@"tdCsopsKeepDebugged"] boolValue]) {
+            setenv("TD_CSOPS_KEEP_DEBUGGED", "1", 1);
+        }
     }
     NSString *vrootPath = appInfo[TDLPVRootPathKey];
     if (![vrootPath isKindOfClass:NSString.class]) {
