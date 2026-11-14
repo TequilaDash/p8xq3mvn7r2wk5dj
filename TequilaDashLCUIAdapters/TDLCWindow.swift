@@ -49,10 +49,15 @@ import UIKit
 
     private func ensureWindow() {
         if window != nil { return }
-        guard let scene = UIApplication.shared.connectedScenes.first(where: { $0.activationState == .foregroundActive }) as? UIWindowScene
-                ?? UIApplication.shared.connectedScenes.first(where: { $0 is UIWindowScene }) as? UIWindowScene else {
-            return
-        }
+        // 审计 §4.1: scene 选择优先级 keyWindow 所在 scene > foregroundActive > 任意;
+        // 后台拉起时两个宽松条件都可能选中非当前 scene (窗口挂错空间 = 前台白屏).
+        let keyScene = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .first { $0.windows.contains(where: { $0.isKeyWindow }) }
+        let scene = keyScene
+            ?? (UIApplication.shared.connectedScenes.first(where: { $0.activationState == .foregroundActive }) as? UIWindowScene)
+            ?? (UIApplication.shared.connectedScenes.first(where: { $0 is UIWindowScene }) as? UIWindowScene)
+        guard let scene else { return }
         let w = UIWindow(windowScene: scene)
         w.frame = scene.coordinateSpace.bounds
         w.windowLevel = .normal + 50

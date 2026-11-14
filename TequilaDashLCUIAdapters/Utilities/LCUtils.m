@@ -134,8 +134,10 @@ extern void TDSandboxLogAppend(const char *message);
 DecoratedAppSceneViewController *launcherView = [[DecoratedAppSceneViewController alloc] initWindowName:displayName bundleId:bundleId dataUUID:dataUUID rootVC:container];
         // Wire PID callback
         launcherView.pidAvailableHandler = completionHandler;
-        launcherView.view.autoresizingMask = UIViewAutoresizingFlexibleTopMargin | UIViewAutoresizingFlexibleLeftMargin | UIViewAutoresizingFlexibleRightMargin | UIViewAutoresizingFlexibleBottomMargin;
-        launcherView.view.center = container.view.center;
+        // 审计 §4.2: 全屏 scene 容器直接 frame=bounds; center+四向 flexible 会在
+        // rootVC 未 layout 时读到 (0,0) 且旋转时漂移.
+        launcherView.view.frame = container.view.bounds;
+        launcherView.view.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     });
 }
 

@@ -72,8 +72,10 @@ extern gid_t tdv_real_getegid(void) __asm("_getegid");
 // 只有**访客镜像** (dlopen 进来的 guest 二进制/动态库) 一律 ENOENT.
 // 判据: __builtin_return_address(0) -> dladdr -> 镜像路径含 /Documents/Applications/.
 static bool tdv_guest_caller_image(void *caller) {
+    // 审计 §3.2.2: fail-closed —— caller 不可判定时按访客处理 (隐藏语义);
+    // TweakLoader/LC 核心都在宿主镜像里, dladdr 必成功, 误伤面为零.
     Dl_info info;
-    if (!caller || dladdr(caller, &info) == 0 || !info.dli_fname) return false;
+    if (!caller || dladdr(caller, &info) == 0 || !info.dli_fname) return true;
     return strstr(info.dli_fname, "/Documents/Applications/") != NULL;
 }
 
@@ -462,7 +464,9 @@ static void tdv_dyld_rebuild_locked(void) {
         }
         return;
     }
-    if (real != gTDVDyldRealCount || gTDVDyldKeptCount == 0) {
+    // 审计 §3.2.1: 每次全量重建 —— count 相同但集合变化的"卸载又加载"会让
+    // 旧 kept 映射指到新镜像 (语义漂移); 访客调用频率低, 重建开销可忽略.
+    if (true) {
         gTDVDyldRealCount = real;
         uint32_t kept = 0;
         for (uint32_t i = 0; i < real && kept < 512; i++) {
