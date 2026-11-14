@@ -9,7 +9,7 @@
 - 钉住的 commit: `cb236f9` (main, 2026-11-14 拉取时点)
 - LICENSE 逐字保留；除下列「改造台账」外，文件逐字未改。
 
-## 文件清单 (15 个)
+## 文件清单 (16 个)
 
 | 文件 | 上游角色 | 本仓消费者 |
 |---|---|---|
@@ -20,7 +20,8 @@
 | `jbroot.c` | `jbroot_alloc` / `jbrootat_alloc` / `rootfs_alloc` 路径代数核心 | 主 App / TDLibVrootApi |
 | `roothide.h` | 公共 API 头 (`jbroot()`/`rootfs()`/`jbrand()`) | TDLibVrootApi |
 | `vroot.h` | vroot API 表 (VROOT_API_* 宏驱动) | TDLibVrootApi / symredirect.cpp |
-| `vroot.c` | `vroot_*` 实现 (open/stat/realpath/posix_spawn 族…) | TDLibVrootApi |
+| `vroot.c` | `vroot_*` 实现 (open/stat/realpath/posix_spawn 族…) | TDLibVroot |
+| `vroot.cpp` | C++ fstream/ofstream `std::string` 重载 (vroot.h 表内 mangled 名条目) | TDLibVroot |
 | `vrootapi.c` | libc 同名裸跳板 (`open`→`b _vroot_open`) | TDLibVrootApi |
 | `vroot_mktemp.c` | mkstemp/mkdtemp 族实现 | TDLibVrootApi |
 | `vroot_rootfs.c` | readdir/readdir_r 族实现 (rootfs 符号链接改写) | TDLibVrootApi |

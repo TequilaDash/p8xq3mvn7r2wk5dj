@@ -284,6 +284,7 @@ targets:
           - "LICENSE"
           - "README.md"
           - "vroot.c"
+          - "vroot.cpp"
           - "vrootapi.c"
           - "vroot_mktemp.c"
           - "vroot_rootfs.c"
@@ -617,6 +618,9 @@ targets:
       - path: vendor/roothide/cache.c
       - path: vendor/roothide/jbroot.c
       - path: vendor/roothide/vroot.c
+      # C++ fstream/ofstream std::string 重载 (vroot.h 表内的 mangled 名条目):
+      # 缺它则 gvrootapiaddrs 引用 _vroot__ZNSt3__1... 未定义 (CI run 43550922694).
+      - path: vendor/roothide/vroot.cpp
       - path: vendor/roothide/vroot_mktemp.c
       - path: vendor/roothide/vroot_rootfs.c
       - path: vendor/roothide/vroot_exec.c
