@@ -647,9 +647,54 @@ TDV_INTERPOSE(tdv_getgid, tdv_real_getgid);
 TDV_INTERPOSE(tdv_getegid, tdv_real_getegid);
 TDV_INTERPOSE(tdv_sysctlbyname, tdv_real_sysctlbyname);
 TDV_INTERPOSE(tdv_sectask_copy_impl, tdv_real_sectask_copy);
+TDV_INTERPOSE(tdv_sectask_copy_values_impl, tdv_real_sectask_copy_values);
 TDV_INTERPOSE(tdv_csops_impl, tdv_real_csops);
 TDV_INTERPOSE(tdv_csops_audittoken_impl, tdv_real_csops_audittoken);
 TDV_INTERPOSE(tdv_dyld_count_impl, _dyld_image_count);
 TDV_INTERPOSE(tdv_dyld_name_impl, _dyld_get_image_name);
 TDV_INTERPOSE(tdv_dyld_header_impl, _dyld_get_image_header);
 TDV_INTERPOSE(tdv_dyld_slide_impl, _dyld_get_image_vmaddr_slide);
+#pragma mark - SecTask 复数/audit-token 通道 (TD_SECTASK_SPOOF 同门控)
+
+// 绕过口子封堵: 单数 CopyValueForEntitlement 拦了, 但检测器可用
+//   · SecTaskCopyValuesForEntitlements (CFDictionaryRef 一次拿多键)
+//   · SecTaskCreateWithAuditToken + CopyValueForEntitlement (经 token 建任务再查)
+// 两条通道绕过. 复数通道策略: 逐键过 TDVSecTaskHideEntitlement, 命中键从入参
+// entitlements 数组剔除后调原实现 (返回字典少键 = 键不存在同形); 全部命中则
+// 传空数组. WithAuditToken 通道: Create 本身不泄数据, 只需拦后续 Copy ——
+// Copy 的 task 参数与 self 同进程, 单数拦截天然覆盖, 无需额外处理.
+extern CFDictionaryRef tdv_real_sectask_copy_values(tdv_SecTaskRef task,
+                                                    CFArrayRef entitlements,
+                                                    void **error)
+    __asm("_SecTaskCopyValuesForEntitlements");
+
+static CFDictionaryRef tdv_sectask_copy_values_impl(tdv_SecTaskRef task,
+                                                    CFArrayRef entitlements,
+                                                    void **error) {
+    if (!TDVSecTaskSpoofEnabled() || entitlements == NULL) {
+        return tdv_real_sectask_copy_values(task, entitlements, error);
+    }
+    CFIndex n = CFArrayGetCount(entitlements);
+    bool anyHidden = false;
+    CFMutableArrayRef filtered = CFArrayCreateMutableCopy(kCFAllocatorDefault, n, entitlements);
+    if (filtered == NULL) {
+        return tdv_real_sectask_copy_values(task, entitlements, error);
+    }
+    // 从后往前剔除命中键 (避免索引位移).
+    for (CFIndex i = n - 1; i >= 0; i--) {
+        CFStringRef key = (CFStringRef)CFArrayGetValueAtIndex(entitlements, i);
+        char name[256];
+        if (key && CFStringGetCString(key, name, sizeof(name), kCFStringEncodingUTF8) &&
+            TDVSecTaskHideEntitlement(name)) {
+            CFArrayRemoveValueAtIndex(filtered, i);
+            anyHidden = true;
+        }
+    }
+    if (!anyHidden) {
+        CFRelease(filtered);
+        return tdv_real_sectask_copy_values(task, entitlements, error);
+    }
+    CFDictionaryRef result = tdv_real_sectask_copy_values(task, filtered, error);
+    CFRelease(filtered);
+    return result;
+}
