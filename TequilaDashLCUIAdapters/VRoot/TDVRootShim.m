@@ -12,7 +12,7 @@
 //    · getuid/geteuid/getgid/getegid 只在 mode=full 返回 0.
 //    · getmntinfo/getmntinfo_r_np 在真实挂载表末尾追加一条 vroot 项.
 //    · M41: dyld 镜像清单裁剪 (_dyld_image_count/get_image_name/header/vmaddr_slide)
-  · stat64 有意不拦截: 64 位 iOS SDK 不声明 struct stat64, 访客全是 arm64,
+//    · stat64 有意不拦截: 64 位 iOS SDK 不声明 struct stat64, 访客全是 arm64,
 //      没有安全的 interpose 拼写 (见交付报告).
 //
 //  明确不拦截: posix_spawn/exec (Tier B), fopen/NSFileManager (libc 底层已覆盖),
