@@ -28,40 +28,39 @@ uint64_t aarch64_emulate_adrp_add(uint32_t instruction, uint32_t addInstruction,
 uint64_t aarch64_emulate_adrp_ldr(uint32_t instruction, uint32_t ldrInstruction, uint64_t pc);
 
 // 本仓适配 (M42, 2026-11-14): swizzle 幂等化.
-// 崩溃实证 (0.3.881 .ips 112035/112050/112131): 嵌套场景下 hook_setDelegate 每次
-// 都会再调 swizzle(UIWindow.makeKeyAndVisible/...)，method_exchangeImplementations
-// 在 iOS 26 上对同一 (class,selector) 重复交换时 cache flush 段错误；
-// 且重复交换会让 hook/orig 互换 (奇偶翻转)。这里按 (class,sel) 去重，只换一次。
-// seen 由调用方以 __strong 静态存储传入 (地址即静态对象地址, 避免 __autoreleasing 误判).
-static inline void td_swizzle_once(__strong NSMutableSet **seen, NSString *key, Class class,
-                                   SEL originalAction, SEL swizzledAction, BOOL classMethod) {
-    if (*seen == nil) {
-        @synchronized ([NSUserDefaults class]) {
-            if (*seen == nil) *seen = [NSMutableSet new];
-        }
-    }
-    @synchronized (*seen) {
-        if ([*seen containsObject:key]) return;
-        [*seen addObject:key];
+// 崩溃实证 (0.3.881 .ips 112035/112050/112131): iOS 26 上对同一 (class,sel)
+// 重复 method_exchangeImplementations 会 cache flush 段错误，且奇偶交换让
+// hook/orig 互换。
+// M42b (2026-11-14, .ips 151423 实证): 去重标记必须**跨镜像**共享。
+// 嵌套场景下每个 LC 层都有各自的 TweakLoader/UIKit+GuestHooks 镜像, 各自的
+// static 集合互相看不见 —— 两层各交换一次后, `hook_setDelegate` 槽位指向
+// 第一层 hook 的 IMP, 尾调 `[self hook_setDelegate:]` 变成自指 → 21215 层
+// 递归爆栈。改用 standardUserDefaults 布尔标记 (同进程所有镜像共享同一域):
+// 同 (class,selector) 全进程只交换一次, 第二层镜像的 hook 保持未接线
+// (其语义由第一层 hook 覆盖), 尾调链终止于真 original。
+static inline bool td_swizzle_mark_once(NSString *key, Class class,
+                                        SEL originalAction, SEL swizzledAction, BOOL classMethod) {
+    NSString *mark = [NSString stringWithFormat:@"TD_swizzled_%@", key];
+    NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+    @synchronized (defaults) {
+        if ([defaults boolForKey:mark]) return false;
+        [defaults setBool:YES forKey:mark];
     }
     Method m1 = classMethod ? class_getClassMethod(class, originalAction) : class_getInstanceMethod(class, originalAction);
     Method m2 = classMethod ? class_getClassMethod(class, swizzledAction) : class_getInstanceMethod(class, swizzledAction);
-    if (!m1 || !m2) return;
+    if (!m1 || !m2) return false;
     method_exchangeImplementations(m1, m2);
+    return true;
 }
 
 static inline void swizzle(Class class, SEL originalAction, SEL swizzledAction) {
-    static NSMutableSet *tdSeen = nil;
-    td_swizzle_once(&tdSeen,
-                    [NSString stringWithFormat:@"%@:%@", NSStringFromClass(class), NSStringFromSelector(originalAction)],
-                    class, originalAction, swizzledAction, NO);
+    td_swizzle_mark_once([NSString stringWithFormat:@"%@:%@", NSStringFromClass(class), NSStringFromSelector(originalAction)],
+                         class, originalAction, swizzledAction, NO);
 }
 
 static inline void swizzleClassMethod(Class class, SEL originalAction, SEL swizzledAction) {
-    static NSMutableSet *tdSeen = nil;
-    td_swizzle_once(&tdSeen,
-                    [NSString stringWithFormat:@"+%@:%@", NSStringFromClass(class), NSStringFromSelector(originalAction)],
-                    class, originalAction, swizzledAction, YES);
+    td_swizzle_mark_once([NSString stringWithFormat:@"+%@:%@", NSStringFromClass(class), NSStringFromSelector(originalAction)],
+                         class, originalAction, swizzledAction, YES);
 }
 
 @interface NSUserDefaults(LiveContainer)
