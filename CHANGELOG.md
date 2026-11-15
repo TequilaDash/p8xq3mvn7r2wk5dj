@@ -1,3 +1,19 @@
+## [0.3.891] - 2026-11-15
+
+### 沙盒容器呈现方式重构：单一形态（root 替换）
+- 删除「呈现方式」实验开关（从下往上/原生平滑两态）与图例 —— 两种形态都已被
+  M44 的 root 替换统一，旧开关不再有语义，误点只会造成“呈现方式无效”。
+- `TDLCWindowController` 只保留一条路径：`show()` 记录并替换宿主主窗口 rootVC，
+  `hide()` 还原；`showAndGetHost()` 返回**该 root VC** 并把 dock 的
+  `windowHostingView` 挪进同一个 root.view（同窗口），供多任务 scene 使用。
+
+### 多任务对齐上游 MultitaskSupport
+- 按上游 `MultitaskDockView.swift:289` 的挂载语义（windowHostingView 挂在
+  `keyWindow.rootVC.view.subviews.first`）恢复：root 替换后由我们把它重新挂进
+  新 root 的 view，DecoratedAppSceneViewController 收到同一个 root VC →
+  `addChildViewController` 层级检查通过、scene presenter 不断链。
+- 不再有任何跨窗口搬家 / 独立顶层窗口 / frame=bounds 强制全屏。
+
 ## [0.3.890] - 2026-11-15
 
 ### 不再打包内置隧道版（owner 决定，减负担）

@@ -24,7 +24,6 @@ public final class TDLCWindowController: NSObject {
     @objc public static let shared = TDLCWindowController()
 
     private var savedHostRoot: UIViewController?
-    private var guestContainer: UIViewController?
     private var observer: NSObjectProtocol?
 
     private var hostWindow: UIWindow? {
@@ -56,7 +55,6 @@ public final class TDLCWindowController: NSObject {
         w.rootViewController = saved
         savedHostRoot = nil
         w.makeKeyAndVisible()
-        guestContainer = nil
         NotificationCenter.default.post(name: Notification.Name("TDHideSandboxOverlay"), object: nil)
     }
 

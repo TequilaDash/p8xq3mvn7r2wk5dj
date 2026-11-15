@@ -115,8 +115,6 @@ struct TDSandboxLogView: View {
 
 /// 沙盒容器 → 设置 →「实验性功能」二级页.
 struct TDSandboxExperimentalView: View {
-    /// true = 从下往上弹出（fullScreenCover）；false = 原生平滑推入（push，支持左滑返回）.
-    @AppStorage("TDPresentSandboxAsSheet") private var presentAsSheet = false
     @State private var globalSpoof = UserDefaults(suiteName: "group.com.tequila.dash")?.bool(forKey: "TDGlobalSpoof") ?? false
 
     var body: some View {
@@ -140,31 +138,6 @@ struct TDSandboxExperimentalView: View {
                 Text("开启后新启动的沙盒 App 即生效；已运行的 App 需重开。个别 App 可在其 App 设置里关掉某层。")
             }
 
-            Section {
-                Toggle(isOn: $presentAsSheet) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("从下往上呈现")
-                        Text(presentAsSheet ? "当前：弹出的方式（可下拉关闭）"
-                                            : "当前：原生平滑推入（可左滑返回）")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                }
-            } header: {
-                Text("呈现方式")
-            } footer: {
-                Text("从下往上：像一张卡片从底部弹出；原生平滑：系统标准推入动画，支持左滑返回。")
-            }
-
-            Section {
-                PresentStyleFigure(modal: presentAsSheet)
-                    .frame(height: 150)
-                    .listRowInsets(EdgeInsets())
-                    .listRowBackground(Color.clear)
-            } header: {
-                Text("图例")
-            }
-
             // Tier B-1 (Surface-lite) + 隐藏状态面板: 合并为"沙盒内核状态"页.
             Section {
                 NavigationLink {
@@ -183,50 +156,3 @@ struct TDSandboxExperimentalView: View {
     }
 }
 
-/// 图例：两种呈现方式的示意（纯 SwiftUI 绘制，不依赖图片资源）.
-private struct PresentStyleFigure: View {
-    let modal: Bool
-
-    var body: some View {
-        GeometryReader { geo in
-            ZStack {
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(Color(uiColor: .secondarySystemBackground))
-                if modal {
-                    VStack {
-                        Spacer()
-                        RoundedRectangle(cornerRadius: 18, style: .continuous)
-                            .fill(Color(uiColor: .systemBackground))
-                            .frame(height: geo.size.height * 0.66)
-                            .overlay(alignment: .top) {
-                                Capsule()
-                                    .fill(Color(uiColor: .tertiaryLabel))
-                                    .frame(width: 40, height: 5)
-                                    .padding(.top, 8)
-                            }
-                            .shadow(radius: 8, y: -4)
-                            .padding(.horizontal, 14)
-                    }
-                } else {
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .fill(Color(uiColor: .systemBackground))
-                        .padding(14)
-                        .overlay(alignment: .topLeading) {
-                            Image(systemName: "chevron.backward")
-                                .font(.headline)
-                                .padding(.leading, 24)
-                                .padding(.top, 20)
-                        }
-                }
-            }
-            .overlay(alignment: .bottomTrailing) {
-                Text(modal ? "从下往上" : "原生平滑")
-                    .font(.caption2.weight(.semibold))
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(.ultraThinMaterial, in: Capsule())
-                    .padding(12)
-            }
-        }
-    }
-}
