@@ -1,6 +1,7 @@
-20261115-181322 1.1.6 Update：
-1. 修复 iManager 页“全局隐藏模式”开关未进入构建的问题（改用 @AppStorage("TDGlobalSpoof") 直读标准域）。
-2. 保持 1.1.5 的隐藏层范围：全局开关仅启用 sysctl/proc 伪值；csops/SecTask/二次 dyld 裁剪不启用。
+20261115-182335 1.1.7 Update：
+1. 修复隐藏状态页“伪值层”恒显示未开启的读取错误；全局隐藏开启后状态正确显示已生效。
+2. 访客启动日志新增 [TDGlobalHide] guest/global 标记，便于核对门控是否真的传入访客。
+3. 隐藏层范围保持：全局开关启用 sysctl/proc 伪值；不启用 csops/SecTask/二次 dyld 裁剪。
 
 [编译环境]
 构建时自动填充

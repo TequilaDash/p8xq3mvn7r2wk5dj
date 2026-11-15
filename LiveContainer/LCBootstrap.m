@@ -508,6 +508,7 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
     
     BOOL hookDlopen = !isSharedBundle && LCSharedUtils.certificatePassword && isLiveProcess;
     BOOL tdGlobalHide = [[NSUserDefaults standardUserDefaults] boolForKey:@"TDGlobalSpoof"];
+    NSLog(@"[TDGlobalHide] guest=%d global=%d", (int)[guestAppInfo[@"hideLiveContainer"] boolValue], (int)tdGlobalHide);
     if([guestAppInfo[@"hideLiveContainer"] boolValue] || tdGlobalHide) {
         setenv("TD_SYSCTL_SPOOF", "1", 1);
         setenv("TD_PROC_SPOOF", "1", 1);

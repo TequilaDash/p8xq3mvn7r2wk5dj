@@ -12,7 +12,7 @@ enum TDHideStatusProvider {
             dyldState = .partial
         }
 
-        let spoof = UserDefaults(suiteName: "group.com.tequila.dash")?.bool(forKey: "TDGlobalSpoof") ?? false
+        let spoof = UserDefaults.standard.bool(forKey: "TDGlobalSpoof")
 
         return [
             .init(id: "env", icon: "leaf", title: "访客环境清洗", state: .builtIn),
