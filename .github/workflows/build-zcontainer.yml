@@ -11,75 +11,47 @@ permissions:
 
 jobs:
   build:
-    runs-on: macos-15
+    runs-on: macos-latest
+    env:
+      scheme: LiveContainer
+      archive_path: archive
     steps:
-      - uses: actions/checkout@v4
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: '26.2'
+
+      - name: Checkout (with pristine submodules)
+        uses: actions/checkout@v6
         with:
           submodules: recursive
 
-      - name: Select Xcode
+      - name: Archive
         run: |
-          set -euo pipefail
-          echo "xcodebuild: $(xcodebuild -version | tr '\n' ' ')"
-          xcodebuild -list -project LiveContainer.xcodeproj
-
-      - name: Strip vendored xcframework code signatures
-        run: |
-          set -euo pipefail
-          # Prebuilt slices carry the vendor's team signature; ProcessXCFramework
-          # rejects it. Re-sign every Mach-O slice ad-hoc so the framework is
-          # self-consistent under CODE_SIGNING_ALLOWED=NO.
-          count=0
-          while IFS= read -r -d '' f; do
-            if file -b "$f" | grep -q 'Mach-O'; then
-              codesign --force --sign - --timestamp=none "$f" || { echo "codesign failed: $f"; exit 1; }
-              count=$((count+1))
-            fi
-          done < <(find OpenSSL/Frameworks/OpenSSL.xcframework -path '*/dSYMs' -prune -o -type f -print0)
-          echo "ad-hoc signed $count Mach-O slices"
-          find OpenSSL/Frameworks/OpenSSL.xcframework -path '*/dSYMs' -prune -o -type f -name 'OpenSSL' -print | head -10
-
-      - name: Build (unsigned)
-        run: |
-          set -euo pipefail
-          xcodebuild \
+          set -o pipefail
+          xcodebuild archive \
+            -archivePath "$archive_path" \
+            -scheme "$scheme" \
             -project LiveContainer.xcodeproj \
-            -scheme LiveContainer \
-            -configuration Release \
-            -sdk iphoneos \
-            -derivedDataPath build \
-            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
-            build | tee /tmp/xcodebuild.log
-          APP="$(find build/Build/Products/Release-iphoneos -maxdepth 1 -name '*.app' -type d | head -n1)"
-          echo "APP=$APP" >> "$GITHUB_ENV"
-          echo "APP=$APP"
+            -sdk iphoneos -arch arm64 -configuration Release | xcpretty
+          exit ${PIPESTATUS[0]}
 
-      - name: Package unsigned IPA
-        run: |
-          set -euo pipefail
-          VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Info.plist")"
-          IPA="zcontainer-${VERSION}-Zcontainer-unsigned.ipa"
-          rm -rf Payload && mkdir Payload
-          cp -R "$APP" Payload/
-          zip -qry "$IPA" Payload
-          ls -lh "$IPA"
-          echo "IPA=$IPA" >> "$GITHUB_ENV"
-          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+      - name: Package unsigned IPA (upstream script)
+        run: sh .github/build_github.sh
 
       - name: Upload build log
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: zcontainer-build-log
-          path: /tmp/xcodebuild.log
+          path: |
+            **/*.log
           if-no-files-found: warn
 
       - name: Upload IPA
-        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: zcontainer-ipa
-          path: ${{ env.IPA }}
+          path: ${{ env.scheme }}.ipa
           if-no-files-found: error
 
       - name: Publish Release (on tag)
@@ -99,7 +71,7 @@ jobs:
             echo "SDK: $(xcrun --sdk iphoneos --show-sdk-version)"
           } > "$NOTES"
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" "$IPA" --clobber
+            gh release upload "$TAG" "$scheme.ipa" --clobber
           else
-            gh release create "$TAG" --title "zcontainer $TAG" --notes-file "$NOTES" "$IPA"
+            gh release create "$TAG" --title "zcontainer $TAG" --notes-file "$NOTES" "$scheme.ipa"
           fi
