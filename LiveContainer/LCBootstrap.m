@@ -501,7 +501,10 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
     // whole process once a guest has run, so any later read (even pre-NUD in
     // this launch) can be served from the guest domain. A plain file in the
     // HOST container is immune to that.
-    NSString *tdFlagPath = [NSHomeDirectory() stringByAppendingPathComponent:@"Documents/TDGlobalHide"];
+    // NSHomeDirectory() lies after the first guest (HOME was setenv'd to the
+    // guest container and never restored). Use the host .app bundle path.
+    NSString *tdFlagPath = [NSBundle.mainBundle.bundlePath
+        stringByAppendingPathComponent:@"Documents/TDGlobalHide"];
     BOOL tdGlobalHide = [[NSString stringWithContentsOfFile:tdFlagPath encoding:NSUTF8StringEncoding error:nil] isEqualToString:@"1"];
     BOOL tdHideLiveContainer = tdGlobalHide || [guestAppInfo[@"hideLiveContainer"] boolValue];
     NSLog(@"[TDGlobalHide] guest=%d global=%d (pre-NUD)", (int)[guestAppInfo[@"hideLiveContainer"] boolValue], (int)tdGlobalHide);

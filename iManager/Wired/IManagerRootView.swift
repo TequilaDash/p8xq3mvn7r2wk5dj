@@ -2,10 +2,10 @@ import SwiftUI
 
 struct IManagerRootView: View {
     @State private var globalHide: Bool = {
-        let p = NSHomeDirectory() + "/Documents/TDGlobalHide"
+        let p = Bundle.main.bundlePath + "/Documents/TDGlobalHide"
         return (try? String(contentsOfFile: p, encoding: .utf8)) == "1"
     }()
-    private var flagPath: String { NSHomeDirectory() + "/Documents/TDGlobalHide" }
+    private var flagPath: String { Bundle.main.bundlePath + "/Documents/TDGlobalHide" }
     var body: some View {
         List {
             Section {
