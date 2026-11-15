@@ -705,7 +705,7 @@
 			);
 			fileSystemSynchronizedGroups = (
 				E1292C1A2DCA48F00065E12D /* Tweaks */,
-							{{SECRET_cl3mpiro2}} /* HideShim */,
+				A1B2C3D4E5F6000000000002 /* HideShim */,
 			);
 			name = LiveContainerShared;
 			packageProductDependencies = (
