@@ -269,6 +269,33 @@ static int tdv_getattrlist(const char *path, void *attrList, void *attrBuf,
                                 attrList, attrBuf, attrBufSize, options);
 }
 
+#pragma mark - 主可执行路径重定向 (_NSGetExecutablePath)
+
+// 检测器用 _NSGetExecutablePath 取"主可执行"再读它:
+//   · EntitlementsReader(executablePath)  -> 把读到的 entitlement 当访客的
+//   · MachOParse / findRuntimePaths / findLoadedDylibs 的兜底基准路径
+// LC 进程里不重定向就会拿到 LC 自己的二进制, 于是 LC 的 entitlement 集合、
+// 依赖树、rpath 全被当成访客的 -> 判成"权限/依赖被篡改".
+// 隐藏态下返回 LC 启动访客时登记的 guest executable (TDVRootGuestExecutablePath).
+// 未登记 (隐藏关 / 尚未启动访客) 原样透传, 宿主自身不受影响.
+extern int tdv_real_nsgetexecutablepath(char *buf, uint32_t *bufsize)
+    __asm("__NSGetExecutablePath");
+
+static int tdv_nsgetexecutablepath(char *buf, uint32_t *bufsize) {
+    const char *guest = TDVRootGuestExecutablePath();
+    if (!guest || !buf || !bufsize) {
+        return tdv_real_nsgetexecutablepath(buf, bufsize);
+    }
+    uint32_t need = (uint32_t)strlen(guest) + 1;
+    if (*bufsize < need) {
+        *bufsize = need;   // 与真实 API 一致: 回写所需长度并返回 -1
+        return -1;
+    }
+    memcpy(buf, guest, need);
+    *bufsize = need;
+    return 0;
+}
+
 #pragma mark - getmntinfo 追加 vroot 项
 
 static struct statfs *gTDVMntCache = NULL;
@@ -527,8 +554,8 @@ typedef char tdv_name_t[128];
 //   · proc_pidpath: pid==self 透传 (访客 app 真实路径, 无泄漏); pid!=self → ENOENT
 //   · proc_name: 同 pidpath 语义
 // 门控与过滤在 TDVRootConfig (TDVProcSpoofEnabled / TDVProcFilterPids).
-// kern.proc 裸 MIB 通道 (sysctl(3)) 不拦 —— Reveil 的 PFlag 检测走 proc_listallpids
-// + proc_pidinfo 组合, 裸 MIB 需 fishhook (第三批 task_info 同批).
+// kern.proc 裸 MIB 通道 (sysctl(3)) 另由 sysctl interpose 处理 (见上一节);
+// 任务端口引用数另由 mach_port_get_refs 拦截 (见下一节).
 extern int tdv_real_proc_listallpids(void *buffer, int buffersize)
     __asm("_proc_listallpids");
 extern int tdv_real_proc_pidpath(int pid, void *buffer, uint32_t buffersize)
@@ -554,6 +581,29 @@ static int tdv_proc_name_impl(int pid, void *buffer, uint32_t buffersize) {
         return 0;
     }
     return tdv_real_proc_name(pid, buffer, buffersize);
+}
+
+#pragma mark - 任务端口引用数 (TD_PROC_SPOOF 同门控)
+
+// Reveil checkExtraTaskRefs: mach_port_get_refs(mach_task_self_, mach_task_self_,
+// MACH_PORT_RIGHT_SEND) 返回 > 2 即判"进程任务端口被额外引用" (侧载宿主/扩展
+// 进程天然多引用). 只伪化"自身任务端口的 SEND 引用数", 上限压到 2; 其它端口、
+// 其它 right、其它 task 一律透传 (宿主自身的端口簿记不能动).
+extern kern_return_t tdv_real_mach_port_get_refs(mach_port_t task, mach_port_name_t name,
+                                                  mach_port_right_t right,
+                                                  mach_port_urefs_t *refs)
+    __asm("_mach_port_get_refs");
+
+static kern_return_t tdv_mach_port_get_refs_impl(mach_port_t task, mach_port_name_t name,
+                                                 mach_port_right_t right,
+                                                 mach_port_urefs_t *refs) {
+    kern_return_t kr = tdv_real_mach_port_get_refs(task, name, right, refs);
+    if (kr != KERN_SUCCESS || !refs) return kr;
+    if (!TDVProcSpoofEnabled()) return kr;
+    if (right != MACH_PORT_RIGHT_SEND) return kr;
+    if (task != mach_task_self() || name != mach_task_self()) return kr;
+    if (*refs > 2) *refs = 2;
+    return kr;
 }
 
 #pragma mark - bootstrap 服务名探测 (TD_PROC_SPOOF 同门控)
@@ -698,6 +748,7 @@ TDV_INTERPOSE(tdv_getgid, tdv_real_getgid);
 TDV_INTERPOSE(tdv_getegid, tdv_real_getegid);
 TDV_INTERPOSE(tdv_sysctlbyname, tdv_real_sysctlbyname);
 TDV_INTERPOSE(tdv_sysctl_impl, tdv_real_sysctl);
+TDV_INTERPOSE(tdv_nsgetexecutablepath, tdv_real_nsgetexecutablepath);
 TDV_INTERPOSE(tdv_sectask_copy_impl, tdv_real_sectask_copy);
 static CFDictionaryRef tdv_sectask_copy_values_impl(tdv_SecTaskRef task,
                                                     CFArrayRef entitlements,
@@ -712,6 +763,7 @@ TDV_INTERPOSE(tdv_csops_audittoken_impl, tdv_real_csops_audittoken);
 TDV_INTERPOSE(tdv_proc_listallpids_impl, tdv_real_proc_listallpids);
 TDV_INTERPOSE(tdv_proc_pidpath_impl, tdv_real_proc_pidpath);
 TDV_INTERPOSE(tdv_proc_name_impl, tdv_real_proc_name);
+TDV_INTERPOSE(tdv_mach_port_get_refs_impl, tdv_real_mach_port_get_refs);
 TDV_INTERPOSE(tdv_bootstrap_look_up2_impl, tdv_real_bootstrap_look_up);
 TDV_INTERPOSE(tdv_posix_spawn_impl, tdv_real_posix_spawn);
 TDV_INTERPOSE(tdv_posix_spawnp_impl, tdv_real_posix_spawnp);

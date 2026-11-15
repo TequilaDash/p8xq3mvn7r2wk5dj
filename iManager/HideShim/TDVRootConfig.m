@@ -571,3 +571,26 @@ void TDVRootApplyEnvironmentOverrides(void) {
     }
     free(newPath);
 }
+#pragma mark - 访客主可执行路径
+
+// 单写多读: LC 每次启动访客写一次; shim 在 _NSGetExecutablePath 里读.
+// 不加锁: 写入是整串 memcpy + 末尾置 0, 读取方最多读到旧值或新值 (路径语义,
+// 不存在撕裂后产生非法指针的风险).
+static char gTDVGuestExecutable[PATH_MAX];
+
+void TDVRootSetGuestExecutablePath(const char *path) {
+    if (!path || path[0] != '/') {
+        gTDVGuestExecutable[0] = '\0';
+        return;
+    }
+    size_t len = strlen(path);
+    if (len >= sizeof(gTDVGuestExecutable)) {
+        gTDVGuestExecutable[0] = '\0';
+        return;
+    }
+    memcpy(gTDVGuestExecutable, path, len + 1);
+}
+
+const char *TDVRootGuestExecutablePath(void) {
+    return gTDVGuestExecutable[0] ? gTDVGuestExecutable : NULL;
+}
