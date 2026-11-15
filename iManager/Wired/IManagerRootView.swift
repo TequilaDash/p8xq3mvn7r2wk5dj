@@ -8,20 +8,10 @@
 import SwiftUI
 
 struct IManagerRootView: View {
-    @State private var globalSpoof =
-        UserDefaults(suiteName: "group.com.tequila.dash")?.bool(forKey: "TDGlobalSpoof") ?? false
-    private let groupDefaults = UserDefaults(suiteName: "group.com.tequila.dash")
+    private let groupDefaults = UserDefaults.standard
 
     var body: some View {
         List {
-            Section {
-                Toggle("全局隐藏模式", isOn: $globalSpoof)
-                .onChange(of: globalSpoof) { nv in
-                    groupDefaults?.set(nv, forKey: "TDGlobalSpoof")
-                }
-            } header: {
-                Text("隐藏")
-            }
 
             Section {
                 NavigationLink {

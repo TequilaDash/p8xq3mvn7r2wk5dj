@@ -1,9 +1,7 @@
-20261115-171423 1.1.3 Update：
-1. 将 iManager 隐藏扩展层接入 zcontainer 访客启动：per-app 隐藏开启时同时启用 sysctl/SecTask/csops/proc 伪值与 dyld 镜像裁剪。
-2. iManager 隐藏实现迁至 iManager/HideShim，作为 LiveContainer target 的同步文件夹编译。
-3. 隐藏状态页与设置入口去注释化；dyld 覆盖率按 per-app hide 统计。
+20261115-174359 1.1.4 Update：
+1. 撤回 1.1.3 的隐藏扩层接线：per-app 隐藏恢复为纯 zcontainer 上游行为（csops/SecTask/二次 dyld 裁剪会新增“代码签名状态异常”“共享库校验被禁用”等异常项）。
+2. 移除 iManager 页“全局隐藏模式”开关（未证实安全前不放置无效果开关）。
+3. 保留隐藏状态页与 per-app 隐藏开关；后续隐藏扩展以独立、可验证开关逐项接入。
 
 [编译环境]
-Xcode: 构建时自动填充
-Build: 构建时自动填充
-SDK: 构建时自动填充
+构建时自动填充

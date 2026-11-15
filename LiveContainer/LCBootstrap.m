@@ -1,4 +1,3 @@
-extern void TDVRootInstallIfRequested(void);
 #import "FoundationPrivate.h"
 #import "LCMachOUtils.h"
 #import "LCSharedUtils.h"
@@ -507,15 +506,6 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
     litehook_rebind_symbol(LITEHOOK_REBIND_GLOBAL, NSSetUncaughtExceptionHandler, hook_do_nothing, nil);
     
     BOOL hookDlopen = !isSharedBundle && LCSharedUtils.certificatePassword && isLiveProcess;
-    // iManager: per-app hide also enables the spoof layers (sysctl/SecTask/csops/proc) and dyld trim.
-    if([guestAppInfo[@"hideLiveContainer"] boolValue]) {
-        setenv("TD_SYSCTL_SPOOF", "1", 1);
-        setenv("TD_SECTASK_SPOOF", "1", 1);
-        setenv("TD_CSOPS_SPOOF", "1", 1);
-        setenv("TD_PROC_SPOOF", "1", 1);
-        setenv("TD_DYLD_TRIM", "1", 1);
-    }
-    TDVRootInstallIfRequested();
     DyldHooksInit([guestAppInfo[@"hideLiveContainer"] boolValue], hookDlopen, [guestAppInfo[@"spoofSDKVersion"] unsignedIntValue]);
     
     if([guestContainerInfo[@"spoofIdentifierForVendor"] boolValue]) {
