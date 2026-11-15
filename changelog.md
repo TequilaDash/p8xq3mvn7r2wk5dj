@@ -1,3 +1,9 @@
+20261115-215941 1.1.17 Update：
+1. dyld 镜像清单改为显式映射表：剔除 LC 自身全部镜像（不再只减两个尾部条目）与 Documents/Tweaks 下的 tweak dylib，index 0 固定为访客主可执行。
+2. 新镜像加载即重建映射，消除旧实现“数量相等即认为未变化”的陈旧判断。
+3. 访客主可执行改用 MH_EXECUTE 扫描定位，不再依赖隐藏态下语义不可靠的 appMainImageIndex。
+4. lcMainBundlePath 改为自有缓冲区，避免 NSString fileSystemRepresentation 生命周期问题。
+
 20261115-213304 1.1.16 Update：
 1. 回退 1.1.15 的 _NSGetExecutablePath interpose：它与 LiveContainer 自身的 dyld 路径重写（performHookDyldApi）冲突，导致同进程/多任务启动断言崩溃 (gdyldPtr != 0, Dyld.m:234)；LC 本来就通过 dyld config 重写该路径，无需再拦。
 2. 保留 1.1.15 的 mach_port_get_refs 伪值（不与 dyld 路径重写冲突）。

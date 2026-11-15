@@ -5,6 +5,7 @@
 //  Created by s s on 2025/2/7.
 //
 #include <dlfcn.h>
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <sys/mman.h>
 #import "../../litehook/src/litehook.h"
@@ -30,6 +31,11 @@ bool hookedDlopen = false;
 bool tweakLoaderLoaded = false;
 bool appExecutableFileTypeOverwritten = false;
 const char* lcMainBundlePath = NULL;
+
+// 前置声明: overwriteAppExecutableFileType / hook_dlsym 在本文件的更早位置使用.
+static uint32_t tdv_guest_image_index(void);
+static void tdv_rebuild_image_remap(void);
+static void tdv_hide_image_if_needed(const struct mach_header *header);
 
 void* (*orig_dlopen)(const char *path, int mode) = dlopen;
 void* (*orig_dlsym)(void * __handle, const char * __symbol) = dlsym;
@@ -57,7 +63,9 @@ static void ensureBreakpointExceptionHandler(void) {
 }
 
 static void overwriteAppExecutableFileType(void) {
-    struct mach_header_64* appImageMachOHeader = (struct mach_header_64*) orig_dyld_get_image_header(appMainImageIndex);
+    uint32_t guestHeaderIndex = tdv_guest_image_index();
+    if (guestHeaderIndex == UINT32_MAX) guestHeaderIndex = appMainImageIndex;
+    struct mach_header_64* appImageMachOHeader = (struct mach_header_64*) orig_dyld_get_image_header(guestHeaderIndex);
     kern_return_t kret = builtin_vm_protect(mach_task_self(), (vm_address_t)appImageMachOHeader, sizeof(appImageMachOHeader), false, PROT_READ | PROT_WRITE | VM_PROT_COPY);
     if(kret != KERN_SUCCESS) {
         NSLog(@"[LC] failed to change appImageMachOHeader to rw");
@@ -68,17 +76,104 @@ static void overwriteAppExecutableFileType(void) {
     }
 }
 
-static inline int translateImageIndex(int origin) {
-    if(origin == lcImageIndex) {
-        if(!appExecutableFileTypeOverwritten) {
-            overwriteAppExecutableFileType();
-            appExecutableFileTypeOverwritten = true;
-        }
-        
-        return appMainImageIndex;
+// 镜像清单裁剪: 维护一张"可见索引 -> 真实索引"映射表.
+// 旧实现用 count-1-tweakLoader 的算术隐含"被隐藏的镜像必在末尾", 只盖得住
+// LC 主镜像 + TweakLoader 两项; LC 的其余 framework 与 Documents/Tweaks 下的
+// dylib 仍会以 (改名后的) 条目留在表里, 被检测器按"非系统路径"计数.
+// 映射表把 LC 自身镜像 (bundle 前缀 / procursus) 与访客 tweak dylib 全部剔除,
+// 同时把 index 0 固定为访客主可执行 (dyld 约定), 且每次新镜像加载后重建,
+// 不存在"数量相等即认为没变"的陈旧问题.
+#define TDV_HIDE_CAP 4096
+static const struct mach_header *gTDVHiddenHeaders[TDV_HIDE_CAP];
+static int gTDVHiddenCount = 0;
+static uint32_t gTDVRemap[2][TDV_HIDE_CAP];
+static uint32_t gTDVRemapCount[2];
+static _Atomic int gTDVRemapActive = 0;
+static bool gTDVRemapEnabled = false;
+
+static bool tdv_is_hidden_path(const char *name) {
+    if (!name || !name[0]) return false;
+    if (lcMainBundlePath && lcMainBundlePath[0] &&
+        strncmp(name, lcMainBundlePath, strlen(lcMainBundlePath)) == 0) {
+        return true;
     }
-    
-    return origin;
+    if (strstr(name, "/procursus/")) return true;
+    if (strstr(name, "/Documents/Tweaks/")) return true;
+    return false;
+}
+
+static bool tdv_header_is_hidden(const struct mach_header *h) {
+    for (int i = 0; i < gTDVHiddenCount; i++) {
+        if (gTDVHiddenHeaders[i] == h) return true;
+    }
+    return false;
+}
+
+static void tdv_mark_hidden(const struct mach_header *h) {
+    if (!h || tdv_header_is_hidden(h)) return;
+    if (gTDVHiddenCount >= TDV_HIDE_CAP) return;
+    gTDVHiddenHeaders[gTDVHiddenCount++] = h;
+}
+
+// 访客主可执行 = 第一个未被隐藏的 MH_EXECUTE.
+// 不依赖 appMainImageIndex: 该值在访客 dlopen 之前赋值, 隐藏态下由被重绑的
+// _dyld_image_count 算出, 语义不可靠.
+static uint32_t tdv_guest_image_index(void) {
+    uint32_t total = orig_dyld_image_count();
+    for (uint32_t i = 0; i < total; i++) {
+        const struct mach_header *h = orig_dyld_get_image_header(i);
+        if (!h || tdv_header_is_hidden(h)) continue;
+        if (h->filetype == MH_EXECUTE) return i;
+    }
+    return UINT32_MAX;
+}
+
+static void tdv_rebuild_image_remap(void) {
+    if (!gTDVRemapEnabled) return;
+    uint32_t total = orig_dyld_image_count();
+    int inactive = 1 - atomic_load(&gTDVRemapActive);
+    uint32_t *buf = gTDVRemap[inactive];
+    uint32_t n = 0;
+    uint32_t guest = tdv_guest_image_index();
+    if (guest != UINT32_MAX) buf[n++] = guest;
+    for (uint32_t i = 0; i < total && n < TDV_HIDE_CAP; i++) {
+        if (i == guest) continue;
+        const struct mach_header *h = orig_dyld_get_image_header(i);
+        if (!h || tdv_header_is_hidden(h)) continue;
+        buf[n++] = i;
+    }
+    gTDVRemapCount[inactive] = n;
+    atomic_store(&gTDVRemapActive, inactive);
+}
+
+static inline bool tdv_map_image_index(uint32_t image_index, uint32_t *real_index) {
+    if (!gTDVRemapEnabled) {
+        *real_index = image_index;
+        return true;
+    }
+    int active = atomic_load(&gTDVRemapActive);
+    if (image_index >= gTDVRemapCount[active]) return false;
+    *real_index = gTDVRemap[active][image_index];
+    return true;
+}
+
+// 把一条已加载镜像标记为隐藏, 并把它在内存里的路径字符串改成不可疑的名字
+// (dladdr 仍会用到 dli_fname; 枚举层则由映射表直接剔除).
+static void tdv_hide_image_if_needed(const struct mach_header *header) {
+    Dl_info info;
+    if (!header || dladdr(header, &info) == 0 || !info.dli_fname) return;
+    if (!tdv_is_hidden_path(info.dli_fname)) return;
+    tdv_mark_hidden(header);
+    char fakePath[PATH_MAX];
+    snprintf(fakePath, sizeof(fakePath), "/usr/lib/%p.dylib", header);
+    kern_return_t ret = vm_protect(mach_task_self(), (vm_address_t)info.dli_fname, PATH_MAX, false, PROT_READ | PROT_WRITE);
+    if(ret != KERN_SUCCESS) {
+        os_thread_self_restrict_tpro_to_rw();
+    }
+    strcpy((char *)info.dli_fname, fakePath);
+    if(ret != KERN_SUCCESS) {
+        os_thread_self_restrict_tpro_to_ro();
+    }
 }
 
 void* hook_dlsym(void * __handle, const char * __symbol) {
@@ -88,7 +183,9 @@ void* hook_dlsym(void * __handle, const char * __symbol) {
                 overwriteAppExecutableFileType();
                 appExecutableFileTypeOverwritten = true;
             }
-            return (void*)orig_dyld_get_image_header(appMainImageIndex);
+            uint32_t guestHeaderIndex = tdv_guest_image_index();
+            if (guestHeaderIndex == UINT32_MAX) guestHeaderIndex = appMainImageIndex;
+            return (void*)orig_dyld_get_image_header(guestHeaderIndex);
         }
         __handle = appExecutableHandle;
     } else if (__handle != (void*)RTLD_SELF && __handle != (void*)RTLD_NEXT) {
@@ -109,36 +206,31 @@ void* hook_dlsym(void * __handle, const char * __symbol) {
 }
 
 uint32_t hook_dyld_image_count(void) {
-    return orig_dyld_image_count() - 1 - (uint32_t)tweakLoaderLoaded;
+    if (!gTDVRemapEnabled) return orig_dyld_image_count();
+    return gTDVRemapCount[atomic_load(&gTDVRemapActive)];
 }
 
 const struct mach_header* hook_dyld_get_image_header(uint32_t image_index) {
-    __attribute__((musttail)) return orig_dyld_get_image_header(translateImageIndex(image_index));
+    uint32_t real_index = 0;
+    if (!tdv_map_image_index(image_index, &real_index)) return NULL;
+    return orig_dyld_get_image_header(real_index);
 }
 
 intptr_t hook_dyld_get_image_vmaddr_slide(uint32_t image_index) {
-    __attribute__((musttail)) return orig_dyld_get_image_vmaddr_slide(translateImageIndex(image_index));
+    uint32_t real_index = 0;
+    if (!tdv_map_image_index(image_index, &real_index)) return 0;
+    return orig_dyld_get_image_vmaddr_slide(real_index);
 }
 
 const char* hook_dyld_get_image_name(uint32_t image_index) {
-    __attribute__((musttail)) return orig_dyld_get_image_name(translateImageIndex(image_index));
+    uint32_t real_index = 0;
+    if (!tdv_map_image_index(image_index, &real_index)) return NULL;
+    return orig_dyld_get_image_name(real_index);
 }
 
 void hideLiveContainerImageCallback(const struct mach_header* header, intptr_t vmaddr_slide) {
-    Dl_info info;
-    dladdr(header, &info);
-    if(!strncmp(info.dli_fname, lcMainBundlePath, strlen(lcMainBundlePath)) || strstr(info.dli_fname, "/procursus/") != 0) {
-        char fakePath[PATH_MAX];
-        snprintf(fakePath, sizeof(fakePath), "/usr/lib/%p.dylib", header);
-        kern_return_t ret = vm_protect(mach_task_self(), (vm_address_t)info.dli_fname, PATH_MAX, false, PROT_READ | PROT_WRITE);
-        if(ret != KERN_SUCCESS) {
-            os_thread_self_restrict_tpro_to_rw();
-        }
-        strcpy((char *)info.dli_fname, fakePath);
-        if(ret != KERN_SUCCESS) {
-            os_thread_self_restrict_tpro_to_ro();
-        }
-    }
+    tdv_hide_image_if_needed(header);
+    tdv_rebuild_image_remap();
 }
 
 void* getDSCAddr(void) {
@@ -361,16 +453,25 @@ void DyldHooksInit(bool hideLiveContainer, bool hookDlopen, uint32_t spoofSDKVer
         }
     }
     
+    // 复制成自有缓冲区: fileSystemRepresentation 的生命周期不归我们管, 但这条路径
+    // 之后要被镜像枚举/回调反复比较.
     if(NSUserDefaults.isLiveProcess) {
-        lcMainBundlePath = NSUserDefaults.lcMainBundle.bundlePath.stringByDeletingLastPathComponent.stringByDeletingLastPathComponent.fileSystemRepresentation;
+        lcMainBundlePath = strdup(NSUserDefaults.lcMainBundle.bundlePath.stringByDeletingLastPathComponent.stringByDeletingLastPathComponent.fileSystemRepresentation);
     } else {
-        lcMainBundlePath = NSUserDefaults.lcMainBundle.bundlePath.fileSystemRepresentation;
+        lcMainBundlePath = strdup(NSUserDefaults.lcMainBundle.bundlePath.fileSystemRepresentation);
     }
     orig_dyld_get_image_header = _dyld_get_image_header;
     
     // hook dlsym to solve RTLD_MAIN_ONLY, hook other functions to hide LiveContainer itself
     litehook_rebind_symbol(LITEHOOK_REBIND_GLOBAL, dlsym, hook_dlsym, nil);
     if(hideLiveContainer) {
+        gTDVRemapEnabled = true;
+        // 已加载的镜像先打标记 + 改名, 再建映射表; 之后每加载一个镜像回调重建.
+        uint32_t initialCount = orig_dyld_image_count();
+        for (uint32_t i = 0; i < initialCount; i++) {
+            tdv_hide_image_if_needed(orig_dyld_get_image_header(i));
+        }
+        tdv_rebuild_image_remap();
         litehook_rebind_symbol(LITEHOOK_REBIND_GLOBAL, _dyld_image_count, hook_dyld_image_count, nil);
         litehook_rebind_symbol(LITEHOOK_REBIND_GLOBAL, _dyld_get_image_header, hook_dyld_get_image_header, nil);
         litehook_rebind_symbol(LITEHOOK_REBIND_GLOBAL, _dyld_get_image_vmaddr_slide, hook_dyld_get_image_vmaddr_slide, nil);
@@ -400,7 +501,9 @@ void DyldHooksInit(bool hideLiveContainer, bool hookDlopen, uint32_t spoofSDKVer
 }
 
 void* getGuestAppHeader(void) {
-    return (void*)orig_dyld_get_image_header(appMainImageIndex);
+    uint32_t guest = tdv_guest_image_index();
+    if (guest == UINT32_MAX) guest = appMainImageIndex;
+    return (void*)orig_dyld_get_image_header(guest);
 }
 
 #pragma mark - Fix black screen
