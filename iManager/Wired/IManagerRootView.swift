@@ -16,6 +16,19 @@ struct IManagerRootView: View {
         Self.hostDocumentsDir.map { $0 + "/TDGlobalHide" }
     }
 
+    // 两个进程共用的设置: app group defaults.
+    private static var sharedDefaults: UserDefaults? {
+        UserDefaults(suiteName: LCSharedUtils.appGroupID())
+    }
+
+    @State private var envSpoof: Bool = {
+        (Self.sharedDefaults?.object(forKey: "TDEnvSpoof") as? Bool) ?? true
+    }()
+
+    @State private var crashSignals: Bool = {
+        (Self.sharedDefaults?.object(forKey: "TDConsoleSignals") as? Bool) ?? false
+    }()
+
     var body: some View {
         List {
             Section {
@@ -35,10 +48,18 @@ struct IManagerRootView: View {
                 NavigationLink {
                     IManagerConsoleLogView()
                 } label: {
-                    Label("崩溃日志", systemImage: "exclamationmark.triangle")
+                    Label("ConsoleLog", systemImage: "exclamationmark.triangle")
                 }
             } header: {
                 Text("诊断")
+            }
+            Section {
+                Toggle("环境伪值", isOn: $envSpoof)
+                Toggle("崩溃信号采集", isOn: $crashSignals)
+            } header: {
+                Text("实验性")
+            } footer: {
+                Text("环境伪值关闭后所有访客都不再做 sysctl/SecTask/csops/proc 伪值；崩溃信号采集会安装信号处理器以记录回溯，部分检测器会因此多报一项。")
             }
         }
         .onChange(of: globalHide) { nv in
@@ -56,6 +77,12 @@ struct IManagerRootView: View {
             } catch {
                 NSLog("[TDGlobalHide] write=%d path=%@ error=%@", nv, flagPath, error.localizedDescription)
             }
+        }
+        .onChange(of: envSpoof) { nv in
+            Self.sharedDefaults?.set(nv, forKey: "TDEnvSpoof")
+        }
+        .onChange(of: crashSignals) { nv in
+            Self.sharedDefaults?.set(nv, forKey: "TDConsoleSignals")
         }
         .navigationTitle("iManager")
         .navigationBarTitleDisplayMode(.inline)

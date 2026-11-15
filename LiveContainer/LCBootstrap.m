@@ -63,6 +63,8 @@ NSString* lcGuestAppId;
 NSString* lcLaunchURL;
 bool isLiveProcess = false;
 bool isSharedBundle = false;
+// iManager 实验性开关 (app group defaults): 关掉后所有访客都不做环境伪值.
+static bool gTDEnvSpoofGlobal = true;
 
 @implementation NSUserDefaults(LiveContainer)
 + (instancetype)lcUserDefaults {
@@ -580,10 +582,10 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
     id tdSecTaskValue = guestAppInfo[@"secTaskSpoof"];
     id tdCsopsValue = guestAppInfo[@"csopsSpoof"];
     id tdProcValue = guestAppInfo[@"procSpoof"];
-    BOOL tdSysctlSpoof = tdGlobalHide || (tdSysctlValue ? [tdSysctlValue boolValue] : YES);
-    BOOL tdSecTaskSpoof = tdGlobalHide || (tdSecTaskValue ? [tdSecTaskValue boolValue] : YES);
-    BOOL tdCsopsSpoof = tdGlobalHide || (tdCsopsValue ? [tdCsopsValue boolValue] : YES);
-    BOOL tdProcSpoof = tdGlobalHide || (tdProcValue ? [tdProcValue boolValue] : YES);
+    BOOL tdSysctlSpoof = gTDEnvSpoofGlobal && (tdGlobalHide || (tdSysctlValue ? [tdSysctlValue boolValue] : YES));
+    BOOL tdSecTaskSpoof = gTDEnvSpoofGlobal && (tdGlobalHide || (tdSecTaskValue ? [tdSecTaskValue boolValue] : YES));
+    BOOL tdCsopsSpoof = gTDEnvSpoofGlobal && (tdGlobalHide || (tdCsopsValue ? [tdCsopsValue boolValue] : YES));
+    BOOL tdProcSpoof = gTDEnvSpoofGlobal && (tdGlobalHide || (tdProcValue ? [tdProcValue boolValue] : YES));
     // This process hosts multiple guests; every launch must replace the previous
     // guest's gates instead of inheriting them from the resident process.
     setenv("TD_SYSCTL_SPOOF", tdSysctlSpoof ? "1" : "0", 1);
@@ -761,6 +763,23 @@ int LiveContainerMain(int argc, char *argv[]) {
         [LCSharedUtils migrateSharedDefaultsIfNeeded];
     }
     setenv("LC_HOME_PATH", getenv("HOME"), 0);
+
+    // ConsoleLog 必须落在宿主 App 与 LiveProcess 都能写的 app group 里;
+    // 实验性开关同样从这里读, 两个进程才能看到同一份设置.
+    {
+        NSURL *groupURL = [NSFileManager.defaultManager containerURLForSecurityApplicationGroupIdentifier:[LCSharedUtils appGroupID]];
+        if (groupURL) {
+            NSString *consoleDir = [[groupURL URLByAppendingPathComponent:@"LiveContainer/ConsoleLog"] path];
+            [[NSFileManager defaultManager] createDirectoryAtPath:consoleDir
+                                      withIntermediateDirectories:YES
+                                                       attributes:nil
+                                                            error:nil];
+            setenv("TD_CONSOLE_LOG_DIR", consoleDir.UTF8String, 1);
+        }
+        BOOL signals = [lcSharedDefaults objectForKey:@"TDConsoleSignals"] ? [lcSharedDefaults boolForKey:@"TDConsoleSignals"] : NO;
+        setenv("TD_CONSOLE_SIGNALS", signals ? "1" : "0", 1);
+        gTDEnvSpoofGlobal = [lcSharedDefaults objectForKey:@"TDEnvSpoof"] ? [lcSharedDefaults boolForKey:@"TDEnvSpoof"] : YES;
+    }
 
     NSString *selectedApp = [lcUserDefaults stringForKey:@"selected"];
     NSString *selectedContainer = [lcUserDefaults stringForKey:@"selectedContainer"];

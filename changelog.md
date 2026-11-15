@@ -1,3 +1,10 @@
+20261116-005429 1.1.23 Update：
+1. ConsoleLog 改写到 app group 共享目录，LiveProcess 崩溃日志现在与宿主 App 可见位置一致；旧版写在扩展沙盒导致“崩溃日志里没有日志”。
+2. 信号处理器改为实验性开关（默认关闭）：默认只保留 NSException 通道，不再让 Reveil 多报“可疑信号处理器”。
+3. iManager 诊断页把入口改名为 ConsoleLog，并读取 app group 与 Documents 两处日志。
+4. 新增实验性「环境伪值」总开关（默认开启，app group 持久化）：关闭后所有访客都不做 sysctl/SecTask/csops/proc 伪值。
+5. 多任务扩展恢复旧裁剪策略：只有隐藏开启时才裁剪 dyld 镜像，修复 ESign 多任务一启动即终止（同进程访客仍始终裁剪注入镜像）。
+
 20261116-003054 1.1.22 Update：
 1. 修复 TweakLoader 加载 CydiaSubstrate 失败：访客启动后 lcMainBundle 会被改写，旧代码因此去 <访客>/Documents/Frameworks 找库；现在从 TweakLoader 自身镜像路径反推 LC app，并保留旧路径作回退。
 

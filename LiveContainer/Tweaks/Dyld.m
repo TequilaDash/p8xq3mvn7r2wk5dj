@@ -508,23 +508,27 @@ void DyldHooksInit(bool hideLiveContainer, bool hookDlopen, uint32_t spoofSDKVer
     
     // hook dlsym to solve RTLD_MAIN_ONLY, hook other functions to hide LiveContainer itself
     litehook_rebind_symbol(LITEHOOK_REBIND_GLOBAL, dlsym, hook_dlsym, nil);
-    // 裁剪层始终启用: 隐藏开关只决定 LC 自身镜像是否可见, 注入的 TweakLoader /
-    // Documents/Tweaks 镜像在任何模式下都不进入访客的镜像枚举.
+    // 同进程访客: 注入面 (TweakLoader / Documents/Tweaks) 始终裁剪, 隐藏开关只决定
+    // LC 自身镜像是否可见. 多任务扩展 (LiveProcess) 保持旧行为: 只有隐藏开启才裁剪,
+    // 因为 ESign 一类应用在扩展里枚举镜像, 常开裁剪会让它在启动阶段退出.
     gTDVHideLCImages = hideLiveContainer;
-    gTDVRemapEnabled = true;
-    uint32_t initialCount = orig_dyld_image_count();
-    for (uint32_t i = 0; i < initialCount; i++) {
-        tdv_hide_image_if_needed(orig_dyld_get_image_header(i));
-    }
-    tdv_rebuild_image_remap();
-    litehook_rebind_symbol(LITEHOOK_REBIND_GLOBAL, _dyld_image_count, hook_dyld_image_count, nil);
-    litehook_rebind_symbol(LITEHOOK_REBIND_GLOBAL, _dyld_get_image_header, hook_dyld_get_image_header, nil);
-    litehook_rebind_symbol(LITEHOOK_REBIND_GLOBAL, _dyld_get_image_vmaddr_slide, hook_dyld_get_image_vmaddr_slide, nil);
-    litehook_rebind_symbol(LITEHOOK_REBIND_GLOBAL, _dyld_get_image_name, hook_dyld_get_image_name, nil);
-    static bool gTDVCallbackRegistered = false;
-    if (!gTDVCallbackRegistered) {
-        gTDVCallbackRegistered = true;
-        _dyld_register_func_for_add_image((void (*)(const struct mach_header *, intptr_t))hideLiveContainerImageCallback);
+    BOOL trimAlways = !NSUserDefaults.isLiveProcess;
+    gTDVRemapEnabled = hideLiveContainer || trimAlways;
+    if (gTDVRemapEnabled) {
+        uint32_t initialCount = orig_dyld_image_count();
+        for (uint32_t i = 0; i < initialCount; i++) {
+            tdv_hide_image_if_needed(orig_dyld_get_image_header(i));
+        }
+        tdv_rebuild_image_remap();
+        litehook_rebind_symbol(LITEHOOK_REBIND_GLOBAL, _dyld_image_count, hook_dyld_image_count, nil);
+        litehook_rebind_symbol(LITEHOOK_REBIND_GLOBAL, _dyld_get_image_header, hook_dyld_get_image_header, nil);
+        litehook_rebind_symbol(LITEHOOK_REBIND_GLOBAL, _dyld_get_image_vmaddr_slide, hook_dyld_get_image_vmaddr_slide, nil);
+        litehook_rebind_symbol(LITEHOOK_REBIND_GLOBAL, _dyld_get_image_name, hook_dyld_get_image_name, nil);
+        static bool gTDVCallbackRegistered = false;
+        if (!gTDVCallbackRegistered) {
+            gTDVCallbackRegistered = true;
+            _dyld_register_func_for_add_image((void (*)(const struct mach_header *, intptr_t))hideLiveContainerImageCallback);
+        }
     }
     
     appExecutableFileTypeOverwritten = !hideLiveContainer;

@@ -14,8 +14,23 @@
 
 extern const char *TDHostHomeDocumentsPath(void);
 
-// 访客崩溃发生在 LiveProcess 里, 它的 HOME 是扩展容器; 真正的 app Documents
-// 由 LC_HOME_PATH 传入. 两个进程必须写同一个目录, iManager 才看得到.
+// 日志必须落在宿主 App 与 LiveProcess 都能写的位置:
+//   1) TD_CONSOLE_LOG_DIR (LCBootstrap 预先算好的 app group/ConsoleLog, 两个进程都可用)
+//   2) LC_HOME_PATH/Documents/ConsoleLog (宿主 App 进程)
+//   3) 捕获的宿主 Documents/ConsoleLog
+static bool TDConsoleLogDirWritable(NSString *dir) {
+    NSFileManager *fm = [NSFileManager defaultManager];
+    if (![fm createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil]) {
+        return NO;
+    }
+    NSString *probe = [dir stringByAppendingPathComponent:@".probe"];
+    if (![[@"1" dataUsingEncoding:NSUTF8StringEncoding] writeToFile:probe atomically:YES]) {
+        return NO;
+    }
+    [fm removeItemAtPath:probe error:nil];
+    return YES;
+}
+
 static NSString *TDConsoleLogBaseDocuments(void) {
     const char *home = getenv("LC_HOME_PATH");
     if (home && home[0] == '/') {
@@ -39,14 +54,24 @@ static NSString *TDLogTimestamp(void) {
 }
 
 NSString *TDConsoleLogDirectory(void) {
-    NSString *base = TDConsoleLogBaseDocuments();
-    if (!base) return nil;
-    NSString *dir = [base stringByAppendingPathComponent:@"ConsoleLog"];
-    [[NSFileManager defaultManager] createDirectoryAtPath:dir
-                              withIntermediateDirectories:YES
-                                               attributes:nil
-                                                    error:nil];
-    return dir;
+    static NSString *resolved = nil;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        NSMutableArray<NSString *> *dirs = [NSMutableArray array];
+        const char *override = getenv("TD_CONSOLE_LOG_DIR");
+        if (override && override[0] == '/') {
+            [dirs addObject:@(override)];
+        }
+        NSString *base = TDConsoleLogBaseDocuments();
+        if (base) [dirs addObject:[base stringByAppendingPathComponent:@"ConsoleLog"]];
+        for (NSString *dir in dirs) {
+            if (TDConsoleLogDirWritable(dir)) {
+                resolved = dir;
+                break;
+            }
+        }
+    });
+    return resolved;
 }
 
 void TDConsoleLog(NSString *format, ...) {
@@ -89,17 +114,22 @@ void TDConsoleLog(NSString *format, ...) {
 
 // 信号处理里只做异步信号安全的事: 直接 open/write, 不碰 NSString.
 static void TDWriteSignalCrash(int sig) {
-    char docs[PATH_MAX];
-    const char *lcHome = getenv("LC_HOME_PATH");
-    if (lcHome && lcHome[0] == '/') {
-        snprintf(docs, sizeof(docs), "%s/Documents", lcHome);
-    } else {
-        const char *captured = TDHostHomeDocumentsPath();
-        if (!captured || !captured[0]) return;
-        snprintf(docs, sizeof(docs), "%s", captured);
-    }
     char dir[PATH_MAX];
-    snprintf(dir, sizeof(dir), "%s/ConsoleLog", docs);
+    const char *override = getenv("TD_CONSOLE_LOG_DIR");
+    if (override && override[0] == '/') {
+        snprintf(dir, sizeof(dir), "%s", override);
+    } else {
+        char docs[PATH_MAX];
+        const char *lcHome = getenv("LC_HOME_PATH");
+        if (lcHome && lcHome[0] == '/') {
+            snprintf(docs, sizeof(docs), "%s/Documents", lcHome);
+        } else {
+            const char *captured = TDHostHomeDocumentsPath();
+            if (!captured || !captured[0]) return;
+            snprintf(docs, sizeof(docs), "%s", captured);
+        }
+        snprintf(dir, sizeof(dir), "%s/ConsoleLog", docs);
+    }
     mkdir(dir, 0755);
 
     struct timeval tv;
@@ -156,6 +186,12 @@ void TDConsoleLogInstallCrashHandlers(void) {
     gTDPreviousExceptionHandler = NSGetUncaughtExceptionHandler();
     NSSetUncaughtExceptionHandler(&TDExceptionHandler);
 
+    // 安装信号处理器会让 Reveil 这类检测器多出一条"可疑信号处理器".
+    // 默认只保留 NSException 通道; 需要信号回溯时在 iManager 实验性里打开.
+    const char *signalsEnabled = getenv("TD_CONSOLE_SIGNALS");
+    if (!signalsEnabled || signalsEnabled[0] != '1') {
+        return;
+    }
     const int signals[] = {SIGABRT, SIGSEGV, SIGBUS, SIGILL, SIGFPE, SIGTRAP};
     struct sigaction action;
     memset(&action, 0, sizeof(action));
