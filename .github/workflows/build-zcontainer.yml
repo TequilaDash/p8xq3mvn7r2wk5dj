@@ -23,14 +23,18 @@ jobs:
           echo "xcodebuild: $(xcodebuild -version | tr '\n' ' ')"
           xcodebuild -list -project LiveContainer.xcodeproj
 
-      - name: Ad-hoc sign vendored xcframework slices
+      - name: Strip vendored xcframework code signatures
         run: |
           set -euo pipefail
-          # Xcode 27 validates embedded framework identity even with signing off;
-          # ad-hoc sign every Mach-O slice so validation sees a consistent identity.
-          find OpenSSL/Frameworks/OpenSSL.xcframework -type f \( -name 'OpenSSL' -o -name '*.dylib' \) -print0 \
-            | xargs -0 -r -n1 codesign --force --sign - --timestamp=none
-          find OpenSSL/Frameworks/OpenSSL.xcframework -type f -name 'OpenSSL' | head -20
+          # The prebuilt xcframework carries Marcin's team signature in each slice
+          # binary; Xcode's ProcessXCFramework refuses it with expected-signature
+          # mismatch. Strip LC_CODE_SIGNATURE and ad-hoc sign so the framework is
+          # self-consistent and unsigned (CODE_SIGNING_ALLOWED=NO build).
+          find OpenSSL/Frameworks/OpenSSL.xcframework -path '*/dSYMs' -prune -o \
+               -type f \( -name 'OpenSSL' -o -name '*.dylib' \) -print0 \
+            | xargs -0 -r -n1 sh -c 'codesign --remove-signature "$1" 2>/dev/null || true; codesign --force --sign - --timestamp=none "$1"'
+          find OpenSSL/Frameworks/OpenSSL.xcframework -path '*/dSYMs' -prune -o \
+               -type f \( -name 'OpenSSL' -o -name '*.dylib' \) -print | head -20
 
       - name: Build (unsigned)
         run: |
