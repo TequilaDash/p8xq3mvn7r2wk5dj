@@ -1,7 +1,7 @@
-20261115-174359 1.1.4 Update：
-1. 撤回 1.1.3 的隐藏扩层接线：per-app 隐藏恢复为纯 zcontainer 上游行为（csops/SecTask/二次 dyld 裁剪会新增“代码签名状态异常”“共享库校验被禁用”等异常项）。
-2. 移除 iManager 页“全局隐藏模式”开关（未证实安全前不放置无效果开关）。
-3. 保留隐藏状态页与 per-app 隐藏开关；后续隐藏扩展以独立、可验证开关逐项接入。
+20261115-175014 1.1.5 Update：
+1. 全局隐藏模式正式接线（默认关）：开启后对所有访客启用 sysctl/proc 伪值层；per-app 隐藏仍按各自开关生效。
+2. 不再启用 csops/SecTask 伪值与二次 dyld 裁剪（1.1.3 已证实会新增异常项）。
+3. HideShim 重新编入 LiveContainerShared，并由 LCBootstrap 在访客 dlopen 前安装。
 
 [编译环境]
 构建时自动填充

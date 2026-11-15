@@ -1,3 +1,4 @@
+extern void TDVRootInstallIfRequested(void);
 #import "FoundationPrivate.h"
 #import "LCMachOUtils.h"
 #import "LCSharedUtils.h"
@@ -506,6 +507,12 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
     litehook_rebind_symbol(LITEHOOK_REBIND_GLOBAL, NSSetUncaughtExceptionHandler, hook_do_nothing, nil);
     
     BOOL hookDlopen = !isSharedBundle && LCSharedUtils.certificatePassword && isLiveProcess;
+    BOOL tdGlobalHide = [[NSUserDefaults standardUserDefaults] boolForKey:@"TDGlobalSpoof"];
+    if([guestAppInfo[@"hideLiveContainer"] boolValue] || tdGlobalHide) {
+        setenv("TD_SYSCTL_SPOOF", "1", 1);
+        setenv("TD_PROC_SPOOF", "1", 1);
+    }
+    TDVRootInstallIfRequested();
     DyldHooksInit([guestAppInfo[@"hideLiveContainer"] boolValue], hookDlopen, [guestAppInfo[@"spoofSDKVersion"] unsignedIntValue]);
     
     if([guestContainerInfo[@"spoofIdentifierForVendor"] boolValue]) {
