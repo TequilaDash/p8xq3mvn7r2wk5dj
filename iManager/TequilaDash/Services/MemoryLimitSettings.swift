@@ -1,0 +1,458 @@
+import SwiftUI
+import Security
+
+// MARK: - Keychain wrapper
+
+/// A minimal keychain helper scoped to the given service.
+/// Only supports string/bool/data for the small set of memory-limit credentials.
+struct EscapeKeychain {
+    let service: String
+
+    func string(for key: String) -> String? {
+        guard let data = data(for: key) else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    func bool(for key: String) -> Bool? {
+        guard let string = string(for: key) else { return nil }
+        return string == "1"
+    }
+
+    func data(for key: String) -> Data? {
+        var query = baseQuery(for: key)
+        query[kSecReturnData as String] = kCFBooleanTrue
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
+
+        var result: AnyObject?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        guard status == errSecSuccess else { return nil }
+        return result as? Data
+    }
+
+    func set(_ string: String?, for key: String) {
+        set(string?.data(using: .utf8), for: key)
+    }
+
+    func set(_ bool: Bool, for key: String) {
+        set(bool ? "1" : "0", for: key)
+    }
+
+    func set(_ data: Data?, for key: String) {
+        delete(key)
+        guard let data = data else { return }
+
+        var attributes = baseQuery(for: key)
+        attributes[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
+        attributes[kSecValueData as String] = data
+        SecItemAdd(attributes as CFDictionary, nil)
+    }
+
+    func delete(_ key: String) {
+        var query = baseQuery(for: key)
+        query[kSecAttrSynchronizable as String] = kSecAttrSynchronizableAny
+        SecItemDelete(query as CFDictionary)
+    }
+
+    /// 删掉本 service 下的全部条目（`重置数据` 用）.
+    /// account 传 nil = 整个 service 族；`kSecAttrSynchronizableAny` 与 delete(_:) 同源，
+    /// 为的是连历史上可能已同步的旧条目一并删干净.
+    /// 返回值来自 SecItemCopyMatching 计数，只作量级提示，不是精确删除数.
+    func deleteAllItems() -> Int {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrSynchronizable as String: kSecAttrSynchronizableAny,
+        ]
+        var countQuery: [String: Any] = query
+        countQuery[kSecReturnAttributes as String] = kCFBooleanTrue
+        countQuery[kSecMatchLimit as String] = kSecMatchLimitAll
+        var items: AnyObject?
+        let found = SecItemCopyMatching(countQuery as CFDictionary, &items)
+        if SecItemDelete(query as CFDictionary) != errSecSuccess { return 0 }
+        return found == errSecSuccess ? ((items as? [[String: Any]])?.count ?? 0) : 0
+    }
+
+    private func baseQuery(for key: String) -> [String: Any] {
+        [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: key,
+            // ⚠️ 必须 false：本类存的是 **Apple ID 明文密码**（applePassword / pw:<email>）、
+            // dsid、authToken、adiPb 等凭据.原先这里写 kCFBooleanTrue，
+            // 意味着这些条目会随 iCloud Keychain 同步到该用户的**其它所有设备** ——
+            // 对一个「凭据只留在本机」的侧载工具是不可接受的暴露面扩大.
+            // delete() 里用 kSecAttrSynchronizableAny 是为了兼容历史已同步条目（能删干净）.
+            kSecAttrSynchronizable as String: kCFBooleanFalse as Any
+        ]
+    }
+}
+
+
+struct SideStoreAccount: Decodable {
+    let email: String
+    let password: String
+    let adiPB: String
+    let localUser: String
+
+    enum CodingKeys: String, CodingKey {
+        case email
+        case password
+        case adiPB
+        case adiPb
+        case adipb
+        case localUser = "local_user"
+        case localuser
+        case localUserCamel = "localUser"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        email = try container.decodeIfPresent(String.self, forKey: .email) ?? ""
+        password = try container.decodeIfPresent(String.self, forKey: .password) ?? ""
+        adiPB = try container.decodeIfPresent(String.self, forKey: .adiPB)
+            ?? container.decodeIfPresent(String.self, forKey: .adiPb)
+            ?? container.decodeIfPresent(String.self, forKey: .adipb)
+            ?? ""
+        localUser = try container.decodeIfPresent(String.self, forKey: .localUser)
+            ?? container.decodeIfPresent(String.self, forKey: .localuser)
+            ?? container.decodeIfPresent(String.self, forKey: .localUserCamel)
+            ?? ""
+    }
+}
+
+enum MemoryLimitError: LocalizedError {
+    case missingField
+    case invalidLocalUser
+
+    var errorDescription: String? {
+        switch self {
+        case .missingField:
+            return "账户文件缺少必要字段（email / password / adiPB / local_user）."
+        case .invalidLocalUser:
+            return "local_user 必须是 Base64 编码的 16 字节标识符."
+        }
+    }
+}
+
+// MARK: - Settings model
+
+/// Stores the credentials and Anisette server used by the "增加内存限制" flow.
+/// The actual Apple Developer API calls (authenticate / fetch App IDs / patch capability)
+/// will be wired to StosSign in a follow-up; this class handles the settings surface.
+@MainActor
+final class MemoryLimitSettings: ObservableObject {
+    static let shared = MemoryLimitSettings()
+
+    /// Anisette 服务器列表：2026-11-01 对照 SideStore / SideInstaller / AltStore(classic) /
+    /// iLoader 四家上游全量重整（清单源 = SideInstaller ios-app/AnisetteServers.swift 的社区
+    /// 快照，与 servers.sidestore.io 同源），每台都做过 GET 探活；三台死的已剔
+    /// （win.ani.sidestore.io 502 / ani.owoellen.rocks DNS 失败 / ani.neoarz.com 超时），
+    /// 清单里混进的 RFC 5737 文档地址一并剔除.
+    /// 排序依据：2026-10-21 起 Apple 拒绝 Android ADI 库的 anisette（-80046），Windows 服务器
+    static let anisetteServers = [
+        // macOS ADI（当前可用主力）
+        "https://new.ani.sidestore.io",
+        "https://ani3.stikstore.app",
+        "https://ani2.stikstore.app",
+        "https://ani.iloader.app",
+        "https://mac-ani.jkcoxson.com",
+        "https://ani.jkcoxson.com",
+        "https://ani.stikstore.app",
+        "https://ani.sidestore.app",
+        "https://ani.sidestore.zip",
+        "https://ani.846969.xyz",
+        "https://ani.sidestore.io",
+        // 社区（探活 200）
+        "https://ani.npeg.us",
+        "https://anisette.wedotstud.io",
+        "https://ani.xu30.top",
+        "https://ani.idevicehacked.com",
+        "https://ani3server.fly.dev",
+        "https://ani.jaydenha.uk",
+        "https://anisette.crystall1ne.dev",
+        "https://omni.ethxn.xyz"
+    ]
+
+    /// Strips the scheme (http/https) from an Anisette server URL for display.
+    static func host(from server: String) -> String {
+        server
+            .replacingOccurrences(of: "https://", with: "")
+            .replacingOccurrences(of: "http://", with: "")
+    }
+
+    @AppStorage("AnisetteServer") var anisetteServer: String = "https://new.ani.sidestore.io"
+
+    @Published private(set) var isLoggedIn: Bool = false
+    @Published private(set) var appleID: String = ""
+
+    /// 绕过 MainActor 隔离直读 keychain 的 appleID（SecItem 调用线程安全）.
+    /// 供后台队列使用（如 AppListViewModel.loadAppTypes 的正版/共享判定）——
+    /// 后台上下文直接读 `shared.appleID` 会触发
+    /// "main actor-isolated property 'appleID' can not be referenced from a
+    /// nonisolated context" 编译错误.
+    nonisolated static func currentAppleIDDirect() -> String {
+        let kc = EscapeKeychain(service: "com.tequila.dash.memorylimit")
+        return kc.string(for: "appleID") ?? ""
+    }
+
+    private let keychain = EscapeKeychain(service: "com.tequila.dash.memorylimit")
+
+    private init() {
+        migrateLegacySideloadSession()
+        refresh()
+        logCredentialSnapshot()
+    }
+
+    // MARK: - 会话归属（v0.2.112：两套实现必须分开存）
+
+    /// 当前 `dsid` / `authToken` 归属哪套 Apple 认证实现.
+    ///
+    /// **铁律**：`AppleAuthenticator`（Swift，自带 Anisette identifier/adiPb）与
+    /// isideload（Rust，另一套 Anisette identifier/adiPb）产出的 dsid/authToken
+    /// **互不通用**.v0.2.111 让两者共用 `dsid`/`authToken` 一对键，isideload 登录
+    /// 会覆盖 Swift 侧会话，导致「证书管理」「增加内存限制」请求
+    /// developerservices2 时返回 resultCode 1100（Your session has expired）.
+    /// 现在：Swift 侧写 `dsid`/`authToken`，isideload 侧写
+    /// `sideloadDSID`/`sideloadAuthToken`，永不互相覆盖.
+    private enum SessionOwner: String {
+        case swift = "swift"
+        case sideload = "sideload"
+    }
+
+    private func currentOwner() -> SessionOwner? {
+        guard let raw = keychain.string(for: "sessionOwner") else { return nil }
+        return SessionOwner(rawValue: raw)
+    }
+
+    /// 自愈迁移：v0.2.111（及更早）把 isideload 的 dsid/authToken 写进了
+    /// `dsid`/`authToken` 主键.升级到 v0.2.112 后，若 isideload 专用键为空而
+    /// 主键有值，就搬到专用键并清掉主键，让 Swift 侧（证书管理 /
+    /// 增加内存限制）回到「未登录」状态而不是拿着异种 token 反复 1100.
+    ///
+    /// **v0.2.111 没写 `sessionOwner`**，因此不能只看归属标记；结合
+    /// `accountName` 判断：Swift 登录会写 accountName/firstName/lastName，
+    /// isideload 登录不会.没有 accountName 的主键凭据视为 isideload 污染.
+    ///
+    /// **v0.2.120 修复（这是「证书管理/增加内存限制卡在加载团队」的真凶）**：
+    /// 原实现用 `sideloadDSID != nil` 判定"已迁移过"，然后**无条件删除
+    /// `dsid`/`authToken` 主键**.于是只要用户用过 IPA 侧载登录（写入
+    /// sideloadDSID），**每次冷启动都会把 Swift 侧的登录会话删掉**：
+    /// 设置里登录（写 dsid/authToken）→ 去 IPA 侧载登录（写 sideloadDSID）
+    /// → 下次启动 Swift 会话被清空 → `session` 为 nil → `loadTeams()` 首道
+    /// 守卫 return → 团队栏停在 `.idle`，而 UI 把 `.idle` 和 `.loading` 渲染成
+    /// 同一个转圈 → 表现为"永远卡在加载团队"，且不打任何日志.
+    ///
+    /// 正确语义：这是**一次性**的遗留数据清理，判断依据必须是"归属标记是否存在".
+    private func migrateLegacySideloadSession() {
+        // 已确定归属（v0.2.112 及之后写入的会话）：主键的存废由登录流程负责，
+        // 迁移逻辑不再插手.
+        if currentOwner() != nil { return }
+
+        let legacyDSID = keychain.string(for: "dsid") ?? ""
+        let legacyToken = keychain.string(for: "authToken") ?? ""
+        guard !legacyDSID.isEmpty, !legacyToken.isEmpty else { return }
+
+        // 有 accountName 说明是 Swift 登录产生的合法会话 —— 必须保留，
+        // 只补上归属标记，防止以后再被误判.
+        let accountName = keychain.string(for: "accountName") ?? ""
+        if !accountName.isEmpty || (keychain.string(for: "firstName") ?? "").isEmpty == false {
+            keychain.set(SessionOwner.swift.rawValue, for: "sessionOwner")
+            return
+        }
+
+        // 无归属标记、无 accountName → 认定为 v0.2.111 遗留的 isideload 污染，搬走.
+        keychain.set(legacyDSID, for: "sideloadDSID")
+        keychain.set(legacyToken, for: "sideloadAuthToken")
+        keychain.delete("dsid")
+        keychain.delete("authToken")
+        keychain.set(SessionOwner.sideload.rawValue, for: "sessionOwner")
+    }
+
+    /// 启动时把凭据状态写进登录日志.v0.2.120：团队栏"假卡死"排查成本极高，
+    /// 这里一次性给出 Swift 会话 / isideload 凭据 / 归属标记的完整快照.
+    func logCredentialSnapshot() {
+        let owner = currentOwner()?.rawValue ?? "无"
+        let swiftOK = (keychain.string(for: "dsid") ?? "").isEmpty == false
+            && (keychain.string(for: "authToken") ?? "").isEmpty == false
+        let sideloadOK = (keychain.string(for: "sideloadDSID") ?? "").isEmpty == false
+        LoginLogger.shared.log("… 凭据快照：isLoggedIn=\(isLoggedIn) owner=\(owner) "
+            + "Swift会话=\(swiftOK ? "有" : "无") 侧载凭据=\(sideloadOK ? "有" : "无")")
+        if isLoggedIn && !swiftOK {
+            LoginLogger.shared.log("[注意] 已登录但 Swift 会话缺失 —— 证书管理/增加内存限制无法建 session."
+                + "请在「设置」重新登录 Apple ID.")
+        }
+    }
+
+    func refresh() {
+        isLoggedIn = keychain.bool(for: "isLoggedIn") ?? false
+        appleID = keychain.string(for: "appleID") ?? ""
+    }
+
+    /// Privacy-safe display form: keeps the first two characters of the local part
+    /// and masks the rest with bullets, preserving the domain. e.g.
+    /// `john.appleseed@icloud.com` → `jo••••••••@icloud.com`.
+    func maskedAppleID() -> String {
+        let email = appleID
+        guard !email.isEmpty else { return "" }
+        guard let at = email.firstIndex(of: "@") else {
+            let n = min(email.count, 6)
+            return String(repeating: "•", count: n)
+        }
+        let local = String(email[..<at])
+        let domain = String(email[at...])
+        let visibleCount = min(local.count, 2)
+        let visible = local.prefix(visibleCount)
+        let masked = String(repeating: "•", count: max(local.count - visibleCount, 1))
+        return "\(visible)\(masked)\(domain)"
+    }
+
+    // MARK: - Sign in / out
+
+    func signIn(email: String, password: String) {
+        keychain.set(email.trimmingCharacters(in: .whitespacesAndNewlines), for: "appleID")
+        keychain.set(password, for: "applePassword")
+        keychain.set(true, for: "isLoggedIn")
+        refresh()
+    }
+
+    func signOut(keepAnisetteData: Bool = true, keepAnisetteHeaders: Bool = true) {
+        keychain.delete("appleID")
+        keychain.delete("applePassword")
+        keychain.delete("dsid")
+        keychain.delete("authToken")
+        keychain.delete("sideloadDSID")
+        keychain.delete("sideloadAuthToken")
+        keychain.delete("sessionOwner")
+        keychain.delete("accountName")
+        keychain.delete("firstName")
+        keychain.delete("lastName")
+        keychain.delete("isLoggedIn")
+        if keepAnisetteData { AnisetteProvider.shared.clearMemoryCache() }
+        else { AnisetteProvider.shared.resetProvisioning() }
+        if !keepAnisetteHeaders {
+            UserDefaults.standard.removeObject(forKey: "CustomAnisetteClientInfo")
+        }
+        refresh()
+    }
+
+    // MARK: - 登录完成（由 Apple 认证引擎调用）
+
+    func completeSignIn(email: String, password: String, account: Account, session: AppleAPISession) {
+        let email = email.trimmingCharacters(in: .whitespacesAndNewlines)
+        keychain.set(email, for: "appleID")
+        keychain.set(password, for: "applePassword")
+        keychain.set(session.dsid, for: "dsid")
+        keychain.set(session.authToken, for: "authToken")
+        keychain.set(account.name, for: "accountName")
+        keychain.set(account.firstName, for: "firstName")
+        keychain.set(account.lastName, for: "lastName")
+        keychain.set(true, for: "isLoggedIn")
+        keychain.set(SessionOwner.swift.rawValue, for: "sessionOwner")
+        // 记住该账户（供登录历史一键登录）
+        keychain.set(password, for: "pw:" + email)
+        addLoginHistory(email)
+        refresh()
+        // 账户体系：同步多账户台账（登录即保持，切换免重登）.
+        AppleUserAccountStore.shared.upsertFromKeychain(
+            email: email, password: password,
+            swiftDSID: session.dsid, swiftAuthToken: session.authToken,
+            name: account.name)
+    }
+
+
+
+    /// Swift 认证引擎（`AppleAuthenticator`）的会话，供证书管理 / 增加内存限制用.
+    var dsid: String? { keychain.string(for: "dsid") }
+    var authToken: String? { keychain.string(for: "authToken") }
+
+    /// isideload（Rust）的签名会话，供 IPA 侧载免登录恢复用.
+    var sideloadDSID: String? { keychain.string(for: "sideloadDSID") }
+    var sideloadAuthToken: String? { keychain.string(for: "sideloadAuthToken") }
+    var accountName: String { keychain.string(for: "accountName") ?? "" }
+    var firstName: String { keychain.string(for: "firstName") ?? "" }
+    var lastName: String { keychain.string(for: "lastName") ?? "" }
+
+    // MARK: - 登录历史（记住账户）
+
+    private static let historyKey = "LoginHistory"
+
+    /// 最近登录的邮箱列表（最近在前，最多 10 条）.
+    var loginHistory: [String] {
+        UserDefaults.standard.stringArray(forKey: Self.historyKey) ?? []
+    }
+
+    func addLoginHistory(_ email: String) {
+        let e = email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !e.isEmpty else { return }
+        var list = loginHistory.filter { $0.lowercased() != e }
+        list.insert(e, at: 0)
+        UserDefaults.standard.set(Array(list.prefix(10)), forKey: Self.historyKey)
+    }
+
+    func removeLoginHistory(_ email: String) {
+        var list = loginHistory.filter { $0.lowercased() != email.lowercased() }
+        UserDefaults.standard.set(list, forKey: Self.historyKey)
+        keychain.delete("pw:" + email)
+    }
+
+    /// 历史账户的一键登录密码（keychain 中按邮箱单独保存；当前登录账户回退到 applePassword）.
+    func password(forHistory email: String) -> String? {
+        if let pw = keychain.string(for: "pw:" + email), !pw.isEmpty { return pw }
+        if email.lowercased() == appleID.lowercased() {
+            return keychain.string(for: "applePassword")
+        }
+        return nil
+    }
+
+    /// 账户体系：把台账中某账户的完整双链会话写回 keychain 主键
+    /// （AppleUserAccountStore.switchActive 调用）.与 completeSignIn 的区别：
+    /// 不写 pw:<email> 历史、不动登录历史、sessionOwner 按会话有无推断.
+    func restoreAccountSession(email: String, password: String,
+                               dsid: String, authToken: String,
+                               sideloadDSID: String, sideloadAuthToken: String,
+                               accountName: String?) {
+        let email = email.trimmingCharacters(in: .whitespacesAndNewlines)
+        keychain.set(email, for: "appleID")
+        keychain.set(password, for: "applePassword")
+        // 完整替换目标账户会话，空字段必须删除，不能保留上一账户的凭据.
+        for (key, value) in [("dsid", dsid), ("authToken", authToken),
+                             ("sideloadDSID", sideloadDSID), ("sideloadAuthToken", sideloadAuthToken),
+                             ("accountName", accountName ?? "")] {
+            if value.isEmpty { keychain.delete(key) } else { keychain.set(value, for: key) }
+        }
+        keychain.delete("firstName")
+        keychain.delete("lastName")
+        if !dsid.isEmpty, !authToken.isEmpty {
+            keychain.set(SessionOwner.swift.rawValue, for: "sessionOwner")
+        } else if !sideloadDSID.isEmpty, !sideloadAuthToken.isEmpty {
+            keychain.set(SessionOwner.sideload.rawValue, for: "sessionOwner")
+        } else {
+            keychain.delete("sessionOwner")
+        }
+        keychain.set(true, for: "isLoggedIn")
+        refresh()
+    }
+
+
+    func importSideStoreAccount(_ account: SideStoreAccount) throws {
+        let email = account.email.trimmingCharacters(in: .whitespacesAndNewlines)
+        let password = account.password.trimmingCharacters(in: .whitespacesAndNewlines)
+        let adiPB = account.adiPB.trimmingCharacters(in: .whitespacesAndNewlines)
+        let localUser = account.localUser.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard !email.isEmpty else { throw MemoryLimitError.missingField }
+        guard !password.isEmpty else { throw MemoryLimitError.missingField }
+        guard !adiPB.isEmpty else { throw MemoryLimitError.missingField }
+        guard !localUser.isEmpty else { throw MemoryLimitError.missingField }
+        guard let decoded = Data(base64Encoded: localUser), decoded.count == 16 else {
+            throw MemoryLimitError.invalidLocalUser
+        }
+
+        keychain.set(email, for: "appleID")
+        keychain.set(password, for: "applePassword")
+        keychain.set(adiPB, for: "adiPb")
+        keychain.set(localUser, for: "identifier")
+        keychain.set(true, for: "isLoggedIn")
+        refresh()
+    }
+}

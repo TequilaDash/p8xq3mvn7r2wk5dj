@@ -1,0 +1,1110 @@
+import Foundation
+import Combine
+import CryptoKit
+
+/// IPA 侧载服务（汉化移植自 SideInstaller 的安装流程）.
+///
+/// 流程：复用设置当前账户的 Xcode 会话 → 签名 IPA（isideload
+/// Sideloader::sign_app，自动注册设备/创建描述文件）→ 通过 LocalDevVPN 隧道
+/// 用 AFC 上传签名后的 .app 到 /PublicStaging → installation_proxy 安装.
+///
+/// 与 SideInstaller 的差异（LC 兼容性）：
+/// - 登录/签名走 isideload 的 sign-only 路径，纯网络 + 本地文件，不碰
+///   本地网络权限与配对（原版在 LC guest 下卡在 LocalNetworkAuthorization）；
+/// - 设备连接复用 TequilaDash 既有隧道（配对文件 + LocalDevVPN），
+///   签名所需的设备 UDID 直接从配对文件 plist 的 identifier 读取.
+/// 阻塞签名适配器不认证账户；所有凭据来自设置当前账户.
+final class IPAInstallService: ObservableObject, @unchecked Sendable {
+
+    static let shared = IPAInstallService()
+    private init() {}
+
+    // MARK: - 自动登录开关
+
+    /// 自动登录总开关的存储键（「更多 → IPA 侧载」页里的那个开关；默认开）.
+    /// 集中一处，避免 RootView / IPAInstallView / 服务层各写一遍字面量而漂移.
+    static let autoSignInKey = "IPA.autoSignInEnabled"
+
+    /// 自动登录是否开启（未写过该键 ⇒ 默认开，与页面上的默认值一致）.
+    static var isAutoSignInEnabled: Bool {
+        UserDefaults.standard.object(forKey: autoSignInKey) as? Bool ?? true
+    }
+
+    // MARK: - 会话
+
+    /// isideload 的签名会话（登录成功后持有）.
+    private var _session: OpaquePointer?
+    @Published private(set) var isSignedIn = false
+    @Published private(set) var teamSummary: String?
+
+    /// 登录/会话恢复的串行队列：Rust 调用是阻塞的，预热（app 启动后台）
+    /// 与页面操作可能并发，串行化保证同一时刻只有一个登录操作在跑，
+    /// 避免两个调用同时读写 `_session` 造成竞态.
+    private let authQueue = DispatchQueue(label: "com.tequila.dash.auth")
+
+    /// 设备注册专用串行队列：register FFI 可能等回环门（真机 UDID 走 lockdown/隧道），
+    /// 绝不能占用 authQueue——教训：恢复路径内联预注册把 authQueue 卡死后，
+    /// 「正在恢复签名会话」永不消失，切户/重登全部排队.
+    private let registerQueue = DispatchQueue(label: "com.tequila.dash.devreg")
+
+    /// App 启动后台预热（warmUp）正在执行中.
+    @Published private(set) var isWarmingUp = false
+
+    private(set) var session: OpaquePointer? {
+        get { _session }
+        set {
+            _session = newValue
+            isSignedIn = newValue != nil
+        }
+    }
+
+    func signOut() {
+        if let session {
+            si_sign_session_free(session)
+        }
+        session = nil
+        teamSummary = nil
+    }
+
+    /// 切换账户时调用：释放旧账户的签名会话，让 warmUp 用新账户的设置会话重建.
+    func signOutForAccountSwitch() {
+        signOut()
+    }
+
+    deinit {
+        if let _session {
+            si_sign_session_free(_session)
+        }
+    }
+
+    /// 退出最后账户时按保留选项清理精确的Rust本地缓存；不删除描述文件或配对文件.
+    func removeLocalAuthenticationCache(emails: [String], keepCertificate: Bool, keepAnisetteData: Bool) {
+        let root = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("TequilaDashIsideload", isDirectory: true)
+        var targets: [URL] = []
+        if !keepAnisetteData { targets.append(root.appendingPathComponent("anisette_state")) }
+        if !keepCertificate {
+            for email in emails {
+                // pinned isideload cert_identity.rs: SHA256(apple_email bytes)/key.
+                let hash = SHA256.hash(data: Data(email.utf8)).map { String(format: "%02x", $0) }.joined()
+                targets.append(root.appendingPathComponent(hash, isDirectory: true).appendingPathComponent("key"))
+            }
+        }
+        for target in targets where FileManager.default.fileExists(atPath: target.path) {
+            do { try FileManager.default.removeItem(at: target) }
+            catch { LoginLogger.shared.log("[注意] 清理侧载本地缓存未成功: \(error.localizedDescription)") }
+        }
+    }
+
+    // MARK: - 路径
+
+    /// TequilaDash 的配对文件路径（与「应用管理」/ JIT 共用）.
+    private var pairingPath: String {
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("pairingFile.plist").path
+    }
+
+    /// isideload 的存储目录（anisette state 等，放 Library 下避免出现在
+    /// 文件共享的 Documents）.
+    private var storageDir: String {
+        let lib = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask)[0]
+        let dir = lib.appendingPathComponent("TequilaDashIsideload", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir.path
+    }
+
+    /// **v0.2.117 根治「IPA 侧载登录后证书管理/增加内存限制全坏」**.
+    ///
+    /// 根因：Swift 认证（AnisetteProvider）与 isideload（Rust RemoteV3）各自随机
+    /// 生成自己的 keychain_identifier —— 同一 Apple ID 从两套"虚拟机器"登录，
+    /// Apple/Anisette 服务器会把它当两台设备，后续 Swift 侧的 Anisette 请求
+    /// 被风控拒绝，表现为团队列表加载失败.
+    ///
+    /// 修复：把 Swift 侧的 identifier/adiPb 预写入 isideload 的
+    /// `anisette_state`（plist 格式，isideload 读到已 provision 的 state 会
+    /// **直接跳过 provisioning 复用**），让两套流程共用同一台"虚拟机器".
+    ///
+    /// 此方法只在 Swift 侧已有 identifier+adiPb 时写入（不主动联网 provision）；
+    /// 无值则不写 —— 签名适配器对缺失身份 fail-closed，绝不允许 Rust 自己
+    /// provision 出第二台机器（统一账户体系）.
+    func syncSharedAnisetteStateIfAvailable() {
+        let provider = AnisetteProvider.shared
+        let target = URL(fileURLWithPath: storageDir).appendingPathComponent("anisette_state")
+
+        // v0.2.119：身份与票据必须**成对**才写.
+        // 只写 identifier 不写 adi_pb 是"半截状态"—— Rust 侧 is_provisioned()
+        // 判 false 会重新 provision，等于给了它一台"身份证号对不上"的机器.
+        guard let identifier = provider.sharedMachineIdentifier,
+              let adiPb = provider.sharedAdiPb else {
+            // Swift 侧身份已重置（signOut / provision 失败 reset）→ 必须清掉
+            // isideload 里的陈旧 state，让它下次全新 provision.
+            // v0.2.118 及之前这里是直接 return，导致 Rust 一直沿用已被 Swift
+            // 抛弃的旧设备身份 —— 两套实现从此分家，互相触发 Apple 风控.
+            if FileManager.default.fileExists(atPath: target.path) {
+                try? FileManager.default.removeItem(at: target)
+                LoginLogger.shared.log("… Swift 侧无有效 Anisette 身份，已清除 IPA 侧载的陈旧机器标识（避免两套身份分裂）")
+            } else {
+                LoginLogger.shared.log("… Swift 侧暂无 Anisette 身份，签名会话将等设置侧就绪后再建")
+            }
+            return
+        }
+
+        let dict: [String: Any] = ["keychain_identifier": identifier, "adi_pb": adiPb]
+        do {
+            let data = try PropertyListSerialization.data(fromPropertyList: dict, format: .xml, options: 0)
+            try data.write(to: target)
+            let shortID = identifier.base64EncodedString().prefix(8)
+            LoginLogger.shared.log("[完成] 已同步 Anisette 机器标识给 IPA 侧载（id=\(shortID)… 服务器=\(provider.currentServer)）")
+        } catch {
+            LoginLogger.shared.log("[注意] 同步 Anisette 机器标识失败：\(error.localizedDescription)")
+        }
+    }
+
+    /// 签名/设备注册用的 UDID.
+    ///
+    /// RemotePairing 配对记录的 `identifier` 在 iOS 17+
+    /// 是 UUID 形**配对标识**，不是开发者门户认识的设备号 —— 用它注册设备
+    /// Apple 会收下，但生成描述文件时按无效设备过滤 ⇒ 团队恒「无设备」⇒
+    /// `Developer error 8220`.真 UDID（`00008101-…` 形）从 lockdown
+    /// `UniqueDeviceID` 读取（设备不变则值不变，取到后缓存），取不到才回退
+    /// 配对标识（保底老行为，至少设备列表可列）.
+    private var deviceUDID: String? {
+        if let cached = UserDefaults.standard.string(forKey: "SigningTrueUDID"), !cached.isEmpty {
+            return cached
+        }
+        let fallback = pairingIdentifier
+        guard FileManager.default.fileExists(atPath: pairingPath),
+              let real = DeviceInfoService.trueDeviceUDID(), !real.isEmpty else { return fallback }
+        UserDefaults.standard.set(real, forKey: "SigningTrueUDID")
+        LoginLogger.shared.log("[签名] 采用 lockdown 真 UDID（尾号 \(real.suffix(6))）—— 旧配对标识为 UUID 形，会导致 8220")
+        return real
+    }
+
+    /// 从配对文件 plist 读取设备配对标识（RPPairing 记录的 identifier，UUID 形）.
+    private var pairingIdentifier: String? {
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: pairingPath)),
+              let dict = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
+              let udid = dict["identifier"] as? String, !udid.isEmpty else { return nil }
+        return udid
+    }
+
+    private func makeError(_ message: String) -> NSError {
+        NSError(domain: "IPAInstall", code: -1, userInfo: [NSLocalizedDescriptionKey: message])
+    }
+
+    private func error(from ffiError: UnsafeMutablePointer<IdeviceFfiError>?, fallback: String) -> NSError {
+        guard let ffiError else { return makeError(fallback) }
+        let message: String
+        if let cString = ffiError.pointee.message {
+            message = DeviceErrorText.annotate(String(cString: cString))
+        } else {
+            message = ""
+        }
+        let code = Int(ffiError.pointee.code)
+        idevice_error_free(ffiError)
+        return NSError(domain: "IPAInstall", code: code,
+                       userInfo: [NSLocalizedDescriptionKey: message.isEmpty ? fallback : message])
+    }
+
+    // MARK: - 登录（阻塞，后台线程调用）
+
+    /// v0.2.119 观测点：Rust 侧登录完成后读回 `anisette_state`，核对它是否真的
+    /// 用了 Swift 共享过去的那台"虚拟机器".
+    ///
+    /// 两套 identifier 不一致 = Apple 会当成两台设备登录同一账号 → 风控 →
+    /// 团队列表加载失败.以前只能靠猜，现在日志会直接点名谁换了身份.
+    private func verifySharedAnisetteState() {
+        let target = URL(fileURLWithPath: storageDir).appendingPathComponent("anisette_state")
+        guard let data = try? Data(contentsOf: target) else {
+            LoginLogger.shared.log("[注意] 机器标识校验：IPA 侧载未落盘 anisette_state")
+            return
+        }
+        guard let dict = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any] else {
+            LoginLogger.shared.log("[注意] 机器标识校验：anisette_state 无法解析")
+            return
+        }
+        let rustIDData: Data? = {
+            if let d = dict["keychain_identifier"] as? Data { return d }
+            // 极端兜底：Rust plist 序列化若落成字节数组，手动转一次.
+            if let arr = dict["keychain_identifier"] as? [Any] {
+                return Data(arr.compactMap { ($0 as? NSNumber)?.uint8Value })
+            }
+            return nil
+        }()
+        guard let rustID = rustIDData else {
+            LoginLogger.shared.log("[注意] 机器标识校验：anisette_state 缺少 keychain_identifier（键：\(dict.keys.sorted().joined(separator: ","))）")
+            return
+        }
+        guard let swiftID = AnisetteProvider.shared.sharedMachineIdentifier else {
+            LoginLogger.shared.log("[注意] 机器标识校验：Swift 侧暂无 identifier（Rust=\(rustID.base64EncodedString().prefix(8))…）")
+            return
+        }
+        if rustID == swiftID {
+            LoginLogger.shared.log("[完成] 机器标识校验一致（id=\(swiftID.base64EncodedString().prefix(8))…），两套流程同一台虚拟机器")
+        } else {
+            LoginLogger.shared.log("[失败] 机器标识不一致！Swift=\(swiftID.base64EncodedString().prefix(8))… Rust=\(rustID.base64EncodedString().prefix(8))… —— 会被 Apple 当成两台设备")
+        }
+    }
+
+    /// 用「更多 → 设置」已保存的 dsid + authToken 恢复签名会话
+    /// （**免登录免 2FA**）.会话不可用直接抛错；不回退任何独立登录.
+    func signInWithSession(email: String, dsid: String, authToken: String, anisetteURL: String, clientInfo: String) throws {
+        try authQueue.sync {
+            try performSignInWithSession(email: email, dsid: dsid, authToken: authToken, anisetteURL: anisetteURL, clientInfo: clientInfo)
+        }
+    }
+
+    private func performSignInWithSession(email: String, dsid: String, authToken: String, anisetteURL: String, clientInfo: String) throws {
+        // 已有会话（预热已完成）：直接复用，不再重建.
+        if isSignedIn { return }
+        // v0.2.117：与 Swift 认证共用同一 Anisette 机器标识.
+        syncSharedAnisetteStateIfAvailable()
+        var newSession: OpaquePointer?
+        var summary: UnsafeMutablePointer<CChar>?
+        var error: UnsafeMutablePointer<CChar>?
+        let rc = email.withCString { e in
+            dsid.withCString { d in
+                authToken.withCString { t in
+                    anisetteURL.withCString { a in
+                        storageDir.withCString { dir in
+                            "TequilaDash".withCString { m in
+                                clientInfo.withCString { ci in
+                                    si_signin_with_session(e, d, t, a, dir, m, ci,
+                                                           &newSession, &summary, &error)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        defer {
+            if let summary { si_string_free(summary) }
+            if let error { si_string_free(error) }
+        }
+        if rc == 0, let newSession {
+            session = newSession
+            teamSummary = summary.map { String(cString: $0) }
+            LoginLogger.shared.log("[完成] IPA 侧载会话恢复成功: \(teamSummary ?? "（无团队摘要）")")
+            // v0.2.119：核对 Rust 是否真的复用了 Swift 共享的机器标识.
+            verifySharedAnisetteState()
+            // token 恢复会话同样预注册——签名时不再首撞 8220.
+            // 改异步：预注册要读设备 UDID（lockdown 走隧道，隧道未就绪时还会
+            // 拉起回环门等用户操作），绝不能内联在恢复路径里阻塞 authQueue.
+            schedulePreRegisterBestEffort()
+        } else {
+            // token 过期/身份缺失等：直接抛错，调用方提示到 Apple ID 账户页处理.
+            let msg = error.map { String(cString: $0) } ?? "rc=\(rc)"
+            LoginLogger.shared.log("[失败] IPA 侧载会话恢复失败: \(msg)")
+            throw makeError(msg)
+        }
+    }
+
+    // MARK: - 设备预注册（SideStore 做法：登录/切户即注册，消 8220 传播空窗）
+
+    /// 阻塞的 FFI 注册（只能在 authQueue 内调用）：成功返回本机 UDID.
+    private func performRegisterDevice() throws -> String {
+        guard let session else { throw makeError("尚未登录 Apple ID（签名会话未建立）.") }
+        guard let udid = deviceUDID, !udid.isEmpty else {
+            throw makeError("配对文件里没有设备 UDID（identifier 为空）.")
+        }
+        var error: UnsafeMutablePointer<CChar>?
+        let rc = udid.withCString { u in
+            "".withCString { name in
+                si_register_device(session, u, name, &error)
+            }
+        }
+        defer { if let error { si_string_free(error) } }
+        guard rc == 0 else {
+            throw makeError(error.map { String(cString: $0) } ?? "rc=\(rc)")
+        }
+        return udid
+    }
+
+    /// 登录/恢复成功收尾的尽力预注册（异步，）：隧道未就绪直接跳过——签名路径里
+    /// sign_ipa 仍会 ensure 兜底，也可以在「更多 → Apple ID 账户 → 当前账户」右滑手动重试.
+    /// 注册一律走独立的 registerQueue，绝不占用 authQueue.
+    private func schedulePreRegisterBestEffort() {
+        guard TunnelGate.isReady else {
+            LoginLogger.shared.log("[注意] 隧道未就绪，设备预注册推迟到签名时进行")
+            return
+        }
+        Task.detached(priority: .utility) { [weak self] in
+            guard let self else { return }
+            do {
+                let udid = try self.registerQueue.sync { try self.performRegisterDevice() }
+                LoginLogger.shared.log("[完成] 设备已预注册到签名团队（尾号 \(udid.suffix(8))）")
+            } catch let e as NSError {
+                LoginLogger.shared.log("[注意] 设备预注册未完成（签名时自动重试）: \(e.localizedDescription)")
+            }
+        }
+    }
+
+    /// 「Apple ID 账户」页右滑「注册设备」的手动入口：排队到 authQueue（与登录/签名串行，
+    /// 不并发碰会话），成功返回 UDID 供弹窗展示；失败抛 Apple 原文.
+    func registerCurrentDevice() async throws -> String {
+        // 注册改走 registerQueue——手动注册允许等回环门（弹卡关蜂窝），
+        // 但绝不能占着 authQueue 等，否则等待期间的登录/恢复全部被卡死.
+        try await Task.detached(priority: .userInitiated) {
+            try self.registerQueue.sync {
+                try self.performRegisterDevice()
+            }
+        }.value
+    }
+
+    // MARK: - 后台预热（app 启动时调用，免 2FA）
+
+    /// 只导入设置当前账户的会话；绝不提交账密、弹2FA或回退独立登录.
+    @MainActor
+    func warmUp() {
+        guard Self.isAutoSignInEnabled, !isSignedIn, !isWarmingUp else { return }
+        guard let account = AppleUserAccountStore.shared.activeAccount,
+              let dsid = account.swiftDSID, !dsid.isEmpty,
+              let token = account.swiftAuthToken, !token.isEmpty else { return }
+        let email = account.email
+        isWarmingUp = true
+        // 按用户裁定删除 60s 看门狗——恢复完成即翻转 isWarmingUp（事件驱动、零延迟、
+        // 无超时机制）；765 已把预注册移出恢复路径，链路上不再有会挂死的环节.
+        Task { [weak self] in
+            guard let self else { return }
+            defer { self.isWarmingUp = false }
+            do {
+                // 仅向设置的Anisette提供器取新OTP；不允许Rust生成另一台机器.
+                let data = try await AnisetteProvider.shared.getAnisetteDataWithFallback()
+                guard AppleUserAccountStore.shared.activeAccount?.email == email,
+                      AppleUserAccountStore.shared.activeAccount?.swiftAuthToken == token else { return }
+                let server = AnisetteProvider.shared.currentServer
+                try await Task.detached(priority: .utility) {
+                    try self.signInWithSession(email: email, dsid: dsid, authToken: token,
+                                               anisetteURL: server, clientInfo: data.deviceDescription)
+                }.value
+            } catch {
+                LoginLogger.shared.log("[失败] 设置会话签名适配失败；请在Apple ID账户页重试或重新登录: " + error.localizedDescription)
+            }
+        }
+    }
+
+    // MARK: - 签名（阻塞）
+
+    /// 签名 IPA，返回签名后的 .app 包路径.
+    func signIPA(ipaPath: String) throws -> String {
+        guard let session else { throw makeError("尚未登录 Apple ID") }
+        // **配对文件缺 UDID 时直接报错，不再静默传空串**.
+        //
+        // 旧写法 `deviceUDID ?? ""` 把一个本地可判定的前置条件失败降级成「参数为空」，
+        // 交给 Rust 侧 sign_app 处理 —— 它拿到空 udid 会**跳过设备注册**，然后在签名/校验
+        // 阶段以 Apple 的 8220（no devices 相关）报错.用户看到的是一个无法理解的
+        // 服务端码，而不是「你的配对文件里没有 UDID」.
+        //
+        // createTunnel 已经有「配对文件不存在」的检查，但那是另一条路径；signIPA 自己也要拦.
+        guard let udid = deviceUDID, !udid.isEmpty else {
+            throw makeError("配对文件里没有设备 UDID（identifier 为空）."
+                + "请到「更多 → 配对文件导入」重新导入与当前设备匹配的配对文件.")
+        }
+        var signed: UnsafeMutablePointer<CChar>?
+        var error: UnsafeMutablePointer<CChar>?
+        let rc = ipaPath.withCString { ipa in
+            udid.withCString { u in
+                "".withCString { name in
+                    si_sign_ipa(session, ipa, u, name, &signed, &error)
+                }
+            }
+        }
+        defer {
+            if let signed { si_string_free(signed) }
+            if let error { si_string_free(error) }
+        }
+        if rc == 0, let signed {
+            let path = String(cString: signed)
+            guard !path.isEmpty else { throw makeError("签名返回空路径") }
+            return path
+        } else {
+            let msg = error.map { String(cString: $0) } ?? "rc=\(rc)"
+            throw makeError(msg)
+        }
+    }
+
+    // MARK: - 安装（阻塞，进度回调）
+
+    /// 通过 AFC 上传签名后的 .app 到 /PublicStaging 并用 installation_proxy 安装.
+    /// `progress` 在主线程回调（0~1）.
+    func install(signedAppPath: String, progress: ((Double) -> Void)? = nil) throws {
+        // **安装前先校验内嵌描述文件与 App 是否匹配**.
+        //
+        // 旧实现在这里只有一句注释说"没有 PackageType 会报 0xe8008015"，但对
+        // `.app/embedded.mobileprovision` 的 entitlements 与 `.app` 的 bundleId
+        // **零校验**.描述文件与 App 不匹配（换了签名证书 / 描述文件过期 / AppID 对不上）时，
+        // 错误要等到 installd 的 VerifyingApplication 阶段才以 0xe8008015 冒出来，
+        // 用户完全不知道是描述文件的问题，只会反复重试.
+        //
+        // 仓库里早就有解析能力：`ProvisioningProfileStore.parseProfile(_:)`（:302）能把
+        // CMS 签名的 .mobileprovision 取成 plist，`ProfileInfo` 带 appId 与 entitlements
+        // （:18/:20），之前一直没接进安装链.这里做**只读校验**，不改包内容：
+        //   · 描述文件缺失 → 提示（不阻断：某些已签名包把描述文件放在别处，
+        //     Developer 类型也可能靠 installd 自己找）
+        //   · 描述文件存在但 application-identifier 与 bundleId 不匹配 → **阻断并说清原因**
+        try Self.preflightProfileCheck(appPath: signedAppPath)
+
+        var tunnel = try createTunnel()
+        defer { tunnel.free() }
+        guard let adapter = tunnel.adapter, let handshake = tunnel.handshake else {
+            throw makeError("隧道未建立")
+        }
+
+        var afc: OpaquePointer?
+        if let ffiError = afc_client_connect_rsd(adapter, handshake, &afc) {
+            throw error(from: ffiError, fallback: "连接 AFC 失败")
+        }
+        guard let afc else { throw makeError("AFC 客户端为空") }
+        defer { afc_client_free(afc) }
+
+        let name = (signedAppPath as NSString).lastPathComponent
+        let remoteRoot = "/PublicStaging/\(name)"
+        // **上传前先清同名残留**.
+        //
+        // 本文件 installSignedIPA(:626) / installWithSINF(:698) / upgradeSignedIPA(:780) 三处
+        // 都做了「remove 再 copy」，唯独这条（签名后 .app 目录上传）没做.后果不是幂等性差而已：
+        // `uploadDirectory` 是**按文件逐个覆盖写**的，旧残留目录里若存在新包**没有**的文件
+        // （上一次签名产物多出来的资源、旧的 _CodeSignature 条目），它们会被原样保留，
+        // installd 校验时就可能报签名不匹配 —— 用一个「看起来完全一样」的新包装出旧错误.
+        _ = remoteRoot.withCString { afc_remove_path_and_contents(afc, $0) }
+        // 上传段也回报进度，并按 75/25 加权.
+        //
+        // 旧代码把上传当成完全静默的一段：`uploadDirectory` 根本不接受 progress，
+        // 界面在动辄几百 MB 的上传期一直停在 0%，然后安装段一开始就跳到 75%+ ——
+        // 用户会以为「进度条坏了 / 卡住了」.
+        //
+        // `uploadDirectory` 内部是逐文件的，没有全局字节预算，所以这里只能给出
+        // 「已完成文件数 / 总文件数」这一层级的上报（比 0 强，且不撒谎：它确实在涨）.
+        let totalEntries = Self.countEntries(atPath: signedAppPath)
+        var uploadedEntries = 0
+        try uploadDirectory(afc, localDir: signedAppPath, remoteDir: remoteRoot) { _ in
+            uploadedEntries += 1
+            guard totalEntries > 0 else { return }
+            let frac = Double(uploadedEntries) / Double(totalEntries)
+            progress?(Self.uploadWeight * min(1, max(0, frac)))
+        }
+
+        var ip: OpaquePointer?
+        if let ffiError = installation_proxy_connect_rsd(adapter, handshake, &ip) {
+            throw error(from: ffiError, fallback: "连接安装代理失败")
+        }
+        guard let ip else { throw makeError("安装代理客户端为空") }
+        defer { installation_proxy_client_free(ip) }
+
+        // PackageType: Developer —— 没有它 installd 不读内嵌描述文件，
+        // 会在 VerifyingApplication 阶段报 0xe8008015.
+        guard let options: plist_t = plist_new_dict() else {
+            throw makeError("构建安装选项失败")
+        }
+        defer { plist_free(options) }
+        if let packageType = plist_new_string("Developer") {
+            plist_dict_set_item(options, "PackageType", packageType)
+        }
+
+        let progressCallback: @convention(c) (UInt64, UnsafeMutableRawPointer?) -> Void = { value, ctx in
+            let progress = Double(value) / 100.0
+            DispatchQueue.main.async {
+                IPAInstallService.shared.installProgressHandler?(progress)
+            }
+        }
+        // **安装段也要加权**.
+        // 旧写法 `installProgressHandler = progress` 把调用方闭包直接塞进槽位，
+        // installd 第一次回报 1% 时进度条就显示 1%，而不是 75% + 25%×1% —— 与同文件
+        // installSignedIPA(:646-648) / installWithSINF(:724-726) 的口径不一致，
+        // 表现为「上传走完 0% → 安装开始突然从头再数」.
+        installProgressHandler = { p in
+            progress?(Self.uploadWeight + (1 - Self.uploadWeight) * min(1, max(0, p)))
+        }
+
+        let installErr = remoteRoot.withCString { p in
+            installation_proxy_install_with_callback(ip, p, options, progressCallback, nil)
+        }
+        if let installErr {
+            throw error(from: installErr, fallback: "安装失败")
+        }
+    }
+
+    /// **IPCC（运营商包）安装 —— 爱思助手「更新 IPCC」同一条通道**（v0.2.128）.
+    ///
+    /// 链路（与 ideviceinstaller / 爱思一致）：
+    /// 1. AFC 隧道把 .ipcc 上传到 `/PublicStaging/xxx.ipcc`（AFC jail 内，
+    ///    installd / CommCenter 可读）；
+    /// 2. `installation_proxy` 的 `Install` 命令，
+    ///    **ClientOptions = { PackageType: "CarrierBundle" }**，
+    ///    `PackagePath` 指向刚才上传的路径；
+    /// 3. installd 交给 CommCenter 完成解包 / 校验 / 写入运营商配置区.
+    ///
+    /// 与 `.ipa` 安装的唯一区别是 `PackageType`（ipa = `Developer`）.
+    /// 不需要 CoreTelephony 私有 API，也不需要额外 entitlement.
+    func installIPCC(_ localPath: String, progress: ((Double) -> Void)? = nil,
+                     log: ((String) -> Void)? = nil) throws {
+        func step(_ s: String) { log?(s) }
+        var tunnel = try createTunnel()
+        defer { tunnel.free() }
+        guard let adapter = tunnel.adapter, let handshake = tunnel.handshake else {
+            throw makeError("隧道未建立")
+        }
+
+        step("创建 RSD 隧道成功（adapter + handshake）")
+        var afc: OpaquePointer?
+        if let ffiError = afc_client_connect_rsd(adapter, handshake, &afc) {
+            throw error(from: ffiError, fallback: "连接 AFC 失败")
+        }
+        guard let afc else { throw makeError("AFC 客户端为空") }
+        defer { afc_client_free(afc) }
+        step("AFC 服务连接成功")
+
+        let name = (localPath as NSString).lastPathComponent
+        let remotePath = "/PublicStaging/\(name)"
+        // 先清同名残留（爱思/ideviceinstaller 同款：remove 再 copy）
+        _ = remotePath.withCString { afc_remove_path_and_contents(afc, $0) }
+        step("已清除同名残留，开始上传 \(name) → \(remotePath)")
+        try uploadFile(afc, localPath: localPath, remotePath: remotePath)
+        step("AFC 上传完成（\(remotePath)）")
+
+        var ip: OpaquePointer?
+        if let ffiError = installation_proxy_connect_rsd(adapter, handshake, &ip) {
+            throw error(from: ffiError, fallback: "连接安装代理失败")
+        }
+        guard let ip else { throw makeError("安装代理客户端为空") }
+        defer { installation_proxy_client_free(ip) }
+        step("installation_proxy 服务连接成功")
+
+        // PackageType: CarrierBundle —— 让 installd 按运营商包处理（.ipcc）
+        guard let options: plist_t = plist_new_dict() else {
+            throw makeError("构建安装选项失败")
+        }
+        defer { plist_free(options) }
+        if let packageType = plist_new_string("CarrierBundle") {
+            plist_dict_set_item(options, "PackageType", packageType)
+        }
+        step("构造安装选项：PackageType=CarrierBundle")
+
+        installProgressHandler = progress
+        let progressCallback: @convention(c) (UInt64, UnsafeMutableRawPointer?) -> Void = { value, ctx in
+            let current = Double(value) / 100.0
+            DispatchQueue.main.async {
+                IPAInstallService.shared.installProgressHandler?(current)
+            }
+        }
+
+        // **装完（无论成败）都把上传物从设备上删掉**.
+        //
+        // 旧实现把 .ipcc 传到 `/PublicStaging/` 之后再不清理，成功失败都不删 —— 每次
+        // 更新运营商包都在设备上留一份.同一个目录里其他安装入口（installSignedIPA /
+        // installWithSINF / upgradeSignedIPA）也都只清「下一次的同名残留」，靠下次同名
+        // 覆盖来回收，文件名一变（带版本号的 .ipcc 很常见）就永久留下.
+        //
+        // 用 defer 而不是在成功路径删：失败时同样要清，否则失败重试几次会攒出多份.
+        // 删除必须发生在 installd 读完包之后，所以放在 install 调用结束（defer 在本函数
+        // 返回时执行，安装调用是同步的，此时 boost 已完成读取/已受理）.
+        defer { _ = remotePath.withCString { afc_remove_path_and_contents(afc, $0) } }
+
+        step("发送 Install 命令（PackagePath=\(remotePath)）…")
+        let installErr = remotePath.withCString { p in
+            installation_proxy_install_with_callback(ip, p, options, progressCallback, nil)
+        }
+        if let installErr {
+            throw error(from: installErr, fallback: "IPCC 安装失败")
+        }
+        step("Install 命令已受理（installd/CommCenter 后台处理中）")
+    }
+
+    /// **在线安装已签名 IPA（App Store / Apple ID 签名包）**（v0.2.142）.
+    ///
+    /// 与爱思助手「安装应用」同一通道：
+    /// 1. AFC 上传 .ipa 到 `/PublicStaging/xxx.ipa`（AFC jail，installd 可读）；
+    /// 2. `installation_proxy` 的 `Install` 命令，`PackageType: "Application"`；
+    /// 3. installd 校验签名（已签名包直接通过）并安装.
+    ///
+    /// 适用：新安装、已存在同 bundle id 时的覆盖安装（install 命令天然覆盖）.
+    func installSignedIPA(_ localPath: String, progress: ((Double) -> Void)? = nil) throws {
+        var tunnel = try createTunnel()
+        defer { tunnel.free() }
+        guard let adapter = tunnel.adapter, let handshake = tunnel.handshake else {
+            throw makeError("隧道未建立")
+        }
+
+        var afc: OpaquePointer?
+        if let ffiError = afc_client_connect_rsd(adapter, handshake, &afc) {
+            throw error(from: ffiError, fallback: "连接 AFC 失败")
+        }
+        guard let afc else { throw makeError("AFC 客户端为空") }
+        defer { afc_client_free(afc) }
+
+        let name = (localPath as NSString).lastPathComponent
+        let remotePath = "/PublicStaging/\(name)"
+        _ = remotePath.withCString { afc_remove_path_and_contents(afc, $0) }
+        try uploadFile(afc, localPath: localPath, remotePath: remotePath,
+                       progress: { p in progress?(Self.uploadWeight * min(1, max(0, p))) })
+
+        var ip: OpaquePointer?
+        if let ffiError = installation_proxy_connect_rsd(adapter, handshake, &ip) {
+            throw error(from: ffiError, fallback: "连接安装代理失败")
+        }
+        guard let ip else { throw makeError("安装代理客户端为空") }
+        defer { installation_proxy_client_free(ip) }
+
+        // PackageType: Application —— 已签名 IPA 的标准安装类型（爱思同款）.
+        guard let options: plist_t = plist_new_dict() else {
+            throw makeError("构建安装选项失败")
+        }
+        defer { plist_free(options) }
+        if let packageType = plist_new_string("Application") {
+            plist_dict_set_item(options, "PackageType", packageType)
+        }
+
+        installProgressHandler = { p in
+            progress?(Self.uploadWeight + (1 - Self.uploadWeight) * min(1, max(0, p)))
+        }
+        let progressCallback: @convention(c) (UInt64, UnsafeMutableRawPointer?) -> Void = { value, ctx in
+            let current = Double(value) / 100.0
+            DispatchQueue.main.async {
+                IPAInstallService.shared.installProgressHandler?(current)
+            }
+        }
+
+        let installErr = remotePath.withCString { p in
+            installation_proxy_install_with_callback(ip, p, options, progressCallback, nil)
+        }
+        if let installErr {
+            throw error(from: installErr, fallback: "IPA 在线安装失败")
+        }
+    }
+
+    /// **安装 App Store 加密包（携带 `ApplicationSINF`）**.
+    ///
+    /// 与 NB Signer / libimobiledevice `ideviceinstaller` 完全同一机制：
+    /// ```
+    /// ClientOptions = {
+    ///     PackageType:     "Customer"
+    ///     ApplicationSINF: <Payload/X.app/SC_Info/<exe>.sinf 字节>
+    ///     iTunesMetadata:  <Payload/X.app/iTunesMetadata.plist 字节>
+    /// }
+    /// ```
+    /// installd 拿到 sinf 后向 Apple 请求**本设备**的解密密钥，解密 `__TEXT` 密文段后安装.
+    ///
+    /// 因此 sinf 必须是**为当前设备生成**的（即用本机 Apple ID 下载得到的包）.
+    /// 用别的设备下载的包会在这里报 `ApplicationSINFCaptureFailed` / 验证失败.
+    func installWithSINF(_ localPath: String,
+                         sinf: Data,
+                         iTunesMetadata: Data? = nil,
+                         upgrade: Bool = false,
+                         progress: ((Double) -> Void)? = nil) throws {
+        var tunnel = try createTunnel()
+        defer { tunnel.free() }
+        guard let adapter = tunnel.adapter, let handshake = tunnel.handshake else {
+            throw makeError("隧道未建立")
+        }
+
+        var afc: OpaquePointer?
+        if let ffiError = afc_client_connect_rsd(adapter, handshake, &afc) {
+            throw error(from: ffiError, fallback: "连接 AFC 失败")
+        }
+        guard let afc else { throw makeError("AFC 客户端为空") }
+        defer { afc_client_free(afc) }
+
+        let name = (localPath as NSString).lastPathComponent
+        let remotePath = "/PublicStaging/\(name)"
+        _ = remotePath.withCString { afc_remove_path_and_contents(afc, $0) }
+        try uploadFile(afc, localPath: localPath, remotePath: remotePath,
+                       progress: { p in progress?(Self.uploadWeight * min(1, max(0, p))) })
+
+        var ip: OpaquePointer?
+        if let ffiError = installation_proxy_connect_rsd(adapter, handshake, &ip) {
+            throw error(from: ffiError, fallback: "连接安装代理失败")
+        }
+        guard let ip else { throw makeError("安装代理客户端为空") }
+        defer { installation_proxy_client_free(ip) }
+
+        guard let options: plist_t = plist_new_dict() else {
+            throw makeError("构建安装选项失败")
+        }
+        defer { plist_free(options) }
+        // App Store 应用 = Customer（开发者签名才是 Developer）
+        if let v = plist_new_string("Customer") {
+            plist_dict_set_item(options, "PackageType", v)
+        }
+        if let v = Self.makePlistData(sinf) {
+            plist_dict_set_item(options, "ApplicationSINF", v)
+        }
+        if let meta = iTunesMetadata, let v = Self.makePlistData(meta) {
+            plist_dict_set_item(options, "iTunesMetadata", v)
+        }
+
+        installProgressHandler = { p in
+            progress?(Self.uploadWeight + (1 - Self.uploadWeight) * min(1, max(0, p)))
+        }
+        let progressCallback: @convention(c) (UInt64, UnsafeMutableRawPointer?) -> Void = { value, _ in
+            let current = Double(value) / 100.0
+            DispatchQueue.main.async {
+                IPAInstallService.shared.installProgressHandler?(current)
+            }
+        }
+
+        let result: UnsafeMutablePointer<IdeviceFfiError>? = remotePath.withCString { p in
+            if upgrade {
+                return installation_proxy_upgrade_with_callback(ip, p, options, progressCallback, nil)
+            }
+            return installation_proxy_install_with_callback(ip, p, options, progressCallback, nil)
+        }
+        if let result {
+            // 覆盖安装失败时必须说清后果：installd 的 Install 对同 bundleId 的已装应用天然覆盖
+            // （AppStoreLocalInstallService.swift:7-8 的注释自己承认这一点）.覆盖过程中途失败时，
+            // installd 可能已经移除了旧版本而新版本未通过校验 —— 用户原有的 App 就此丢失，
+            // 而本链路既没有备份也没有回滚能力（四个安装入口都没有）.
+            // 不能假装「装失败了，原来的还在」，所以这里把风险明确写进错误文案.
+            let base = error(from: result, fallback: "加密包安装失败（sinf 可能与本设备不匹配）")
+            throw makeError("\(base.localizedDescription) 若该应用此前已安装，系统可能已移除旧版本且无法自动恢复，请重新安装原版本.")
+        }
+    }
+
+    /// Data → plist data 节点（`plist_new_data` 会拷贝内容，调用方无需保活）
+    private static func makePlistData(_ data: Data) -> plist_t? {
+        data.withUnsafeBytes { raw -> plist_t? in
+            guard let base = raw.bindMemory(to: CChar.self).baseAddress else { return nil }
+            return plist_new_data(base, UInt64(data.count))
+        }
+    }
+
+    /// **覆盖升级 / 降级安装已签名 IPA**（v0.2.142）.
+    ///
+    /// 与在线安装的差异仅在命令字：`Upgrade`（爱思「升级/降级」同款）.
+    /// installd 会对已存在的同 bundle id 应用做版本对比后覆盖，
+    /// **允许降级**（Apple App Store 客户端禁止降级，installation_proxy 不拦）.
+    func upgradeSignedIPA(_ localPath: String, progress: ((Double) -> Void)? = nil) throws {
+        var tunnel = try createTunnel()
+        defer { tunnel.free() }
+        guard let adapter = tunnel.adapter, let handshake = tunnel.handshake else {
+            throw makeError("隧道未建立")
+        }
+
+        var afc: OpaquePointer?
+        if let ffiError = afc_client_connect_rsd(adapter, handshake, &afc) {
+            throw error(from: ffiError, fallback: "连接 AFC 失败")
+        }
+        guard let afc else { throw makeError("AFC 客户端为空") }
+        defer { afc_client_free(afc) }
+
+        let name = (localPath as NSString).lastPathComponent
+        let remotePath = "/PublicStaging/\(name)"
+        _ = remotePath.withCString { afc_remove_path_and_contents(afc, $0) }
+        try uploadFile(afc, localPath: localPath, remotePath: remotePath,
+                       progress: { p in progress?(Self.uploadWeight * min(1, max(0, p))) })
+
+        var ip: OpaquePointer?
+        if let ffiError = installation_proxy_connect_rsd(adapter, handshake, &ip) {
+            throw error(from: ffiError, fallback: "连接安装代理失败")
+        }
+        guard let ip else { throw makeError("安装代理客户端为空") }
+        defer { installation_proxy_client_free(ip) }
+
+        guard let options: plist_t = plist_new_dict() else {
+            throw makeError("构建安装选项失败")
+        }
+        defer { plist_free(options) }
+        if let packageType = plist_new_string("Application") {
+            plist_dict_set_item(options, "PackageType", packageType)
+        }
+
+        installProgressHandler = { p in
+            progress?(Self.uploadWeight + (1 - Self.uploadWeight) * min(1, max(0, p)))
+        }
+        let progressCallback: @convention(c) (UInt64, UnsafeMutableRawPointer?) -> Void = { value, ctx in
+            let current = Double(value) / 100.0
+            DispatchQueue.main.async {
+                IPAInstallService.shared.installProgressHandler?(current)
+            }
+        }
+
+        let upgradeErr = remotePath.withCString { p in
+            installation_proxy_upgrade_with_callback(ip, p, options, progressCallback, nil)
+        }
+        if let upgradeErr {
+            throw error(from: upgradeErr, fallback: "IPA 覆盖升级/降级安装失败")
+        }
+    }
+
+    private var installProgressHandler: ((Double) -> Void)?
+
+    /// **整条安装链路**的进度权重 —— AFC 上传占前 75%，installd 安装占后 25%.
+    ///
+    /// 为什么可以这样拼：两段各自都是**真实测量值**
+    /// · 上传段 = 已写进 AFC 的字节 / 文件总字节（`uploadFile` 逐块统计，起才有）；
+    /// · 安装段 = installd 自己回报的 0~100.
+    ///
+    /// 注意： 但这个 75/25 的**权重本身是声明式的估计**（与下载中心既有的「下载 75% / 安装 25%」
+    /// 同一口径），不是系统给的「整体百分比」—— 别把它当测量结果.
+    /// 在它之前，上传段**完全没有回调**，界面只能干等，所以叠了个分母让它动起来.
+    private static let uploadWeight = 0.75
+
+    /// 递归上传目录（映射读，避免大二进制撑爆内存）.
+    /// 安装前校验 `.app/embedded.mobileprovision` 与 App 的 bundleId 是否匹配.
+    ///
+    /// 只读，不改包.返回规则：
+    /// - 没有 Info.plist / 读不到 bundleId → 无法判断，放行（交给 installd 报真实错误）；
+    /// - 没有 embedded.mobileprovision → 放行（部分已签名包不带，installd 另有路径）；
+    /// - 有描述文件但解析不出 plist → 放行（解析失败不等于不匹配，不能误杀）；
+    /// - 有描述文件且 application-identifier 与 bundleId 明显不匹配 → **抛出**，并说明原因.
+    ///
+    /// 为什么"明显不匹配"要谨慎判定：`application-identifier` 形如
+    /// `TEAMID.com.example.app`，先去掉第一个点前的 TeamID，再与 bundleId 比后缀，
+    /// 允许通配（`TEAMID.com.example.*`）与 `*`（企业证书的通用 AppID）.
+    private static func preflightProfileCheck(appPath: String) throws {
+        let fm = FileManager.default
+        let infoPath = (appPath as NSString).appendingPathComponent("Info.plist")
+        guard let infoData = fm.contents(atPath: infoPath),
+              let infoPlist = try? PropertyListSerialization.propertyList(
+                  from: infoData, options: [], format: nil) as? [String: Any],
+              let bundleID = infoPlist["CFBundleIdentifier"] as? String,
+              !bundleID.isEmpty else { return }
+
+        let profilePath = (appPath as NSString).appendingPathComponent("embedded.mobileprovision")
+        guard let profileData = fm.contents(atPath: profilePath) else { return }
+
+        guard let profile = ProvisioningProfileStore.parseProfile(profileData) else { return }
+        let appID = profile.appId
+        guard !appID.isEmpty, appID != "未知" else { return }
+
+        // 去掉 TeamID 前缀（第一个点之前）
+        var suffix = appID
+        if let dot = appID.firstIndex(of: ".") { suffix = String(appID[appID.index(after: dot)...]) }
+        if suffix == "*" || appID == "*" { return }   // 企业通用证书，任何 bundleId 都合法
+        if suffix.hasSuffix(".*") {
+            let prefix = String(suffix.dropLast(2))
+            if bundleID == prefix || bundleID.hasPrefix(prefix + ".") { return }
+        } else if bundleID == suffix {
+            return
+        }
+
+        // 再看过期：过期是更常见的真实原因，优先报它
+        // Date 比较改比 Double 时间戳（守卫 swift_date_compare_guard.py：beta 上 >=/<= 是 weak import）.
+        if let exp = profile.expirationDate,
+           exp.timeIntervalSinceReferenceDate < Date().timeIntervalSinceReferenceDate {
+            throw NSError(domain: "IPAInstall", code: -1, userInfo: [NSLocalizedDescriptionKey:
+                "签名用的描述文件已过期（\(profile.formattedDate))."
+                + "请重新签名后再安装；直接安装会以 0xe8008015 失败."])
+        }
+        throw NSError(domain: "IPAInstall", code: -1, userInfo: [NSLocalizedDescriptionKey:
+            "内嵌描述文件与 App 不匹配：描述文件的 application-identifier 是 \(appID)，"
+            + "而 App 的 CFBundleIdentifier 是 \(bundleID)."
+            + "通常是换用了别的账号/别的 AppID 的描述文件 —— 请用与该 bundleId 匹配的描述文件重新签名."])
+    }
+
+    /// 统计目录树下的**文件**数（不含目录本身）—— 用于把逐文件上传折算成 0~1 进度.
+    private static func countEntries(atPath path: String) -> Int {
+        let fm = FileManager.default
+        guard let it = fm.enumerator(atPath: path) else { return 0 }
+        var files = 0
+        for case let item as String in it {
+            var isDir: ObjCBool = false
+            let full = (path as NSString).appendingPathComponent(item)
+            if fm.fileExists(atPath: full, isDirectory: &isDir), !isDir.boolValue { files += 1 }
+        }
+        return files
+    }
+
+    private func uploadDirectory(_ afc: OpaquePointer, localDir: String, remoteDir: String,
+                                 onFileUploaded: ((String) -> Void)? = nil) throws {
+        // **afc_make_directory 的返回值不能再丢**.
+        //
+        // 旧写法 `_ = ...` 把 FFI 错误吞掉.目录没建成时返回值非 nil，随后
+        // `uploadFile` 以 `AfcWrOnly` 打开 `remoteDir/xxx` 会报「打开 … 失败」——
+        // 用户看到的是一条与真实原因（AFC 建目录失败）无关的错误，而且失败点在
+        // 目录树深处，日志里也看不出是哪一层没建成.
+        //
+        // 注意：`Already Exists` 类的错误**必须忽略**，否则递归上传第二层时必然失败；
+        // 这里只对「不是已存在」的错误上抛.
+        if let dirErr = remoteDir.withCString({ afc_make_directory(afc, $0) }) {
+            // `error(from:` 内部已经 idevice_error_free，这里直接复用它取 message.
+            let desc = error(from: dirErr, fallback: "afc_make_directory 失败").localizedDescription
+            // AFC 对已存在目录会回 "Already Exists" / "Object already exists" 一类 —— 递归上传
+            // 第二层必然走到这里，忽略这类错误；其余（权限、路径非法、连接断）必须上抛.
+            if !desc.lowercased().contains("exist") {
+                throw makeError("在设备上创建目录 \(remoteDir) 失败：\(desc)")
+            }
+        }
+        let fm = FileManager.default
+        let entries = try fm.contentsOfDirectory(atPath: localDir)
+        for entry in entries {
+            let localPath = (localDir as NSString).appendingPathComponent(entry)
+            let remotePath = "\(remoteDir)/\(entry)"
+            var isDir: ObjCBool = false
+            fm.fileExists(atPath: localPath, isDirectory: &isDir)
+            if isDir.boolValue {
+                try uploadDirectory(afc, localDir: localPath, remoteDir: remotePath,
+                                    onFileUploaded: onFileUploaded)
+            } else {
+                try uploadFile(afc, localPath: localPath, remotePath: remotePath)
+                // 一个文件真正传完才报一次，避免「报进度比实际传得快」.
+                onFileUploaded?(localPath)
+            }
+        }
+    }
+
+    /// `progress` 逐块回报**上传进度**（已写字节 / 文件总字节，0~1）.
+    /// 在此之前上传段没有任何进度回调，界面只能停在 0% 干等.
+    private func uploadFile(_ afc: OpaquePointer, localPath: String, remotePath: String,
+                            progress: ((Double) -> Void)? = nil) throws {
+        let data = try Data(contentsOf: URL(fileURLWithPath: localPath), options: .mappedIfSafe)
+        var file: OpaquePointer?
+        if let ffiError = remotePath.withCString({ afc_file_open(afc, $0, AfcWrOnly, &file) }) {
+            throw error(from: ffiError, fallback: "打开 \(remotePath) 失败")
+        }
+        guard let file else { throw makeError("AFC 文件句柄为空") }
+        defer { _ = afc_file_close(file) }
+
+        // 分块写，避免单次 FFI 调用撑爆内存.
+        let chunk = 1 << 20
+        let total = data.count
+        try data.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
+            guard let base = raw.bindMemory(to: UInt8.self).baseAddress else { return }
+            var offset = 0
+            while offset < data.count {
+                let n = min(chunk, data.count - offset)
+                if let ffiError = afc_file_write(file, base + offset, n) {
+                    throw error(from: ffiError, fallback: "写入 \(remotePath) 失败")
+                }
+                offset += n
+                // 每块写完即报（分母为 0 时跳过，避免除零）
+                if total > 0 { progress?(Double(offset) / Double(total)) }
+            }
+        }
+    }
+
+    // MARK: - 隧道（与 JITEnableService 同源）
+
+    private struct TunnelHandles {
+        var adapter: OpaquePointer?
+        var handshake: OpaquePointer?
+        mutating func free() {
+            if let handshake { rsd_handshake_free(handshake); self.handshake = nil }
+            if let adapter { adapter_free(adapter); self.adapter = nil }
+        }
+    }
+
+    /// 隧道端口（RPPairing 49152）建连预检的超时（秒）.
+    ///
+    /// Rust 侧 `tunnel_create_rppairing` 的首个 `TcpStream::connect` **没有超时**
+    /// （`rust/idevice-ffi/src/tunnel_provider.rs:873`）：LocalDevVPN 不通时目标地址是黑洞，
+    /// `connect` 只能等操作系统的 TCP 建连超时（真机实测约 4m45s，`os error 60`），
+    /// 期间安装链全程无进展，用户看到的就是「永远转圈」.这里先用**带超时**的 socket
+    /// `connect` 预检一次，不通就快速失败，不把调用线程挂在那儿
+    /// （与 `LocalDevVPN.isTunnelReachable` 同款：`SO_SNDTIMEO`/`SO_RCVTIMEO` + `connect`）.
+    /// 0.5 秒：局域网内端口真开着的 connect 50ms 内必回；0.5s 已是 10 倍裕量.
+    /// 硬规则 29：失败路径上的超时也要抠 —— 隧道真不通时用户最多等 0.5 秒就看到结论.
+    private static let tunnelProbeTimeoutSeconds: TimeInterval = 0.5
+
+    /// 用带超时的 socket `connect` 探测 `addr`（RPPairing 端口）是否可达.
+    /// 与 `LocalDevVPN.isTunnelReachable` 同款实现，地址取本函数已构造好的 `sockaddr_in`.
+    /// 隧道端口可达性预检.
+    ///
+    /// ⚠️ ：**必须用非阻塞 connect + poll + SO_ERROR**，不能用 SO_SNDTIMEO.
+    ///
+    /// 原实现设了 `SO_SNDTIMEO` / `SO_RCVTIMEO` 就以为「3 秒超时」，但 Darwin 上
+    /// 这两个选项**只约束 send/recv，不约束 connect**.而这个 socket 是阻塞的，
+    /// 于是目标不可达时会一直等到内核 TCP 建连超时 ——
+    /// IPAInstallService.swift:891-896 的注释自己记着实测 **约 4m45s**（os error 60）.
+    ///
+    /// 而本函数是建连的**硬闸门**（见下方 `guard probeTunnelReachable`）：
+    /// 返回 false 就直接 throw、连重试机会都没有.
+    /// 所以「预检卡 4 分钟 + 最终抛不可达」= 用户看到的「完全没法连接隧道」.
+    ///
+    /// 同一份仓库里 `LocalDevVPN.isReachable` 早就写对了（非阻塞 + poll + SO_ERROR），
+    /// 且它的注释（LocalDevVPN.swift:89-91）明确写了「SO_SNDTIMEO 不约束 connect」.
+    /// 这里直接复用它，不再维护第二份实现.
+    private func probeTunnelReachable(_ addr: inout sockaddr_in) -> Bool {
+        var ipBuffer = [CChar](repeating: 0, count: Int(INET_ADDRSTRLEN))
+        let ip = withUnsafePointer(to: &addr.sin_addr) { sinAddr in
+            sinAddr.withMemoryRebound(to: in_addr.self, capacity: 1) { ptr in
+                inet_ntop(AF_INET, ptr, &ipBuffer, socklen_t(INET_ADDRSTRLEN))
+            }
+        }
+        guard let ip else { return false }
+        let host = String(cString: ip)
+        return LocalDevVPN.isReachable(ip: host,
+                                     timeout: Self.tunnelProbeTimeoutSeconds,
+                                     port: UInt16(bigEndian: addr.sin_port))
+    }
+
+    private func createTunnel() throws -> TunnelHandles {
+        guard FileManager.default.fileExists(atPath: pairingPath) else {
+            throw makeError("未检测到配对文件.请到「更多 → 配对文件导入」导入配对文件（需 LocalDevVPN + 开发者模式）.")
+        }
+
+        var pairingFile: OpaquePointer?
+        if let ffiError = pairingPath.withCString({ rp_pairing_file_read($0, &pairingFile) }) {
+            throw error(from: ffiError, fallback: "读取配对文件失败")
+        }
+        guard let pairingFile else { throw makeError("读取配对文件失败") }
+        defer { rp_pairing_file_free(pairingFile) }
+
+        var addr = sockaddr_in()
+        addr.sin_family = sa_family_t(AF_INET)
+        addr.sin_port = in_port_t(RemotePairingPort.current).bigEndian
+
+        // 软隧道优先（Gnoix 同型，进程内 usbmuxd→lockdown→CoreDeviceProxy→jktcp）：成功即返回，不进卡点门、不依赖 utun 对端.
+        if let soft = SoftTunnelService.shared.createTunnel(label: "安装侧载", pairingPath: pairingPath) {
+            return TunnelHandles(adapter: soft.adapter, handshake: soft.handshake)
+        }
+        // 蜂窝隧道支持（默认关）：开关开 + 无 Wi-Fi 时先等本地隧道就绪；其余情况为 no-op.
+        let loopbackGated = CellularGlitchCoordinator.shared.beginLoopbackGate(label: "安装侧载")
+        defer { if loopbackGated { CellularGlitchCoordinator.shared.endLoopbackGate() } }
+        CellularTunnelManager.shared.prepareForTunnel()
+        let deviceIP = LocalDevVPN.connectIP
+        let parseResult = deviceIP.withCString { inet_pton(AF_INET, $0, &addr.sin_addr) }
+        guard parseResult == 1 else {
+            throw makeError("隧道 IP 无效：\(deviceIP)（请检查「设置 → 本地隧道」）")
+        }
+
+        // 可达性判定全部实时（硬规则 29：禁止任何人为等待窗口）：
+        //  - 后台状态机（TunnelReadiness）持续把探测结论写进缓存，缓存说通 → 零等待放行；
+        //  - 缓存未就绪（冷启动/状态翻转中）→ 就地做一次带超时探测，结论即真实：
+        //    通了立刻放行，不通立刻失败 —— 绝不「等 X 秒再看」；
+        //  - Rust 侧首个 connect 无超时，隧道不通会挂约 4m45s，所以失败前必须补探测.
+        guard TunnelGate.isReady || probeTunnelReachable(&addr) else {
+            TunnelGate.setReady(false)
+            throw makeError("隧道端口不可达（\(deviceIP):\(RemotePairingPort.current) 探测不可达）."
+                + "请打开 LocalDevVPN，就绪后本页自动恢复，然后重试.")
+        }
+        TunnelGate.setReady(true)
+
+        var lastError: NSError?
+        TunnelDiagnostics.begin("安装隧道")
+        for attempt in 0..<3 {
+            var tunnel = TunnelHandles()
+            let ffiError = "TequilaDashIPAInstall".withCString { hostname in
+                withUnsafePointer(to: &addr) { pointer in
+                    pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                        tunnel_create_rppairing(
+                            $0,
+                            socklen_t(MemoryLayout<sockaddr_in>.stride),
+                            hostname,
+                            pairingFile,
+                            nil,
+                            nil,
+                            &tunnel.adapter,
+                            &tunnel.handshake
+                        )
+                    }
+                }
+            }
+            if let ffiError {
+                lastError = error(from: ffiError, fallback: "创建开发者隧道失败（请确认 LocalDevVPN 已连接）")
+            } else if tunnel.adapter != nil, tunnel.handshake != nil {
+                TunnelDiagnostics.succeed("安装隧道")
+                return tunnel
+            } else {
+                var incomplete = tunnel
+                incomplete.free()
+                lastError = makeError("创建开发者隧道失败")
+            }
+            if attempt < 2 {
+                usleep(useconds_t(300_000 * (attempt + 1)))
+            }
+        }
+        TunnelDiagnostics.fail("安装隧道", error: lastError)
+        throw lastError ?? makeError("创建开发者隧道失败（请确认 LocalDevVPN 已连接）")
+    }
+}

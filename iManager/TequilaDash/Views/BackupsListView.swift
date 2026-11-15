@@ -1,0 +1,938 @@
+import SwiftUI
+import UIKit
+import UniformTypeIdentifiers
+import os
+
+/// Lists backup archives and drives restore confirmation + progress.
+struct BackupsListView: View {
+    @ObservedObject var appList: AppListViewModel
+    @StateObject private var vm = BackupsListViewModel()
+    @State private var shareTarget: ShareTarget?
+
+    /// Batch-select-delete mode.
+    @State private var selecting = false
+    @State private var selected: Set<String> = []
+    /// Custom restore (top-left "恢复"): pick a zip, then choose a target app.
+    @State private var showingPicker = false
+    @State private var importRecord: BackupRecord?
+    @State private var customSession: RestoreSession?
+    @State private var customGuest: LiveContainerGuest?
+    @State private var showDeleteConfirm = false
+    @State private var importError: IdentifiedAlert?
+
+    var body: some View {
+        mainContent
+            .navigationTitle("备份")
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button {
+                        showingPicker = true
+                    } label: {
+                        Label("恢复", systemImage: "arrow.down.doc.fill")
+                    }
+                    .disabled(selecting)
+                }
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    if selecting {
+                        HStack {
+                            Button(allSelected ? "取消全选" : "全选") {
+                                toggleSelectAll()
+                            }
+                            Button("取消") {
+                                selecting = false
+                                selected.removeAll()
+                            }
+                        }
+                    } else {
+                        HStack {
+                            Button("选择") { selecting = true }
+                            Button {
+                                vm.reload()
+                            } label: {
+                                Image(systemName: "arrow.clockwise")
+                            }
+                            .disabled(vm.isLoading)
+                        }
+                    }
+                }
+            }
+            .safeAreaInset(edge: .bottom) {
+                if selecting {
+                    HStack {
+                        Text("已选 \(selected.count) 项")
+                            .font(.subheadline)
+                        Spacer()
+                        Button("删除", role: .destructive) {
+                            showDeleteConfirm = true
+                        }
+                        .disabled(selected.isEmpty)
+                    }
+                    .padding()
+                    .background(.bar)
+                }
+            }
+            .onAppear {
+                vm.reload()
+            }
+            .sheet(item: $vm.activeRestore) { session in
+                RestoreView(session: session, appList: appList)
+            }
+            .documentPicker(isPresented: $showingPicker, allowedTypes: [.zip]) { urls in
+                if let url = urls.first { handlePickedZip(url) }
+            }
+            .sheet(item: $importRecord) { record in
+                CustomRestoreSheet(record: record, appList: appList) { session, guest in
+                    importRecord = nil
+                    customSession = session
+                    customGuest = guest
+                }
+            }
+            .sheet(item: $customSession) { session in
+                RestoreView(session: session, appList: appList, preselectedGuest: customGuest)
+            }
+            .alert(item: $vm.alertError) { error in
+                Alert(title: Text("无法开始恢复"), message: Text(error.message), dismissButton: .default(Text("好")))
+            }
+            .alert(item: $importError) { error in
+                Alert(title: Text("无法读取备份"), message: Text(error.message), dismissButton: .default(Text("好")))
+            }
+            .alert("删除选中的备份？", isPresented: $showDeleteConfirm) {
+                Button("取消", role: .cancel) {}
+                Button("删除", role: .destructive) {
+                    performBatchDelete()
+                }
+            } message: {
+                Text("将永久删除 \(selected.count) 个备份归档，此操作不可撤销.")
+            }
+    }
+
+    private var mainContent: some View {
+        List {
+            // 三态改用统一组件 AppStateSection.
+            // 本页原本就是全仓唯一把三态做一致的地方（三态都用 InfoActionCard），
+            // 现在把这份正确形态抽成公共组件，供其余 21 个文件替换裸 Text 空态.
+            if vm.isLoading && vm.isEmpty {
+                AppStateSection(state: .loading("正在加载备份…",
+                                                detail: "读取 TequilaDash/Backups 目录中的备份归档."))
+            } else if let error = vm.errorMessage, vm.isEmpty {
+                AppStateSection(state: .error("无法读取备份", message: error) { vm.reload() })
+            } else if vm.isEmpty {
+                AppStateSection(state: .empty("暂无备份",
+                                              message: "在「应用管理」或「容器管理」进入任意应用，点「备份数据」导出.归档保存在「文件 → 我的iPhone → TequilaDash → Backups」."))
+            } else {
+                recordsSection
+                unreadableSection
+            }
+        }
+        .listStyle(.insetGrouped)
+        .sheet(item: $shareTarget) { target in
+            ShareSheet(items: [target.url])
+        }
+    }
+
+    private var recordsSection: some View {
+        ForEach(vm.records) { record in
+            let rowIcon = record.metadata.iconData.flatMap { UIImage(data: $0) }
+                ?? appList.icons[record.metadata.bundleIdentifier]
+            if selecting {
+                Button {
+                    toggleSelection(record)
+                } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: selected.contains(record.id) ? "checkmark.circle.fill" : "circle")
+                            .foregroundColor(selected.contains(record.id) ? AppTheme.accent : .secondary)
+                        BackupRow(
+                            record: record,
+                            icon: rowIcon,
+                            eligibility: vm.eligibility(for: record, apps: appList.apps),
+                            selecting: true
+                        ) {}
+                    }
+                }
+                .buttonStyle(.plain)
+            } else {
+                BackupRow(
+                    record: record,
+                    icon: rowIcon,
+                    eligibility: vm.eligibility(for: record, apps: appList.apps)
+                ) {
+                    vm.beginRestore(record: record, apps: appList.apps)
+                }
+                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                    Button {
+                        shareTarget = ShareTarget(url: record.archiveURL)
+                    } label: {
+                        Label("分享", systemImage: "square.and.arrow.up")
+                    }
+                    .tint(AppTheme.accent)
+                }
+            }
+        }
+        .onDelete { offsets in
+            vm.delete(at: offsets)
+        }
+    }
+
+    /// 读取失败的归档：**仍然列出**（标为「无法读取」），而不是从列表里消失.
+    @ViewBuilder
+    private var unreadableSection: some View {
+        if !vm.unreadable.isEmpty {
+            Section(header: Text("无法读取 (\(vm.unreadable.count))")) {
+                ForEach(vm.unreadable) { item in
+                    UnreadableBackupRow(item: item)
+                        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                            Button(role: .destructive) {
+                                vm.deleteUnreadable(item)
+                            } label: {
+                                Label("删除", systemImage: "trash")
+                            }
+                        }
+                }
+            }
+        }
+    }
+
+    private func toggleSelection(_ record: BackupRecord) {
+        if selected.contains(record.id) {
+            selected.remove(record.id)
+        } else {
+            selected.insert(record.id)
+        }
+    }
+
+    private var allSelected: Bool {
+        !vm.records.isEmpty && selected.count == vm.records.count
+    }
+
+    private func toggleSelectAll() {
+        if allSelected {
+            selected.removeAll()
+        } else {
+            selected = Set(vm.records.map { $0.id })
+        }
+    }
+
+    private func performBatchDelete() {
+        let targets = vm.records.filter { selected.contains($0.id) }
+        vm.deleteSelected(targets)
+        selected.removeAll()
+        selecting = false
+    }
+
+    /// The picked zip is already copied into the app sandbox by SharedDocumentPicker
+    /// (`.documentPicker` uses `asCopy: true`), so we read it directly — no
+    private func handlePickedZip(_ url: URL) {
+        do {
+            let dest = FileManager.default.temporaryDirectory
+                .appendingPathComponent(url.lastPathComponent)
+            if FileManager.default.fileExists(atPath: dest.path) {
+                try FileManager.default.removeItem(at: dest)
+            }
+            try FileManager.default.copyItem(at: url, to: dest)
+            let record = try BackupCatalog().loadRecord(at: dest)
+            importRecord = record
+        } catch {
+            importError = IdentifiedAlert(message: "该文件不是有效的 TequilaDash 备份（缺少 backup.json），或读取失败：\(error.localizedDescription)")
+        }
+    }
+}
+
+private struct BackupRow: View {
+    let record: BackupRecord
+    let icon: UIImage?
+    let eligibility: RestoreEligibility
+    var selecting: Bool = false
+    let onRestore: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 12) {
+                AppIconView(icon: icon, size: 44)
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 8) {
+                        Text(record.displayTitle)
+                            .font(.headline)
+                        if record.metadata.isContainerApp {
+                            // Step 3 批 6-C：手写胶囊收编到共享 `SizePill` 的 `.compact` 档（caption2 + 6 / 2）；
+                            // 字重 `.semibold` 与档位默认一致，底色 15% 用覆盖项钉住（默认 12%）.
+                            // 原 `background(Color.orange.opacity(0.15)) + clipShape(...)` 两段，
+                            // 由组件内置的 `background(tint.opacity(fillOpacity), in:)` 等价接管.
+                            SizePill(text: "容器",
+                                     tint: AppTheme.pending,
+                                     level: .compact,
+                                     fillOpacity: 0.15)
+                        }
+                    }
+                    Text(record.metadata.bundleIdentifier)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text(record.displaySubtitle)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                    Text(record.archiveFileName)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    if let modified = record.modified {
+                        Text(BackupPaths.displayStamp.string(from: modified))
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+
+            if !selecting {
+                switch eligibility {
+                case .ready:
+                    Button(action: onRestore) {
+                        HStack(spacing: 8) {
+                            Image(systemName: "arrow.counterclockwise.circle.fill")
+                            Text("恢复到设备")
+                        }
+                        .frame(maxWidth: .infinity, alignment: .center)
+                    }
+                    .buttonStyle(TintedButtonStyle(tint: AppTheme.categoryDevice))
+                    .controlSize(.regular)
+                case .appNotInstalled(_, let appName):
+                    Label("\(appName) 未安装", systemImage: "app.badge.checkmark.fill")
+                        .font(.footnote)
+                        .foregroundColor(AppTheme.pending)
+                case .invalidArchive(let message):
+                    // 行内错误统一走 AppErrorRow（info.circle + pending 橙），
+                    // 不再用红色八角叉 —— 归档读不出来通常是可恢复问题（文件损坏 / 隧道中断）.
+                    AppErrorRow(message: message)
+                }
+            }
+        }
+        .padding(.vertical, 6)
+    }
+}
+
+/// 读取失败的备份归档行：明确标为「无法读取（原因）」，让用户能区分
+/// 「真的没有备份」与「有备份但读不出」.
+private struct UnreadableBackupRow: View {
+    let item: UnreadableBackupRecord
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Image(systemName: "info.circle")
+                    .foregroundStyle(AppTheme.pending)
+                Text(item.archiveFileName)
+                    .font(.headline)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            AppErrorRow(message: "无法读取：\(item.reason)")
+            if let modified = item.modified {
+                Text(BackupPaths.displayStamp.string(from: modified))
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.vertical, 4)
+    }
+}
+
+/// Shared app icon rendering with placeholder while icons load.
+struct AppIconView: View {
+    let icon: UIImage?
+    var size: CGFloat = 40
+
+    var body: some View {
+        Group {
+            if let icon = icon {
+                Image(uiImage: icon)
+                    .resizable()
+                    .interpolation(.high)
+            } else {
+                ZStack {
+                    RoundedRectangle(cornerRadius: size * 0.22, style: .continuous)
+                        .fill(Color.secondary.opacity(0.15))
+                    Image(systemName: "app.fill")
+                        .font(.system(size: size * 0.42))
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .frame(width: size, height: size)
+        .cornerRadius(size * 0.22)
+    }
+}
+
+/// Extract the guest bundle id (middle segment) from a synthetic
+/// `host::guestBundleId::uuid` id. Returns the input unchanged when it doesn't
+/// follow that shape.
+private func guestBundleId(from synthetic: String) -> String {
+    let parts = synthetic.components(separatedBy: "::")
+    return parts.count == 3 ? parts[1] : synthetic
+}
+
+/// Picker shown after the user selects an external backup zip: choose which
+/// separated sections) to restore it into.
+struct CustomRestoreSheet: View {
+    let record: BackupRecord
+    @ObservedObject var appList: AppListViewModel
+    let onConfirm: (RestoreSession, LiveContainerGuest?) -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var normalApps: [InstalledApp] = []
+    @State private var guestApps: [LiveContainerGuest] = []
+    @State private var isLoading = true
+    @State private var searchText = ""
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if isLoading {
+                    AppLoadingRow(title: "正在加载应用列表…", level: .page)
+                } else if normalApps.isEmpty && guestApps.isEmpty {
+                    Section {
+                        InfoActionCard(
+                            icon: "app.dashed",
+                            iconTint: AppTheme.categoryDevice,
+                            title: "未找到可恢复的目标应用",
+                            message: "请到「更多 → 配对文件导入」导入配对文件并扫描到 LiveContainer."
+                        )
+                    }
+                } else {
+                    List {
+                        if !filteredNormalApps.isEmpty {
+                            Section("应用") {
+                                ForEach(filteredNormalApps) { app in
+                                    targetRow(
+                                        title: app.name,
+                                        subtitle: app.bundleIdentifier,
+                                        icon: appList.icons[app.bundleIdentifier],
+                                        isContainer: false
+                                    ) {
+                                        confirmTarget(app: app, guest: nil)
+                                    }
+                                }
+                            }
+                        }
+                        if !filteredGuestApps.isEmpty {
+                            Section("容器应用") {
+                                ForEach(filteredGuestApps) { guest in
+                                    targetRow(
+                                        title: guest.displayName,
+                                        subtitle: guest.bundleIdentifier,
+                                        icon: guest.iconData.flatMap { UIImage(data: $0) },
+                                        isContainer: true
+                                    ) {
+                                        confirmTarget(app: guest.installedApp, guest: guest)
+                                    }
+                                }
+                            }
+                        }
+                        if filteredNormalApps.isEmpty && filteredGuestApps.isEmpty {
+                            Section {
+                                AppEmptyRow(title: "未找到匹配「\(searchText)」的应用.")
+                            }
+                        }
+                    }
+                    .listStyle(.insetGrouped)
+                    .searchable(text: $searchText, prompt: "搜索应用名或 Bundle ID")
+                    .avoidSearchZoom()
+                }
+            }
+            .navigationTitle("选择恢复目标")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("取消") { dismiss() }
+                }
+            }
+            .onAppear { loadTargets() }
+        }
+    }
+
+    private var filteredNormalApps: [InstalledApp] {
+        guard !searchText.isEmpty else { return normalApps }
+        let q = searchText.localizedLowercase
+        return normalApps.filter {
+            $0.name.localizedCaseInsensitiveContains(q)
+            || $0.bundleIdentifier.localizedCaseInsensitiveContains(q)
+        }
+    }
+
+    private var filteredGuestApps: [LiveContainerGuest] {
+        guard !searchText.isEmpty else { return guestApps }
+        let q = searchText.localizedLowercase
+        return guestApps.filter {
+            $0.displayName.localizedCaseInsensitiveContains(q)
+            || $0.bundleIdentifier.localizedCaseInsensitiveContains(q)
+        }
+    }
+
+    private func targetRow(
+        title: String,
+        subtitle: String,
+        icon: UIImage?,
+        isContainer: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                AppIconView(icon: icon, size: 40)
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 8) {
+                        Text(title).font(.headline)
+                        if isContainer {
+                            // Step 3 批 6-C：手写胶囊收编到共享 `SizePill` 的 `.compact` 档（caption2 + 6 / 2）；
+                            // 字重 `.semibold` 与档位默认一致，底色 15% 用覆盖项钉住（默认 12%）.
+                            // 原 `background(Color.orange.opacity(0.15)) + clipShape(...)` 两段，
+                            // 由组件内置的 `background(tint.opacity(fillOpacity), in:)` 等价接管.
+                            SizePill(text: "容器",
+                                     tint: AppTheme.pending,
+                                     level: .compact,
+                                     fillOpacity: 0.15)
+                        }
+                    }
+                    Text(subtitle)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+            }
+        }
+    }
+
+    private func confirmTarget(app: InstalledApp, guest: LiveContainerGuest?) {
+        let session = RestoreSession(
+            record: record,
+            eligibility: .ready(app: app, metadata: record.metadata, warnings: customWarnings(for: app, guest: guest))
+        )
+        onConfirm(session, guest)
+    }
+
+    private func customWarnings(for app: InstalledApp, guest: LiveContainerGuest?) -> [String] {
+        var warnings: [String] = []
+        let meta = record.metadata
+        if meta.isContainerApp {
+            let targetId = guestBundleId(from: app.bundleIdentifier)
+            if targetId != guestBundleId(from: meta.bundleIdentifier) {
+                warnings.append("备份来自「\(meta.appName)」，与目标容器应用不一致，强制恢复可能覆盖目标数据.")
+            }
+        } else if app.bundleIdentifier != meta.bundleIdentifier {
+            warnings.append("备份来自「\(meta.appName)」，与目标应用不一致，强制恢复可能覆盖目标数据.")
+        }
+        warnings.append("关闭 \(app.name) 后再恢复.应用运行时打开的数据库可能无法完整恢复.")
+        return warnings
+    }
+
+    private func loadTargets() {
+        isLoading = true
+        let apps = appList.apps
+        DispatchQueue.global(qos: .userInitiated).async {
+            let guests = LiveContainerDiscovery().discover(installedApps: apps).flatMap { $0.guests }
+            DispatchQueue.main.async {
+                self.normalApps = apps
+                self.guestApps = guests
+                self.isLoading = false
+            }
+        }
+    }
+}
+
+/// Confirmation + progress sheet for restoring a backup.
+struct RestoreView: View {
+    let session: RestoreSession
+    @ObservedObject var appList: AppListViewModel
+    /// When set (custom restore), the chosen container sandbox is pre-selected
+    /// so the user isn't forced to re-pick it.
+    var preselectedGuest: LiveContainerGuest? = nil
+    @Environment(\.dismiss) private var dismiss
+    @StateObject private var vm = RestoreViewModel()
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 20) {
+                switch vm.state {
+                case .confirm:
+                    confirmContent
+                case .running(let current, let done, let total):
+                    VStack(spacing: 12) {
+                        ProgressView()
+                        Text("\(done) / \(total) 个文件")
+                        Text(current)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Button("取消", role: .destructive) {
+                            vm.cancel()
+                        }
+                    }
+                    .padding()
+                case .done(let result):
+                    VStack(spacing: 12) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 48))
+                            .foregroundColor(AppTheme.success)
+                        Text("恢复完成")
+                            .font(.headline)
+                        Text("已恢复 \(result.filesRestored) 个文件到 \(result.targetApp.name)")
+                            .font(.subheadline)
+                            .multilineTextAlignment(.center)
+                        Button("完成") { dismiss() }
+                            .buttonStyle(TintedButtonStyle(tint: AppTheme.categoryDevice))
+                    }
+                    .padding()
+                case .failed(let message):
+                    VStack(spacing: 12) {
+                        // 语义是「恢复失败」= 可重试的失败，不是「设备坏了 / 数据损坏」.
+                        // 按 DesignSystem.swift:622-624 的口径统一成 info.circle + pending 橙.
+                        Image(systemName: "info.circle")
+                            .font(.system(size: 48))
+                            .foregroundStyle(AppTheme.pending)
+                        Text("恢复失败")
+                            .font(.headline)
+                        Text(message)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal)
+                        Button("关闭") { dismiss() }
+                    }
+                    .padding()
+                case .cancelled:
+                    VStack(spacing: 12) {
+                        Text("恢复已取消")
+                            .font(.headline)
+                        Button("关闭") { dismiss() }
+                    }
+                    .padding()
+                }
+                Spacer()
+            }
+            .navigationTitle("恢复备份")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    if case .confirm = vm.state {
+                        Button("取消") { dismiss() }
+                    }
+                }
+            }
+            .onAppear {
+                vm.prepare(session: session, installedApps: appList.apps, preselectedGuest: preselectedGuest)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var confirmContent: some View {
+        if case .ready(let app, let metadata, let warnings) = session.eligibility {
+            VStack(spacing: 16) {
+                AppIconView(
+                    icon: session.record.metadata.iconData.flatMap { UIImage(data: $0) }
+                        ?? appList.icons[app.bundleIdentifier],
+                    size: 64
+                )
+                .padding(.top, 24)
+
+                Text("恢复到 \(app.name)？")
+                    .font(.title3).bold()
+
+                VStack(alignment: .leading, spacing: 8) {
+                    detailRow("应用", app.name)
+                    detailRow("Bundle ID", app.bundleIdentifier)
+                    detailRow("文件数", "\(metadata.fileCount)")
+                    detailRow("数据大小", formatBytes(metadata.totalBytes))
+                    detailRow("备份文件", session.record.archiveFileName)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding()
+                .background(Color.secondary.opacity(0.08))
+                .cornerRadius(12)
+                .padding(.horizontal)
+
+                // Container-app backups may have several UUID sandboxes of the
+                // same guest app. When more than one exists, let the user pick
+                // which sandbox to restore into before confirming.
+                if metadata.isContainerApp {
+                    sandboxPickerSection
+                }
+
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(warnings, id: \.self) { warning in
+                        Label(warning, systemImage: "info.circle")
+                            .font(.footnote)
+                            .foregroundColor(AppTheme.pending)
+                    }
+                    Text("将覆盖 Documents、Library 和 tmp 中现有的同名文件.Keychain 数据不会被恢复.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.horizontal)
+
+                Button {
+                    if let guest = vm.selectedSandbox {
+                        vm.start(session: session, targetGuest: guest)
+                    } else {
+                        vm.start(session: session)
+                    }
+                } label: {
+                    Text("恢复备份")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(TintedButtonStyle(tint: AppTheme.categoryDevice))
+                .controlSize(.large)
+                .padding(.horizontal)
+                .disabled(
+                    metadata.isContainerApp
+                    && (vm.sandboxCandidates?.count ?? 0) > 1
+                    && vm.selectedSandbox == nil
+                )
+            }
+        } else {
+            Text("此备份无法恢复.")
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    /// Shown only for container-app backups that have more than one current
+    /// UUID sandbox. The user must choose a target before restoring.
+    @ViewBuilder
+    private var sandboxPickerSection: some View {
+        switch vm.sandboxCandidates {
+        case .none:
+            AppLoadingRow(title: "正在查找可用沙盒…", level: .block)
+                .padding(.horizontal)
+        case .some(let candidates) where candidates.count > 1:
+            VStack(alignment: .leading, spacing: 8) {
+                Text("选择恢复到哪个沙盒")
+                    .font(.subheadline.weight(.semibold))
+                ForEach(candidates) { guest in
+                    Button {
+                        vm.selectedSandbox = guest
+                    } label: {
+                        HStack(spacing: 10) {
+                            Image(systemName: vm.selectedSandbox?.id == guest.id
+                                  ? "checkmark.circle.fill" : "circle")
+                                .foregroundColor(vm.selectedSandbox?.id == guest.id
+                                                 ? AppTheme.accent : .secondary)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(guest.displayName)
+                                Text((guest.containerPath as NSString).lastPathComponent)
+                                    .font(.system(size: 11, design: .monospaced))
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                        }
+                    }
+                }
+            }
+            .padding()
+            .background(Color.secondary.opacity(0.08))
+            .cornerRadius(12)
+            .padding(.horizontal)
+        default:
+            EmptyView()
+        }
+    }
+
+    private func detailRow(_ title: String, _ value: String) -> some View {
+        HStack(alignment: .top) {
+            Text(title)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(width: 72, alignment: .leading)
+            Text(value)
+                .font(.caption)
+                .multilineTextAlignment(.leading)
+        }
+    }
+
+    private func formatBytes(_ bytes: Int64) -> String {
+        let f = ByteCountFormatter()
+        f.countStyle = .file
+        return f.string(fromByteCount: bytes)
+    }
+}
+
+struct RestoreSession: Identifiable {
+    let id = UUID()
+    let record: BackupRecord
+    let eligibility: RestoreEligibility
+}
+
+struct IdentifiedAlert: Identifiable {
+    let id = UUID()
+    let message: String
+}
+
+/// Swift 6：本类是 SwiftUI 的 UI 模型，只在主线程读写 → 标 `@MainActor` 是语义正确的隔离，
+/// 同时让 `self` 成为 Sendable，内层 `DispatchQueue.main.async { self.x = … }` 的
+/// `sending 'self'` 诊断自然消失（该闭包本来就在主线程执行，语义不变）.
+@MainActor
+final class BackupsListViewModel: ObservableObject {
+    @Published var records: [BackupRecord] = []
+    /// 读取失败的归档（仍会列出，标为「无法读取」）.
+    @Published var unreadable: [UnreadableBackupRecord] = []
+    @Published var isLoading = false
+    @Published var errorMessage: String?
+    @Published var activeRestore: RestoreSession?
+    @Published var alertError: IdentifiedAlert?
+
+    private let catalog = BackupCatalog()
+    private let restoreService = RestoreService()
+
+    /// 一个备份都没有 —— 可读的与读失败的都没有.
+    var isEmpty: Bool { records.isEmpty && unreadable.isEmpty }
+
+    func reload() {
+        isLoading = true
+        errorMessage = nil
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                let listing = try self.catalog.loadRecords()
+                DispatchQueue.main.async {
+                    self.records = listing.records
+                    self.unreadable = listing.unreadable
+                    self.isLoading = false
+                }
+            } catch {
+                // 目录整体列举失败：**明确报错**，绝不回空列表（回空 = 假空）.
+                DispatchQueue.main.async {
+                    self.errorMessage = error.localizedDescription
+                    self.isLoading = false
+                }
+            }
+        }
+    }
+
+    /// 删除一个读取失败的归档（用户确认这是垃圾/损坏文件时）.
+    func deleteUnreadable(_ item: UnreadableBackupRecord) {
+        try? FileManager.default.removeItem(at: item.archiveURL)
+        unreadable.removeAll { $0.id == item.id }
+    }
+
+    func eligibility(for record: BackupRecord, apps: [InstalledApp]) -> RestoreEligibility {
+        restoreService.eligibility(for: record, installedApps: apps)
+    }
+
+    func beginRestore(record: BackupRecord, apps: [InstalledApp]) {
+        let eligibility = restoreService.eligibility(for: record, installedApps: apps)
+        switch eligibility {
+        case .ready:
+            activeRestore = RestoreSession(record: record, eligibility: eligibility)
+        case .appNotInstalled(_, let appName):
+            alertError = IdentifiedAlert(message: "\(appName) 未安装.请先安装该应用后再恢复此备份.")
+        case .invalidArchive(let message):
+            alertError = IdentifiedAlert(message: message)
+        }
+    }
+
+    func delete(at offsets: IndexSet) {
+        let targets = offsets.map { records[$0] }
+        for record in targets {
+            try? catalog.delete(record: record)
+        }
+        records.remove(atOffsets: offsets)
+    }
+
+    /// Batch delete of the given (selected) records.
+    func deleteSelected(_ records: [BackupRecord]) {
+        guard !records.isEmpty else { return }
+        for record in records {
+            try? catalog.delete(record: record)
+        }
+        let ids = Set(records.map { $0.id })
+        self.records.removeAll { ids.contains($0.id) }
+    }
+}
+
+/// Swift 6：同 BackupsListViewModel —— UI 模型，主线程读写，标 @MainActor.
+@MainActor
+final class RestoreViewModel: ObservableObject {
+    enum State {
+        case confirm
+        case running(current: String, done: Int, total: Int)
+        case done(RestoreResult)
+        case failed(String)
+        case cancelled
+    }
+
+    @Published var state: State = .confirm
+    /// `nil` until discovery finishes, an empty array means none present.
+    @Published var sandboxCandidates: [LiveContainerGuest]? = nil
+    /// The sandbox the user chose to restore into (when more than one exists).
+    @Published var selectedSandbox: LiveContainerGuest? = nil
+    private let service = RestoreService()
+    /// Swift 6：取消标志在主线程写（cancel()）、后台还原流程里轮询读（isCancelled 闭包），
+    /// 用系统锁保护避免数据竞争（@MainActor 隔离无法覆盖后台轮询路径）.
+    private let cancelled = OSAllocatedUnfairLock(initialState: false)
+
+    func prepare(session: RestoreSession, installedApps: [InstalledApp], preselectedGuest: LiveContainerGuest? = nil) {
+        cancelled.withLock { $0 = false }
+        state = .confirm
+        if let guest = preselectedGuest {
+            // Custom restore: the user already chose the exact sandbox, so skip
+            // the discovery / re-picker and restore straight into it.
+            selectedSandbox = guest
+            sandboxCandidates = [guest]
+            return
+        }
+        selectedSandbox = nil
+        sandboxCandidates = nil
+        if case .ready(_, let metadata, _) = session.eligibility, metadata.isContainerApp {
+            let record = session.record
+            DispatchQueue.global(qos: .userInitiated).async {
+                let candidates = self.service.candidateSandboxes(for: record, installedApps: installedApps)
+                DispatchQueue.main.async {
+                    self.sandboxCandidates = candidates
+                }
+            }
+        }
+    }
+
+    func start(session: RestoreSession, targetGuest: LiveContainerGuest? = nil) {
+        let app: InstalledApp
+        if let targetGuest = targetGuest {
+            app = targetGuest.installedApp
+        } else {
+            guard case .ready(let readyApp, _, _) = session.eligibility else { return }
+            app = readyApp
+        }
+        cancelled.withLock { $0 = false }
+        state = .running(current: "Starting…", done: 0, total: session.record.metadata.fileCount)
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                let result = try self.service.restore(
+                    record: session.record,
+                    to: app,
+                    progress: { done, total, current in
+                        DispatchQueue.main.async {
+                            self.state = .running(current: current, done: done, total: total)
+                        }
+                    },
+                    isCancelled: { self.cancelled.withLock { $0 } }
+                )
+                DispatchQueue.main.async {
+                    self.state = .done(result)
+                }
+            } catch let error as BackupError {
+                DispatchQueue.main.async {
+                    if case .cancelled = error {
+                        self.state = .cancelled
+                    } else {
+                        self.state = .failed(error.localizedDescription)
+                    }
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    self.state = .failed(error.localizedDescription)
+                }
+            }
+        }
+    }
+
+    func cancel() {
+        cancelled.withLock { $0 = true }
+    }
+}

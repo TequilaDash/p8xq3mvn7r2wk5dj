@@ -1,0 +1,861 @@
+import Foundation
+import UIKit
+
+/// 设备信息（照搬 iDescriptor 完整字段清单）.
+/// 数据源：lockdown 整棵字典（一次 GetValue）+ com.apple.disk_usage 域 +
+/// AFC device_info + DiagnosticsRelay mobilegestalt + sysctl 本机.
+struct DeviceInfoModel {
+    // 顶部/基础
+    var modelName: String          // Marketing 机型名
+    var productType: String        // hw.machine: "iPhone13,1"
+    var hardwareModel: String?     // lockdown HardwareModel: "D52gAP"
+    var modelNumber: String?       // lockdown ModelNumber: "MGA82LL/A"
+    var deviceClass: String?       // lockdown DeviceClass: "iPhone"
+    var activationState: String?   // lockdown ActivationState: "Activated"
+    var region: String?            // lockdown RegionInfo 解析
+    var hardwarePlatform: String?  // lockdown HardwarePlatform: "t8120"
+    var cpuArchitecture: String?    // lockdown CPUArchitecture: "arm64e"
+    var firmwareVersion: String?   // lockdown FirmwareVersion: "iBoot-..."
+    var buildVersion: String?      // lockdown BuildVersion: "21G93"
+    var systemVersion: String      // iOS 26.x
+    var productionDevice: String?  // ProductionSOC bool → "是/否"
+    var jailbroken: Bool?           // 本进程内是否观测到越狱痕迹
+    /// 越狱检测失败的原因（nil = 检测成功，此时 `jailbroken` 才可信）.
+    /// 改为本进程内痕迹探测后不再有失败分支，恒为 nil；字段保留以免改动下游取值面.
+    var jailbrokenError: String?
+    var deviceName: String?         // lockdown DeviceName
+    var deviceColor: String?         // lockdown DeviceColor
+    var wiFiAddress: String?         // lockdown WiFiAddress
+    var ethernetAddress: String?     // lockdown EthernetAddress
+    var bluetoothAddress: String?    // lockdown BluetoothAddress
+    // 序列号/隐私敏感（统一小眼睛+长按复制）
+    var serialNumber: String?        // lockdown SerialNumber
+    var imei: String?                // lockdown InternationalMobileEquipmentIdentity
+    var imei2: String?               // lockdown InternationalMobileEquipmentIdentity2
+    var imsi: String?                // lockdown InternationalMobileSubscriberIdentity
+    var imsi2: String?               // lockdown InternationalMobileSubscriberIdentity2
+    var udid: String?                // lockdown UniqueDeviceID
+    var meid: String?                // lockdown MobileEquipmentIdentifier
+    var ecid: String?                // DiagnosticsRelay mobilegestalt UniqueChipID
+    var mlbSerial: String?           // DiagnosticsRelay mobilegestalt MLBSerialNumber
+    var basebandSerial: String?      // DiagnosticsRelay mobilegestalt BasebandSerialNumber
+    // 存储
+    var totalDiskBytes: Int64?       // lockdown com.apple.disk_usage TotalDataCapacity
+    var totalDataBytes: Int64?
+    var totalSystemBytes: Int64?
+    var storageTotalGB: Int
+    var storageFreeGB: Int
+    // CPU/内存
+    var cpuCount: Int
+    var memoryMB: Int
+    // 移植爱思设备信息面板字段（逆向 i4Tools idm_info.dll 的 255 项键名清单）
+    // 电池（com.apple.mobile.iTunes + com.apple.mobile.battery 域）
+    var designCapacity: Int?            // DesignCapacity（mAh）
+    var maxCapacity: Int?               // AppleRawMaxCapacity -> MaxCapacity（实际容量）
+    var batteryHealthPercent: Int?      // maxCapacity / designCapacity
+    var cycleCount: Int?                // CycleCount
+    var batteryLevel: Int?              // BatteryCurrentCapacity（当前电量 %）
+    var batteryIsCharging: Bool?        // BatteryIsCharging
+    var batteryIsFullyCharged: Bool?    // BatteryIsFullyCharged
+    var batterySerial: String?          // BatterySerialNumber
+    // 基带
+    var basebandVersion: String?        // BasebandVersion
+    var basebandChipId: String?         // BasebandChipId
+    var basebandStatus: String?         // BasebandStatus
+    // 生产与验机（爱思「验机报告」核心）
+    var effectiveProductionStatusAp: String?   // EffectiveProductionStatusAp
+    var effectiveProductionStatusSep: String?  // EffectiveProductionStatusSEP
+    var certificateProductionStatus: String?   // CertificateProductionStatus
+    var fdrSealingStatus: String?              // FDRSealingStatus
+    var internalBuild: Bool?                   // InternalBuild
+    var configNumber: String?                  // ConfigNumber
+    // 零部件序列号（爱思「硬件」页）
+    var coverglassSerial: String?       // CoverglassSerialNumber
+    var lunaFlexSerial: String?         // LunaFlexSerialNumber
+    var mesaSerial: String?             // MesaSerialNumber
+    var arcModuleSerial: String?        // ArcModuleSerialNumber
+    // 状态
+    var isChaperoned: Bool?             // com.apple.mobile.chaperone
+    var developerModeStatus: Bool?      // DeveloperModeStatus
+    var hasBaseband: Bool?              // HasBaseband
+    var hasBattery: Bool?               // HasBattery
+    // 功能支持（DeviceSupports* 全部键）
+    var supportedFeatures: [String] = []
+    // lockdown 全量键值（与爱思设备信息页同源同量——爱思缓存的
+    // <序列号>_info.txt 即lockdown GetValue 全量字典；此前只挑了部分键，
+    // 故检测项远少于爱思）
+    var allValues: [(String, String)] = []
+    // 对齐爱思「设备详情」的派生子项（机型规格来自 DeviceCatalog）
+    var releaseDate: String?          // 上市日期
+    var cpuName: String?              // CPU 类型（Apple A16）
+    var cpuFrequency: String?         // CPU 频率
+    var screenInches: String?         // 屏幕尺寸（英寸）
+    var regulatoryModel: String?      // 监管型号（A2846）
+    var salesType: String?            // 销售类型（零售机/官换机…）
+    var regionName: String?           // 销售地区名（美国）
+    var timeZone: String?             // 时区
+    var localeRegion: String?         // 地区（zh-Hans_JP）
+    var uses24HourClock: Bool?        // 24 小时制
+    var protocolVersion: String?      // 协议版本
+    var partitionType: String?        // 分区类型
+    var hardwareVersion: String?      // 硬件版本（t8120 → 8120）
+    var simStatus: String?            // SIM 卡状态
+    var simTrayStatus: String?        // SIM 卡托状态
+    var carrier1: String?             // eSIM 卡1 运营商
+    var carrier2: String?             // eSIM 卡2 运营商
+    var wirelessBoardSerial: String?  // Wi-Fi 序列号
+    // 设备树（IODeviceTree /product 节点）+ AppleSmartBattery 实测通道补齐
+    // （iOS 27 的 com.apple.mobile.iTunes 域已无零部件序列号，只能从设备树按节点名查）
+    var panelSerial: String?          // 屏幕序列号（product.raw-panel-serial-number）
+    var ambientLightSerial: String?   // 环境光序列号（product.ambient-light-sensor-serial-num）
+    var uniqueModel: String?          // 硬件型号（product.unique-model，如 D37AP）
+    var wifiChipset: String?          // Wi-Fi 芯片（product.wifi-chipset）
+    var basebandChipset: String?      // 基带芯片（product.baseband-chipset）
+    var batteryModelID: String?       // 电池型号（smc-charger.battery-id，如 741-01369）
+    var batteryVoltageMV: Int?        // 电池电压（AppleSmartBattery.Voltage）
+    var batteryAmperageMA: Int?       // 电池电流（AppleSmartBattery.InstantAmperage，负=放电）
+    var batterySkinTempC: Int?        // 电池表皮温度（上次欠压启动记录，℃）
+    var atCriticalLevel: Bool?        // 电池处于临界水平
+    var diskCellType: String?         // 硬盘类型（NVMe default-bits-per-cell → SLC/MLC/TLC/QLC）
+    var iccid: String?                // ICCID（lockdown IntegratedCircuitCardIdentity）
+    var callCapable: Bool?            // 通话功能（lockdown TelephonyCapability）
+    var basebandActivationTicket: String?  // 基带激活版本（lockdown BasebandActivationTicketVersion）
+    var simTrayInserted: Bool?        // 有无卡托（SIMTrayStatus 是否 Inserted）
+    var simsAreEmbedded: Bool?        // 是否全 eSIM（SIM1/SIM2IsEmbedded）
+    /// 设备树/电池节点是否读成功（用于 UI 区分「系统未提供」与「读取失败」）
+    var enrichAvailable: Bool = false
+    // 对齐爱思设备信息首屏的三项检测
+    /// 激活锁（ID 锁）：`com.apple.fmip` → `IsAssociated`
+    var activationLockEnabled: Bool?
+    /// iCloud 是否已登录：`com.apple.mobile.data_sync` 的 AccountNames 里含 `iCloud`
+    var iCloudSignedIn: Bool?
+    /// 崩溃日志条数（CrashReporter 根目录 `.ips`，排除磁盘写入/网络指标类诊断）
+    var crashLogCount: Int?
+    /// 读崩溃日志失败的原因（nil = 读取成功，此时 `crashLogCount` 才可信）.
+    ///
+    /// **「0 次」与「读不到」必须能区分** —— 前者是设备真的没有 panic，
+    /// 后者是没配对文件 / VPN 没开 / 服务不可用 / 列目录失败.原先两者都是 `nil`，
+    /// UI 一律显示「—」，用户无从判断该去修哪一步（这就是「错误折叠」）.
+    /// lockdown 整棵字典读取/解析失败的原因（nil = 读取成功，此时 `raw` 才可信）.
+    var lockdownError: String?
+    var crashLogCountError: String?
+    var raw: [String: Any] = [:]
+}
+
+enum DeviceInfoService {
+    /// lockdown 字典 → 扁平键值对（嵌套字典/数组转字符串），按 key 排序.
+    static func flatten(_ dict: [String: Any]) -> [(String, String)] {
+        dict.compactMap { key, value -> (String, String)? in
+            let text: String
+            switch value {
+            case let s as String:
+                text = s
+            case let b as Bool:
+                text = b ? "true" : "false"
+            case let n as NSNumber:
+                text = n.stringValue
+            case let a as [Any]:
+                text = a.map { String(describing: $0) }.joined(separator: ", ")
+            case let d as [String: Any]:
+                text = d.map { "\($0.key)=\($0.value)" }.joined(separator: ", ")
+            default:
+                text = String(describing: value)
+            }
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return nil }
+            return (key, trimmed)
+        }
+        .sorted { $0.0 < $1.0 }
+    }
+
+    /// 收集完整设备信息（lockdown + AFC + MobileGestalt + sysctl）.
+    /// 同步阻塞——调用方放到后台线程.
+    static func collectFull() throws -> DeviceInfoModel {
+        let machine = stringSysctl("hw.machine") ?? "unknown"
+        let osVersion = ProcessInfo.processInfo.operatingSystemVersion
+        let systemVersion = "\(osVersion.majorVersion).\(osVersion.minorVersion).\(osVersion.patchVersion)"
+        var cpuCount: Int = 0
+        var cpuSize = MemoryLayout<Int>.size
+        sysctlbyname("hw.ncpu", &cpuCount, &cpuSize, nil, 0)
+        var mem: UInt64 = 0
+        var memSize = MemoryLayout<UInt64>.size
+        sysctlbyname("hw.memsize", &mem, &memSize, nil, 0)
+        var storageTotalGB = 0, storageFreeGB = 0
+        if let attrs = try? FileManager.default.attributesOfFileSystem(forPath: NSHomeDirectory()) {
+            let total = (attrs[.systemSize] as? NSNumber)?.uint64Value ?? 0
+            let free = (attrs[.systemFreeSize] as? NSNumber)?.uint64Value ?? 0
+            storageTotalGB = Int(total / 1024 / 1024 / 1024)
+            storageFreeGB = Int(free / 1024 / 1024 / 1024)
+        }
+
+        // 隧道拿 lockdown 整棵字典（核心数据）
+        //
+        // **整个 collectFull 只建一条隧道**.
+        // 原先下面 10 处各自调 makeTunnel()，每处都是「读配对文件 + 3 次 RSD 握手重试 +
+        // CellularTunnelManager.prepareForTunnel」⇒ 一次刷新 10 条完整 RSD 隧道；
+        // 且第一条失败（如 VPN 没开）时后面 9 条仍各跑 3 次重试，失败场景 UI 长时间无响应.
+        // 现在建一条，把 adapter/handshake 传给各 lockdown 变体；建不起来就整体降级为空，
+        // 不再重复尝试.
+        var sharedTunnel: TunnelHandles? = try? Self.makeTunnel()
+        defer { sharedTunnel?.free() }
+        let sharedAdapter = sharedTunnel?.adapter
+        let sharedHandshake = sharedTunnel?.handshake
+
+        // lockdown 整棵字典读失败要留原因.原先 try? ?? [:] 让
+        // 「隧道没建起来 / 解析崩了」与「设备返回的就是空」同值，下游 iCloudSignedIn 之类
+        // 由「字典非空」推出的结论会直接把失败显示成「未开启」.
+        var lockdown: [String: Any] = [:]
+        var lockdownError: String?
+        do { lockdown = try Self.lockdownFullDictOrFallback(sharedAdapter, sharedHandshake) }
+        catch { lockdownError = error.localizedDescription }
+        let region = Self.parseRegion(lockdown["RegionInfo"] as? String)
+        // 区分「确实未越狱」与「读不到」—— 原先 try? 把三种失败折成 nil，
+        // 界面显示「未越狱」，与「就是没越狱」同值.
+        // 检测手段换成沙盒内痕迹探测后不存在「读不到」这一态（见 jailbrokenTrace 注释），
+        // 因此 error 恒为 nil；保留字段是为了不动下游取值面与界面分支.
+        let isJailbroken: Bool? = (Self.jailbrokenTrace() != nil)
+        let jailbrokenError: String? = nil
+        let productionSOC = lockdown["ProductionSOC"] as? Bool
+
+        // MobileGestalt（iOS ≥17.4 已被 Apple 废弃 → 基本恒为 nil，仅留作老系统回退）
+        let (mgUniqueChip, mgMLB, mgBaseband) = (try? Self.mobilegestaltKeys()) ?? (nil, nil, nil)
+
+        // 这些值在 iOS 27 上**lockdown 根字典里就有**，此前误走已废弃的
+        // MobileGestalt / 已残缺的 iTunes 域，导致设备信息里出现一片「—」.
+        let mlbFromLockdown = lockdown["MLBSerialNumber"] as? String
+        let basebandSerialFromLockdown = stringOf(lockdown["BasebandSerialNumber"])
+        let basebandVersionFromLockdown = lockdown["BasebandVersion"] as? String
+        let basebandStatusFromLockdown = stringOf(lockdown["BasebandStatus"])
+
+        // 设备树 + 电池节点补全（单条隧道内查多个节点；失败不影响其它字段）
+        let enrich: DeviceEnrichInfo? = try? DeviceEnrichService.fetch()
+
+        // 爱思同款域采集（逆向 idm_info.dll 得出的域清单）
+        let itunes = (try? Self.lockdownDomainDictOrFallback("com.apple.mobile.iTunes", sharedAdapter, sharedHandshake)) ?? [:]
+        let batteryDomain = (try? Self.lockdownDomainDictOrFallback("com.apple.mobile.battery", sharedAdapter, sharedHandshake)) ?? [:]
+        let chaperone = (try? Self.lockdownDomainDictOrFallback("com.apple.mobile.chaperone", sharedAdapter, sharedHandshake)) ?? [:]
+
+        // 激活锁 / iCloud（键与爱思 idm_info.dll 的 ios_check_fmip / ios_check_iCloud 同源）
+        // · 激活锁 = `com.apple.fmip` → `IsAssociated`（真机实测 false = 未开启，与爱思一致）
+        // · iCloud = `com.apple.mobile.data_sync` 的 Bookmarks/Calendars/Contacts/Notes 里
+        //   `AccountNames` 含 "iCloud"（真机实测本机四项都有 iCloud，与爱思「已开启」一致）
+        let activationLock = (try? Self.lockdownValueOrFallback(domain: "com.apple.fmip",
+                                                                 key: "IsAssociated",
+                                                                 sharedAdapter, sharedHandshake)) as? Bool
+        let dataSync = (try? Self.lockdownDomainDictOrFallback("com.apple.mobile.data_sync", sharedAdapter, sharedHandshake)) ?? [:]
+        var iCloudSignedIn: Bool? = nil
+        if !dataSync.isEmpty {
+            iCloudSignedIn = dataSync.values.contains { value in
+                guard let dict = value as? [String: Any],
+                      let names = dict["AccountNames"] as? [Any] else { return false }
+                return names.contains {
+                    ($0 as? String)?.caseInsensitiveCompare("iCloud") == .orderedSame
+                }
+            }
+        }
+        // crashReportCount 改为 throws（原来 try? 把「读不到」折成 nil，
+        // 与「0 条」在界面上都是「—」）.
+        // **同时保留失败原因**，让 UI 能说清「是没读到」还是「就是 0 次」.
+        var crashCount: Int? = nil
+        var crashCountError: String? = nil
+        do {
+            crashCount = try CrashLogService.shared.crashReportCount()
+        } catch {
+            crashCountError = error.localizedDescription
+        }
+        func intOf(_ v: Any?) -> Int? {
+            if let n = v as? Int { return n }
+            if let n = v as? NSNumber { return n.intValue }
+            if let sv = v as? String { return Int(sv) }
+            return nil
+        }
+        func boolOf(_ v: Any?) -> Bool? {
+            if let b = v as? Bool { return b }
+            if let n = v as? NSNumber { return n.boolValue }
+            return nil
+        }
+        func stringOf(_ v: Any?) -> String? {
+            if let sv = v as? String { return sv }
+            if let n = v as? NSNumber { return n.stringValue }
+            return nil
+        }
+        let designCap = intOf(itunes["DesignCapacity"])
+        let maxCap = intOf(itunes["AppleRawMaxCapacity"]) ?? intOf(itunes["MaxCapacity"])
+        var healthPercent: Int? = nil
+        if let d = designCap, let m = maxCap, d > 0 {
+            healthPercent = Int((Double(m) / Double(d) * 100).rounded())
+        }
+        // DeviceSupports* 功能支持清单（键名集合）
+        let featurePrefix = "DeviceSupports"
+        let features: [String] = itunes.keys
+            .filter { $0.hasPrefix(featurePrefix) && boolOf(itunes[$0]) == true }
+            .map { String($0.dropFirst(featurePrefix.count)) }
+            .sorted()
+
+        // 磁盘域
+        var totalDisk: Int64? = nil
+        var totalData: Int64? = nil
+        var totalSystem: Int64? = nil
+        if let du = try? Self.lockdownDomainDictOrFallback("com.apple.disk_usage", sharedAdapter, sharedHandshake) {
+            totalDisk = (du["TotalDataCapacity"] as? Int).map(Int64.init)
+                ?? (du["TotalDiskCapacity"] as? Int).map(Int64.init)
+            totalData = (du["TotalDataCapacity"] as? Int).map(Int64.init)
+            totalSystem = (du["TotalSystemCapacity"] as? Int).map(Int64.init)
+        }
+
+        // 爱思「设备详情」派生子项（机型规格查 DeviceCatalog 公开规格表）
+        let spec = DeviceCatalog.spec(machine)
+        func carrierOf(_ imsi: String?) -> String? {
+            guard let imsi, imsi.count >= 5 else { return nil }
+            return DeviceCatalog.carrierName(mcc: String(imsi.prefix(3)),
+                                             mnc: String(imsi.dropFirst(3).prefix(2)))
+        }
+        let hardwareVersion: String? = {
+            guard let platform = lockdown["HardwarePlatform"] as? String else { return nil }
+            return platform.hasPrefix("t") ? String(platform.dropFirst()) : platform
+        }()
+
+        return DeviceInfoModel(
+            modelName: Self.friendlyModel(machine),
+            productType: machine,
+            hardwareModel: lockdown["HardwareModel"] as? String,
+            modelNumber: lockdown["ModelNumber"] as? String,
+            deviceClass: lockdown["DeviceClass"] as? String,
+            activationState: lockdown["ActivationState"] as? String,
+            region: region,
+            hardwarePlatform: lockdown["HardwarePlatform"] as? String,
+            cpuArchitecture: lockdown["CPUArchitecture"] as? String,
+            firmwareVersion: lockdown["FirmwareVersion"] as? String,
+            buildVersion: lockdown["BuildVersion"] as? String,
+            systemVersion: systemVersion,
+            productionDevice: productionSOC.map { $0 ? "是" : "否" },
+            jailbroken: isJailbroken,
+            jailbrokenError: jailbrokenError,
+            deviceName: lockdown["DeviceName"] as? String,
+            deviceColor: lockdown["DeviceColor"] as? String,
+            wiFiAddress: lockdown["WiFiAddress"] as? String,
+            ethernetAddress: lockdown["EthernetAddress"] as? String,
+            bluetoothAddress: lockdown["BluetoothAddress"] as? String,
+            serialNumber: lockdown["SerialNumber"] as? String,
+            imei: lockdown["InternationalMobileEquipmentIdentity"] as? String,
+            imei2: lockdown["InternationalMobileEquipmentIdentity2"] as? String,
+            imsi: lockdown["InternationalMobileSubscriberIdentity"] as? String,
+            imsi2: lockdown["InternationalMobileSubscriberIdentity2"] as? String,
+            udid: lockdown["UniqueDeviceID"] as? String,
+            meid: lockdown["MobileEquipmentIdentifier"] as? String,
+            ecid: mgUniqueChip.map { String($0) },
+            mlbSerial: mlbFromLockdown ?? mgMLB,
+            basebandSerial: basebandSerialFromLockdown ?? mgBaseband,
+            totalDiskBytes: totalDisk,
+            totalDataBytes: totalData,
+            totalSystemBytes: totalSystem,
+            storageTotalGB: storageTotalGB,
+            storageFreeGB: storageFreeGB,
+            cpuCount: cpuCount,
+            memoryMB: Int(mem / 1024 / 1024),
+            designCapacity: designCap,
+            maxCapacity: maxCap,
+            batteryHealthPercent: healthPercent,
+            cycleCount: intOf(itunes["CycleCount"]) ?? enrich?.batteryCycleCount,
+            batteryLevel: intOf(batteryDomain["BatteryCurrentCapacity"]) ?? intOf(itunes["BatteryCurrentCapacity"]),
+            batteryIsCharging: boolOf(batteryDomain["BatteryIsCharging"]),
+            batteryIsFullyCharged: boolOf(batteryDomain["BatteryIsFullyCharged"]),
+            batterySerial: (itunes["BatterySerialNumber"] as? String) ?? enrich?.batterySerial,
+            basebandVersion: (itunes["BasebandVersion"] as? String) ?? basebandVersionFromLockdown,
+            basebandChipId: stringOf(itunes["BasebandChipId"]),
+            basebandStatus: stringOf(itunes["BasebandStatus"]) ?? basebandStatusFromLockdown,
+            effectiveProductionStatusAp: itunes["EffectiveProductionStatusAp"] as? String,
+            effectiveProductionStatusSep: itunes["EffectiveProductionStatusSEP"] as? String,
+            certificateProductionStatus: stringOf(itunes["CertificateProductionStatus"]),
+            fdrSealingStatus: stringOf(itunes["FDRSealingStatus"]),
+            internalBuild: boolOf(itunes["InternalBuild"]),
+            configNumber: stringOf(itunes["ConfigNumber"]),
+            // iOS 27 的 iTunes 域已无这些键 → 改从设备树 product 节点取
+            coverglassSerial: enrich?.coverglassSerial,
+            lunaFlexSerial: itunes["LunaFlexSerialNumber"] as? String,
+            mesaSerial: itunes["MesaSerialNumber"] as? String,
+            arcModuleSerial: itunes["ArcModuleSerialNumber"] as? String,
+            isChaperoned: boolOf(chaperone["DeviceIsChaperoned"]) ?? boolOf(lockdown["DeviceIsChaperoned"]),
+            developerModeStatus: boolOf(itunes["DeveloperModeStatus"]),
+            hasBaseband: boolOf(itunes["HasBaseband"]),
+            hasBattery: boolOf(itunes["HasBattery"]),
+            supportedFeatures: features,
+            allValues: Self.flatten(lockdown),
+            releaseDate: spec?.releaseDate,
+            cpuName: spec?.cpu,
+            cpuFrequency: spec?.cpuFrequency,
+            screenInches: spec?.screenInches,
+            regulatoryModel: DeviceCatalog.regulatoryModel[machine],
+            salesType: DeviceCatalog.salesType(lockdown["ModelNumber"] as? String),
+            regionName: DeviceCatalog.regionName(lockdown["RegionInfo"] as? String),
+            timeZone: lockdown["TimeZone"] as? String,
+            localeRegion: Self.userLocaleIdentifier(),
+            uses24HourClock: boolOf(lockdown["Uses24HourClock"]),
+            protocolVersion: stringOf(lockdown["ProtocolVersion"]),
+            partitionType: lockdown["PartitionType"] as? String,
+            hardwareVersion: hardwareVersion,
+            simStatus: lockdown["SIMStatus"] as? String,
+            simTrayStatus: lockdown["SIMTrayStatus"] as? String,
+            carrier1: carrierOf(lockdown["InternationalMobileSubscriberIdentity"] as? String),
+            carrier2: carrierOf(lockdown["InternationalMobileSubscriberIdentity2"] as? String),
+            wirelessBoardSerial: lockdown["WirelessBoardSerialNumber"] as? String,
+            panelSerial: enrich?.panelSerial,
+            ambientLightSerial: enrich?.ambientLightSerial,
+            uniqueModel: enrich?.uniqueModel,
+            wifiChipset: enrich?.wifiChipset,
+            basebandChipset: enrich?.basebandChipset,
+            batteryModelID: enrich?.batteryModelID,
+            batteryVoltageMV: enrich?.batteryVoltageMV,
+            batteryAmperageMA: enrich?.batteryAmperageMA,
+            batterySkinTempC: enrich?.batterySkinTempC,
+            atCriticalLevel: enrich?.atCriticalLevel,
+            diskCellType: enrich?.diskCellType,
+            iccid: lockdown["IntegratedCircuitCardIdentity"] as? String,
+            callCapable: boolOf(lockdown["TelephonyCapability"]),
+            basebandActivationTicket: lockdown["BasebandActivationTicketVersion"] as? String,
+            simTrayInserted: (lockdown["SIMTrayStatus"] as? String).map {
+                $0.localizedCaseInsensitiveContains("Inserted")
+            },
+            simsAreEmbedded: boolOf(lockdown["SIM1IsEmbedded"]).map { embedded1 in
+                embedded1 && (boolOf(lockdown["SIM2IsEmbedded"]) ?? false)
+            },
+            enrichAvailable: enrich.map { $0.coverglassSerial != nil || $0.batterySerial != nil } ?? false,
+            activationLockEnabled: activationLock,
+            iCloudSignedIn: iCloudSignedIn,
+            crashLogCount: crashCount,
+            lockdownError: lockdownError,
+            crashLogCountError: crashCountError,
+            raw: lockdown.merging(itunes) { a, _ in a }
+        )
+    }
+
+    /// **「地区」= 本机语言+区域设置**（如 `zh-Hans_JP`），与「销售地区」是两回事.
+    ///
+    /// 爱思的「地区」显示的也是这种 `语言_区域` 串（如 zh-Hans_JP），而「销售地区」是
+    /// `RegionInfo`（LL/A → 美国/销售渠道）.此前两者都取 RegionInfo，等于同一项显示两遍；
+    /// 且 lockdown 在 iOS 27 已不返回 `Locale`/`UserLocale`（实测为 nil），
+    /// 用设备侧的区域 API 拼出来才是设备当前真实设置.
+    static func userLocaleIdentifier() -> String? {
+        let locale = Locale.current
+        let lang = locale.language.languageCode?.identifier ?? ""
+        let script = locale.language.script?.identifier
+        let region = locale.region?.identifier
+        guard !lang.isEmpty else { return nil }
+        var out = lang
+        if let script, !script.isEmpty { out += "-\(script)" }
+        if let region, !region.isEmpty { out += "_\(region)" }
+        return out
+    }
+
+    static func parseRegion(_ s: String?) -> String? {
+        guard let s, !s.isEmpty else { return nil }
+        return String(s.prefix(16))
+    }
+
+    // MARK: 隧道
+    private struct TunnelHandles {
+        var adapter: OpaquePointer?
+        var handshake: OpaquePointer?
+        mutating func free() {
+            if let handshake { rsd_handshake_free(handshake); self.handshake = nil }
+            if let adapter { adapter_free(adapter); self.adapter = nil }
+        }
+    }
+    private static func pairingPath() -> String {
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("pairingFile.plist").path
+    }
+    private static func makeTunnel() throws -> TunnelHandles {
+        guard FileManager.default.fileExists(atPath: pairingPath()) else {
+            throw NSError(domain: "DeviceInfo", code: -1, userInfo: [NSLocalizedDescriptionKey: "无配对文件"])
+        }
+        var pairingFile: OpaquePointer?
+        if let e = pairingPath().withCString({ rp_pairing_file_read($0, &pairingFile) }) {
+            // 不再吞掉 FFI 错误对象.
+            //
+            // 原实现拿到 `e` 就丢：既不读 `e->message`、也不 `idevice_error_free(e)`.
+            // 后果有二：
+            //   1. 配对文件格式不对 / 损坏时，用户与日志都只看到「读取配对文件失败」六个字，
+            //      拿不到 Rust 侧的真实原因（是缺 DeviceCertificate？还是 plist 解析失败？）；
+            //   2. **每次失败泄漏一个 IdeviceFfiError**.
+            // 对照：AFCService.swift:42-49 与 IPAInstallService.swift:213-219 都会提取 message 并 free.
+            let message = DeviceErrorText.cleaned(e.pointee.message) ?? ""
+            let code = Int(e.pointee.code)
+            idevice_error_free(e)
+            throw NSError(domain: "DeviceInfo", code: code == 0 ? -2 : code,
+                          userInfo: [NSLocalizedDescriptionKey:
+                            message.isEmpty ? "读取配对文件失败" : "读取配对文件失败：\(message)"])
+        }
+        guard let pairingFile else { throw NSError(domain: "DeviceInfo", code: -3, userInfo: [NSLocalizedDescriptionKey: "配对文件解析失败"]) }
+        defer { rp_pairing_file_free(pairingFile) }
+
+        var addr = sockaddr_in()
+        addr.sin_family = sa_family_t(AF_INET)
+        addr.sin_port = in_port_t(RemotePairingPort.current).bigEndian
+        // 软隧道优先（Gnoix 同型，进程内 usbmuxd→lockdown→CoreDeviceProxy→jktcp）：成功即返回，不进卡点门、不依赖 utun 对端.
+        if let soft = SoftTunnelService.shared.createTunnel(label: "读取设备信息", pairingPath: Self.pairingPath()) {
+            return TunnelHandles(adapter: soft.adapter, handshake: soft.handshake)
+        }
+        // 蜂窝隧道支持（默认关）：开关开 + 无 Wi-Fi 时先等本地隧道就绪；其余情况为 no-op.
+        let loopbackGated = CellularGlitchCoordinator.shared.beginLoopbackGate(label: "读取设备信息")
+        defer { if loopbackGated { CellularGlitchCoordinator.shared.endLoopbackGate() } }
+        CellularTunnelManager.shared.prepareForTunnel()
+        let deviceIP = LocalDevVPN.connectIP
+        // 必须校验 inet_pton 返回值.
+        //
+        // 原实现是 `let _ = ...` 丢弃返回值.而 `sockaddr_in()` 全 0 初始化，
+        // inet_pton 失败时**不写入** sin_addr ⇒ 隧道会去连 **0.0.0.0:49152**
+        // （必然失败），而错误只报「创建隧道失败」，用户完全看不出是 IP 写错了.
+        //
+        // 触发入口：设置页「设备 IP」是自由文本，用户填 `10.7.0.1/32`、
+        // `10.7.0`、中文全角句点 `10.7.0.1` 等都会中招.
+        //
+        // 对照：AFCService.swift:81-84 与 IPAInstallService.swift:937-940 都有这个 guard，
+        // 唯独本文件漏了（19 份 createTunnel 实现里只有这一份）.
+        let parseResult = deviceIP.withCString { inet_pton(AF_INET, $0, &addr.sin_addr) }
+        guard parseResult == 1 else {
+            throw NSError(domain: "DeviceInfo", code: -7,
+                          userInfo: [NSLocalizedDescriptionKey:
+                            "隧道 IP 无效：\(deviceIP)（请检查「设置 → 本地隧道」）"])
+        }
+
+        var lastError: NSError?
+        TunnelDiagnostics.begin("设备信息隧道")
+        for _ in 0..<3 {
+            var tunnel = TunnelHandles()
+            let e = "TequilaDashDeviceInfo".withCString { hn in
+                withUnsafePointer(to: &addr) { pointer in
+                    pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                        tunnel_create_rppairing($0, socklen_t(MemoryLayout<sockaddr_in>.stride),
+                            hn, pairingFile, nil, nil, &tunnel.adapter, &tunnel.handshake)
+                    }
+                }
+            }
+            if let e {
+                // **不再吞掉 tunnel_create_rppairing 的错误对象**.
+                //
+                // 旧实现只判 `e != nil` 就丢：既读不到 `e->message`（连不上 49152 /
+                // 配对文件与设备不匹配 / 握手中断 三种原因全被压成同一句「创建隧道失败」），
+                // 也**不调用 idevice_error_free** ⇒ 每次失败泄漏一个 IdeviceFfiError，
+                // 而本函数一轮最多走 3 次、collectFull 里又会被多处调用.
+                // 与同文件上方「读配对文件」分支（已修）保持同一写法.
+                let message = DeviceErrorText.cleaned(e.pointee.message) ?? ""
+                let code = Int(e.pointee.code)
+                idevice_error_free(e)
+                lastError = NSError(domain: "DeviceInfo",
+                                    code: code == 0 ? -5 : code,
+                                    userInfo: [NSLocalizedDescriptionKey:
+                                        message.isEmpty ? "创建隧道失败" : "创建隧道失败：" + message])
+            } else if tunnel.adapter != nil, tunnel.handshake != nil {
+                TunnelDiagnostics.succeed("设备信息隧道")
+                return tunnel
+            }
+            if let h = tunnel.handshake { rsd_handshake_free(h) }
+            if let a = tunnel.adapter { adapter_free(a) }
+        }
+        TunnelDiagnostics.fail("设备信息隧道", error: lastError)
+        throw lastError ?? NSError(domain: "DeviceInfo", code: -6, userInfo: [NSLocalizedDescriptionKey: "创建隧道失败"])
+    }
+
+    /// lockdown GetValue(None, None) → 整棵根字典
+    static func lockdownFullDict() throws -> [String: Any] {
+        var tunnel = try makeTunnel()
+        defer { tunnel.free() }
+        guard let adapter = tunnel.adapter, let handshake = tunnel.handshake else {
+            throw NSError(domain: "DeviceInfo", code: -10, userInfo: [NSLocalizedDescriptionKey: "隧道未建立"])
+        }
+        var client: OpaquePointer?
+        guard lockdownd_connect_rsd(adapter, handshake, &client) == nil, let client else {
+            throw NSError(domain: "DeviceInfo", code: -11, userInfo: [NSLocalizedDescriptionKey: "连接 lockdownd 失败"])
+        }
+        defer { lockdownd_client_free(client) }
+        var node: plist_t?
+        guard lockdownd_get_value(client, nil, nil, &node) == nil, let node else {
+            throw NSError(domain: "DeviceInfo", code: -12, userInfo: [NSLocalizedDescriptionKey: "GetValue 失败"])
+        }
+        defer { plist_free(node) }
+        return try Self.dictFromPlist(node)
+    }
+
+    static func lockdownDomainDict(_ domain: String) throws -> [String: Any] {
+        var tunnel = try makeTunnel()
+        defer { tunnel.free() }
+        guard let adapter = tunnel.adapter, let handshake = tunnel.handshake else {
+            throw NSError(domain: "DeviceInfo", code: -20, userInfo: [NSLocalizedDescriptionKey: "隧道未建立"])
+        }
+        var client: OpaquePointer?
+        guard lockdownd_connect_rsd(adapter, handshake, &client) == nil, let client else {
+            throw NSError(domain: "DeviceInfo", code: -21, userInfo: [NSLocalizedDescriptionKey: "连接失败"])
+        }
+        defer { lockdownd_client_free(client) }
+        var node: plist_t?
+        let rc = domain.withCString { domainCStr in
+            lockdownd_get_value(client, nil, domainCStr, &node)
+        }
+        guard rc == nil, let node else {
+            throw NSError(domain: "DeviceInfo", code: -22, userInfo: [NSLocalizedDescriptionKey: "GetValue 失败"])
+        }
+        defer { plist_free(node) }
+        return try Self.dictFromPlist(node)
+    }
+
+    /// 读 lockdown 的**单个键**（`lockdownd_get_value` 的 key 参数此前恒传 nil）.
+    /// 有些域整域读是空的，但单键有值 —— 例如 `com.apple.fmip` → `IsAssociated`.
+    static func lockdownValue(domain: String, key: String) throws -> Any? {
+        var tunnel = try makeTunnel()
+        defer { tunnel.free() }
+        guard let adapter = tunnel.adapter, let handshake = tunnel.handshake else {
+            throw NSError(domain: "DeviceInfo", code: -30,
+                          userInfo: [NSLocalizedDescriptionKey: "隧道未建立"])
+        }
+        var client: OpaquePointer?
+        guard lockdownd_connect_rsd(adapter, handshake, &client) == nil, let client else {
+            throw NSError(domain: "DeviceInfo", code: -31,
+                          userInfo: [NSLocalizedDescriptionKey: "连接失败"])
+        }
+        defer { lockdownd_client_free(client) }
+        var node: plist_t?
+        let rc = key.withCString { keyCStr in
+            domain.withCString { domainCStr in
+                lockdownd_get_value(client, keyCStr, domainCStr, &node)
+            }
+        }
+        guard rc == nil, let node else {
+            throw NSError(domain: "DeviceInfo", code: -32,
+                          userInfo: [NSLocalizedDescriptionKey: "GetValue 失败"])
+        }
+        defer { plist_free(node) }
+        var binPtr: UnsafeMutablePointer<CChar>?
+        var binLen: UInt32 = 0
+        guard plist_to_bin(node, &binPtr, &binLen) == PLIST_ERR_SUCCESS,
+              let binPtr, binLen > 0 else { return nil }
+        defer { plist_mem_free(binPtr) }
+        return try? PropertyListSerialization.propertyList(
+            from: Data(bytes: binPtr, count: Int(binLen)), options: [], format: nil)
+    }
+
+    // MARK: - 复用同一条隧道的变体
+    //
+    // 原先 collectFull 里 10 处 `try? Self.lockdownXxx()` 各自调 makeTunnel()，
+    // 每次都是「读配对文件 + 3 次 RSD 握手重试 + CellularTunnelManager.prepareForTunnel」.
+    // 一次设备信息刷新 = 10 条完整 RSD 隧道；而且第一条失败（比如 VPN 没开）时，
+    // 后面 9 条仍各自完整跑 3 次重试 ⇒ 失败场景 UI 长时间无响应.
+    //
+    // 下面这组变体把已建好的隧道句柄传进来，让 collectFull 全程只用一条.
+    // 语义与对应的自建隧道版本完全一致，只是不再自己建/释放隧道.
+
+    /// 用已建好的隧道读整棵 lockdown 根字典
+    static func lockdownFullDict(adapter: OpaquePointer, handshake: OpaquePointer) throws -> [String: Any] {
+        var client: OpaquePointer?
+        guard lockdownd_connect_rsd(adapter, handshake, &client) == nil, let client else {
+            throw NSError(domain: "DeviceInfo", code: -11, userInfo: [NSLocalizedDescriptionKey: "连接 lockdownd 失败"])
+        }
+        defer { lockdownd_client_free(client) }
+        var node: plist_t?
+        guard lockdownd_get_value(client, nil, nil, &node) == nil, let node else {
+            throw NSError(domain: "DeviceInfo", code: -12, userInfo: [NSLocalizedDescriptionKey: "GetValue 失败"])
+        }
+        defer { plist_free(node) }
+        return try Self.dictFromPlist(node)
+    }
+
+    /// 用已建好的隧道读某个 lockdown 域
+    static func lockdownDomainDict(_ domain: String,
+                                   adapter: OpaquePointer,
+                                   handshake: OpaquePointer) throws -> [String: Any] {
+        var client: OpaquePointer?
+        guard lockdownd_connect_rsd(adapter, handshake, &client) == nil, let client else {
+            throw NSError(domain: "DeviceInfo", code: -21, userInfo: [NSLocalizedDescriptionKey: "连接失败"])
+        }
+        defer { lockdownd_client_free(client) }
+        var node: plist_t?
+        let rc = domain.withCString { domainCStr in
+            lockdownd_get_value(client, nil, domainCStr, &node)
+        }
+        guard rc == nil, let node else {
+            throw NSError(domain: "DeviceInfo", code: -22, userInfo: [NSLocalizedDescriptionKey: "GetValue 失败"])
+        }
+        defer { plist_free(node) }
+        return try Self.dictFromPlist(node)
+    }
+
+    /// 用已建好的隧道读 lockdown 的单个键
+    static func lockdownValue(domain: String, key: String,
+                              adapter: OpaquePointer,
+                              handshake: OpaquePointer) throws -> Any? {
+        var client: OpaquePointer?
+        guard lockdownd_connect_rsd(adapter, handshake, &client) == nil, let client else {
+            throw NSError(domain: "DeviceInfo", code: -31,
+                          userInfo: [NSLocalizedDescriptionKey: "连接失败"])
+        }
+        defer { lockdownd_client_free(client) }
+        var node: plist_t?
+        let rc = key.withCString { keyCStr in
+            domain.withCString { domainCStr in
+                lockdownd_get_value(client, keyCStr, domainCStr, &node)
+            }
+        }
+        guard rc == nil, let node else {
+            throw NSError(domain: "DeviceInfo", code: -32,
+                          userInfo: [NSLocalizedDescriptionKey: "GetValue 失败"])
+        }
+        defer { plist_free(node) }
+        var binPtr: UnsafeMutablePointer<CChar>?
+        var binLen: UInt32 = 0
+        guard plist_to_bin(node, &binPtr, &binLen) == PLIST_ERR_SUCCESS,
+              let binPtr, binLen > 0 else { return nil }
+        defer { plist_mem_free(binPtr) }
+        return try? PropertyListSerialization.propertyList(
+            from: Data(bytes: binPtr, count: Int(binLen)), options: [], format: nil)
+    }
+
+    // MARK: - 共享隧道入口的兜底包装
+    //
+    // 隧道没建起来时（sharedAdapter/sharedHandshake 为 nil），这些包装直接抛错，
+    // 让调用方的 `try?` 拿到 nil —— 与原先「各自建隧道、失败返回 nil」的行为一致，
+    // 只是不再重复尝试建隧道.
+
+    /// 真机 UDID（lockdown `UniqueDeviceID`，`00008101-…` 形）.
+    /// 8220 取证结论：RP 配对记录 identifier 是 UUID 形配对标识，签名/设备注册
+    /// 必须用这里的真 UDID；隧道不可用等场景返回 nil，由调用方回退.
+    static func trueDeviceUDID() -> String? {
+        guard var tunnel = try? makeTunnel(),
+              let adapter = tunnel.adapter, let handshake = tunnel.handshake else { return nil }
+        defer { tunnel.free() }
+        guard let dict = try? lockdownFullDictOrFallback(adapter, handshake) else { return nil }
+        return dict["UniqueDeviceID"] as? String
+    }
+
+    private static func lockdownFullDictOrFallback(_ adapter: OpaquePointer?,
+                                                   _ handshake: OpaquePointer?) throws -> [String: Any] {
+        guard let adapter, let handshake else {
+            throw NSError(domain: "DeviceInfo", code: -10,
+                          userInfo: [NSLocalizedDescriptionKey: "隧道未建立"])
+        }
+        return try lockdownFullDict(adapter: adapter, handshake: handshake)
+    }
+
+    private static func lockdownDomainDictOrFallback(_ domain: String,
+                                                     _ adapter: OpaquePointer?,
+                                                     _ handshake: OpaquePointer?) throws -> [String: Any] {
+        guard let adapter, let handshake else {
+            throw NSError(domain: "DeviceInfo", code: -20,
+                          userInfo: [NSLocalizedDescriptionKey: "隧道未建立"])
+        }
+        return try lockdownDomainDict(domain, adapter: adapter, handshake: handshake)
+    }
+
+    private static func lockdownValueOrFallback(domain: String, key: String,
+                                                _ adapter: OpaquePointer?,
+                                                _ handshake: OpaquePointer?) throws -> Any? {
+        guard let adapter, let handshake else {
+            throw NSError(domain: "DeviceInfo", code: -30,
+                          userInfo: [NSLocalizedDescriptionKey: "隧道未建立"])
+        }
+        return try lockdownValue(domain: domain, key: key, adapter: adapter, handshake: handshake)
+    }
+
+    /// 改成 throws —— 两条失败路径（plist_to_bin 失败 / 反序列化失败）原先都返回 `[:]`，
+    /// 与「设备上这个域确实是空的」完全同值，调用方无法区分「读到了空域」和「读到了但解析崩了」.
+    /// 现在失败即抛错，由上层 do/catch 记出原因（与 crashLogCountError 同型）.
+    private static func dictFromPlist(_ node: plist_t) throws -> [String: Any] {
+        var binPtr: UnsafeMutablePointer<CChar>?
+        var binLen: UInt32 = 0
+        guard plist_to_bin(node, &binPtr, &binLen) == PLIST_ERR_SUCCESS,
+              let binPtr, binLen > 0 else {
+            throw NSError(domain: "DeviceInfo", code: -40,
+                          userInfo: [NSLocalizedDescriptionKey: "lockdown 节点转二进制 plist 失败"])
+        }
+        defer { plist_mem_free(binPtr) }
+        guard let dict = try? PropertyListSerialization.propertyList(
+            from: Data(bytes: binPtr, count: Int(binLen)), options: [], format: nil) as? [String: Any] else {
+            throw NSError(domain: "DeviceInfo", code: -41,
+                          userInfo: [NSLocalizedDescriptionKey: "lockdown 二进制 plist 反序列化失败"])
+        }
+        return dict
+    }
+
+    /// 本进程内可观测的越狱痕迹（命中返回第一条路径，未命中返回 nil）.
+    ///
+    /// 原实现是 `afc_client_connect_rsd` + `afc_list_directory(afc, "/bin")`
+    /// （注释自称移植 iDescriptor utils.rs:497-502）. 那条用法成立的前提是
+    /// **PC 侧 / 已越狱上下文拿到的 root AFC**；本 App 经 RSD 连到的是
+    /// **按 App 沙盒限定**的 AFC 服务（`idevice/src/services/afc/mod.rs:685` 的
+    /// `com.apple.afc.shim.remote`），`/bin` 在沙盒之外 ⇒ 每次都以「读取 /bin 目录失败」
+    /// 收场，界面固定显示「读取失败」，与设备真实状态无关（-50/-51 同理只在隧道异常时出现）.
+    ///
+    /// 改用与「安全扫描」页同一套判据：`SecurityPresets.suspiciousFiles` 的 78 条路径
+    /// （含 `/var/jb/libjailbreak.dylib`、`/Applications/Cydia.app`、`/jb/jailbreakd.plist` 等）
+    /// 走四重 API 探测（fileExists / stat / fopen / access），全部只依赖本进程可达信息、不建隧道.
+    /// 取舍：这样得到的是「本进程能看到的痕迹」，比 PC 侧工具弱，但**不再有假错误态**；
+    /// 且越狱设备上这些路径本就存在，误判方向是「漏报」而非「误报」.
+    static func jailbrokenTrace() -> String? {
+        SecurityScanner.jailbreakFileTrace()
+    }
+
+    /// DiagnosticsRelay mobilegestalt 取 ECID / MLB / Baseband（一次传 keys 数组）
+    static func mobilegestaltKeys() throws -> (Int64?, String?, String?) {
+        var tunnel = try makeTunnel()
+        defer { tunnel.free() }
+        guard let adapter = tunnel.adapter, let handshake = tunnel.handshake else {
+            return (nil, nil, nil)
+        }
+        var client: OpaquePointer?
+        guard diagnostics_relay_client_connect_rsd(adapter, handshake, &client) == nil, let client else {
+            return (nil, nil, nil)
+        }
+        defer { diagnostics_relay_client_free(client) }
+        let keys: [String] = ["UniqueChipID", "MLBSerialNumber", "BasebandSerialNumber"]
+        // const char ** keys 数组（不可变指针）
+        let keyPtrs: [UnsafePointer<CChar>?] = keys.map { ($0 as NSString).utf8String }
+        var node: plist_t?
+        if let ffiError = keyPtrs.withUnsafeBufferPointer({ buf in
+            diagnostics_relay_client_mobilegestalt(client, buf.baseAddress, UInt(buf.count), &node)
+        }) {
+            idevice_error_free(ffiError)
+            return (nil, nil, nil)
+        }
+        guard let node else { return (nil, nil, nil) }
+        defer { plist_free(node) }
+        var binPtr: UnsafeMutablePointer<CChar>?
+        var binLen: UInt32 = 0
+        guard plist_to_bin(node, &binPtr, &binLen) == PLIST_ERR_SUCCESS,
+              let binPtr, binLen > 0 else { return (nil, nil, nil) }
+        defer { plist_mem_free(binPtr) }
+        guard let dict = (try? PropertyListSerialization.propertyList(
+            from: Data(bytes: binPtr, count: Int(binLen)), options: [], format: nil)) as? [String: Any]
+        else { return (nil, nil, nil) }
+        // 响应可能为 { "UniqueChipID": {...} } 或 { key: value }；兼容两层
+        func value(_ k: String) -> Any? {
+            if let v = dict[k] { return v }
+            if let sub = dict[k] as? [String: Any], let v = sub[k] { return v }
+            return nil
+        }
+        var ecid: Int64? = nil
+        if let v = value("UniqueChipID") {
+            if let n = v as? Int { ecid = Int64(n) }
+            else if let n = v as? Double { ecid = Int64(n) }
+            else if let n = v as? Int64 { ecid = n }
+            else if let s = v as? String { ecid = Int64(s) }
+        }
+        let mlb = value("MLBSerialNumber") as? String
+        let bb = value("BasebandSerialNumber") as? String
+        return (ecid, mlb, bb)
+    }
+
+    private static func stringSysctl(_ name: String) -> String? {
+        var size = 0
+        sysctlbyname(name, nil, &size, nil, 0)
+        guard size > 0 else { return nil }
+        var buf = [CChar](repeating: 0, count: size)
+        sysctlbyname(name, &buf, &size, nil, 0)
+        return String(cString: buf)
+    }
+
+    /// hw.machine → 中文机型名（改走 DeviceCatalog 规格表，
+    /// 修正此前表里缺 `iPhone15,4`（真机机型，会被退化成「iPhone 15,4」）
+    /// 以及误填 `iPhone16,3/16,4`（Apple 无此标识）的问题）
+    static func friendlyModel(_ machine: String) -> String {
+        DeviceCatalog.name(machine)
+    }
+}

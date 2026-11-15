@@ -1,0 +1,554 @@
+import Foundation
+
+struct OwnedApp: Identifiable, Hashable {
+    var id: Int64
+    var bundleId: String
+    var name: String
+    var version: String
+    var purchaseDate: Date?
+    var idText: String { "\(id)" }
+
+    func matches(_ keyword: String) -> Bool {
+        let key = keyword.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return key.isEmpty || name.lowercased().contains(key)
+            || bundleId.lowercased().contains(key) || idText.contains(key)
+    }
+}
+
+enum PurchaseHistoryError: Error, LocalizedError {
+    case noAccount
+    case signerUnavailable
+    case badResponse(String)
+    case rejected(String)
+    case tokenExpired
+
+    var errorDescription: String? {
+        switch self {
+        case .noAccount: return "没有可用的 Apple ID 账号"
+        case .signerUnavailable: return "SAP 资产不可用，无法签名"
+        case let .badResponse(what): return "已购列表响应异常（\(what)）"
+        case let .rejected(message): return message
+        case .tokenExpired: return "已购列表认证未通过，请在账号管理中检查登录状态."
+        }
+    }
+}
+
+/// Configurator purchase DAAP: login -> update(musr) -> databases/{musr}/items.
+/// musr is kept exactly as returned by Apple, matching ipatool's implementation.
+enum PurchaseHistoryService {
+    private static let base = "https://pd.itunes.apple.com/WebObjects/MZPurchaseDaap.woa/purchase"
+    private static let userAgent = "Configurator/2.17 (Macintosh; OS X 15.2; 24C5089c) AppleWebKit/0620.1.16.11.6"
+    // 三种 media kind 并列 AND：移动应用 131072、Arcade 262144、Mac 应用 67108864.
+    // 只带 131072 时 Mac 端已购与部分 Arcade 条目会整条缺席（对齐 ipatool appstore_owned_apps.go:184）.
+    static let query = "('com.apple.itunes.extended\\-media\\-kind:131072',"
+        + "'com.apple.itunes.extended\\-media\\-kind:262144',"
+        + "'com.apple.itunes.extended\\-media\\-kind:67108864')"
+    // Configurator (34) 列移动应用；Mac App Store (13) 另列 Mac 软件与 Apple silicon 上可跑的移动应用.
+    static let storefronts = ["34", "13"]
+
+    /// 同邮箱已购拉取单飞：并发第二个调用方直接等第一班结果，不再各自过会话租约门.
+    /// ① 消灭「25 秒强制接管」造成的双持有者重叠 —— 账号对象与 SAP 签名器（Unicorn 模拟）
+    ///    被两条链路并发使用，是「搜索后点已购闪退」的直接来源（2026-11-01 用户报告）；
+    /// ② 搜索异步补挂与已购页共享同一次拉取，不再各等 20 秒.
+    private static let ownedFlights = OwnedAppsFlight()
+
+    private actor OwnedAppsFlight {
+        private var running: [String: Task<[OwnedApp], Error>] = [:]
+        func run(email: String, _ op: @escaping @Sendable () async throws -> [OwnedApp]) async throws -> [OwnedApp] {
+            let key = email.lowercased()
+            if let existing = running[key] {
+                return try await existing.value
+            }
+            let task = Task { try await op() }
+            running[key] = task
+            defer { running[key] = nil }
+            return try await task.value
+        }
+    }
+
+    static func ownedApps(email: String) async throws -> [OwnedApp] {
+        try await ownedFlights.run(email: email) {
+            try await ownedAppsOnce(email: email)
+        }
+    }
+
+    private static func ownedAppsOnce(email: String) async throws -> [OwnedApp] {
+        try await StoreAccountSession.withAccount(email: email) { account in
+            var first: [OwnedApp] = []
+            do {
+                // A valid empty DAAP table is a result, not proof of an expired token.
+                first = try await list(account: &account)
+            } catch PurchaseHistoryError.tokenExpired {
+                LoginLogger.shared.log("[已购] 认证被拒 → 刷新一次会话后重试", category: .appStore)
+                account = try await AppleIDSignInService.rotate(email: email, failedAccount: account)
+                return try await list(account: &account)
+            }
+            guard first.isEmpty else { return first }
+            // **空表也刷新一次会话再问一遍**.
+            // 会话票据不被 Apple 认可时，DMAP 回的是 `mstt=200 + mtco=0`（合法的空数据库），
+            // 而不是 401 —— 只按 401/403 重登就会把「票据失效」误判成「没有购买记录」.
+            // 只重试一次，且刷新失败时沿用空结果，不让刷新本身把列表页打挂.
+            LoginLogger.shared.log("[已购] 返回空表 → 刷新一次会话后重试", category: .appStore)
+            do {
+                account = try await AppleIDSignInService.rotate(email: email, failedAccount: account)
+            } catch {
+                LoginLogger.shared.log("[已购] 会话刷新未完成（\(error.localizedDescription)），沿用空结果",
+                                       category: .appStore)
+                return first
+            }
+            let again = try await list(account: &account)
+            if again.isEmpty {
+                LoginLogger.shared.log("[已购] 刷新会话后仍为空", category: .appStore)
+            }
+            return again
+        }
+    }
+
+    /// 逐 store 轮询已购库再按 `id` 合并去重（对齐 ipatool `fetchOwnedApps`）.
+    /// 单一 storefront 失败不中止（Mac 端 store 失败不该丢掉移动端已购）；
+    /// 但 `tokenExpired` 直接上抛，交给外层换票重试；两个 store 全败则上抛最后一次错误，
+    /// 避免把「整轮失败」伪装成「空已购列表」.
+    private static func list(account: inout AppStoreAccount) async throws -> [OwnedApp] {
+        // storefront 形如 `<region>-1,<store>`，取逗号前一段作前缀（对齐 Go 的 strings.Cut）.
+        let prefix = account.requestStoreFront.split(separator: ",", maxSplits: 1).first.map(String.init) ?? ""
+        guard !prefix.isEmpty else { throw PurchaseHistoryError.badResponse("无有效的账号 storefront") }
+        let original = account.fullStoreFront
+        defer { account.fullStoreFront = original }
+        var merged: [Int64: OwnedApp] = [:]
+        var succeeded = false
+        var lastError: Error?
+        for store in storefronts {
+            account.fullStoreFront = "\(prefix),\(store)"
+            do {
+                let apps = try await listForStorefront(account: &account)
+                succeeded = true
+                for app in apps {
+                    guard let existing = merged[app.id] else { merged[app.id] = app; continue }
+                    var kept = existing
+                    if let date = app.purchaseDate, date > (existing.purchaseDate ?? .distantPast) {
+                        kept.purchaseDate = date
+                    }
+                    merged[app.id] = kept
+                }
+            } catch PurchaseHistoryError.tokenExpired {
+                throw PurchaseHistoryError.tokenExpired
+            } catch {
+                lastError = error
+                LoginLogger.shared.log("[已购] storefront \(store) 未取到（\(error.localizedDescription)），继续",
+                                       category: .appStore)
+                // 5xx = SAP 端点本身拒了（两个 storefront 打同一端点，结果必然相同）：
+                // 立即断循环，不再让第二家白等一轮 —— 空已购合并优雅降级.
+                if case let PurchaseHistoryError.badResponse(what) = error, what.contains("HTTP 5") {
+                    LoginLogger.shared.log("[已购] storefront 端点 5xx，跳过余下 storefront", category: .appStore)
+                    break
+                }
+            }
+        }
+        if !succeeded, let lastError { throw lastError }
+        return merged.values.sorted { ($0.purchaseDate ?? .distantPast) > ($1.purchaseDate ?? .distantPast) }
+    }
+
+    private static func listForStorefront(account: inout AppStoreAccount) async throws -> [OwnedApp] {
+        let session = PurchaseHistorySession(account: account)
+        defer { account = session.account; session.close() }
+        try await session.prepare()
+        let id = try await session.login()
+        let revision = try await session.update(sessionID: id)
+        return try await session.items(sessionID: id, revision: revision)
+    }
+
+    private final class NoRedirect: NSObject, URLSessionTaskDelegate {
+        func urlSession(_ session: URLSession, task: URLSessionTask,
+                        willPerformHTTPRedirection response: HTTPURLResponse,
+                        newRequest request: URLRequest,
+                        completionHandler: @escaping (URLRequest?) -> Void) {
+            // Never forward X-Token/DSID to an unvalidated Location or lose a signed POST body.
+            completionHandler(nil)
+        }
+    }
+
+    private final class PurchaseHistorySession {
+        var account: AppStoreAccount
+        private let session: URLSession
+        private let guid: String
+        private var signer: SAPContext?
+
+        init(account: AppStoreAccount) {
+            self.account = account
+            guid = AppleIDSignInService.sapGUID()
+            let configuration = URLSessionConfiguration.ephemeral
+            configuration.timeoutIntervalForRequest = 30
+            configuration.timeoutIntervalForResource = 60
+            configuration.urlCredentialStorage = nil
+            configuration.urlCache = nil
+            configuration.httpCookieStorage = nil
+            configuration.httpShouldSetCookies = false
+            session = URLSession(configuration: configuration, delegate: NoRedirect(), delegateQueue: nil)
+        }
+
+        func close() { session.invalidateAndCancel() }
+
+        func login() async throws -> UInt32 {
+            let data = try await send(path: "/login")
+            try PurchaseHistoryService.checkStatus(data, label: "login")
+            guard let id = try firstUInt(data, tag: "mlid"), id > 0, id <= UInt32.max else {
+                throw PurchaseHistoryError.badResponse("login 缺少有效 mlid")
+            }
+            return UInt32(id)
+        }
+
+        func update(sessionID: UInt32) async throws -> UInt32 {
+            let body = Data("session-id=\(sessionID)&revision-number=(null)&query=\(query)".utf8)
+            let data = try await send(path: "/update", body: body,
+                                      contentType: "application/x-www-form-urlencoded", signed: true)
+            try PurchaseHistoryService.checkStatus(data, label: "update")
+            guard let revision = try firstUInt(data, tag: "musr"), revision <= UInt32.max else {
+                throw PurchaseHistoryError.badResponse("update 缺少 musr")
+            }
+            return UInt32(revision)
+        }
+
+        func items(sessionID: UInt32, revision: UInt32) async throws -> [OwnedApp] {
+            let data = try await send(path: "/databases/\(revision)/items",
+                body: PurchaseHistoryService.itemsBody(sessionID: sessionID, revision: revision),
+                contentType: "application/x-dmap-tagged", signed: true)
+            // mtco/mrco 的口径统一交给 parseItems —— 原来这里用 `try firstUInt(...) ?? "missing"`
+            // 把「计数缺失」当成可以忽略，而 parseItems 里同两个 tag 缺失却整轮硬抛（:407）.
+            // 同一份响应的判定只应有一处：这里也改成硬失败，日志只打印已经过校验的计数.
+            let apps = try PurchaseHistoryService.parseItems(data)
+            let counts = try PurchaseHistoryService.recordCounts(data)
+            LoginLogger.shared.log("[已购] total=\(counts.total) returned=\(counts.returned) apps=\(apps.count)",
+                                   category: .appStore)
+            return apps
+        }
+
+        private func send(path: String, body: Data? = nil, contentType: String? = nil,
+                          signed: Bool = false) async throws -> Data {
+            try Task.checkCancellation()
+            guard let url = URL(string: base + path), !account.requestStoreFront.isEmpty else {
+                throw PurchaseHistoryError.badResponse("无有效的账号 storefront")
+            }
+            var request = URLRequest(url: url)
+            request.httpMethod = "POST"
+            request.httpBody = body
+            for (name, value) in headers() { request.setValue(value, forHTTPHeaderField: name) }
+            if let contentType { request.setValue(contentType, forHTTPHeaderField: "Content-Type") }
+            if signed {
+                guard let signer, signer.complete else { throw PurchaseHistoryError.signerUnavailable }
+                request.setValue(try signer.sign(body ?? Data()).base64EncodedString(),
+                                 forHTTPHeaderField: "X-Apple-ActionSignature")
+            }
+            let (data, response) = try await perform(request)
+            LoginLogger.shared.log("[已购] \(path) → HTTP \(response.statusCode)，\(data.count) 字节", category: .appStore)
+            // Apple 会在响应头里**校正**当前账号的 storefront（形如 `143441-1,34`），
+            // 与 vendor/ApplePackage/Commands/Purchase.swift 的处理一致：拿到就回写 fullStoreFront.
+            // 原来从不读这个头，`list` 每次都从**旧**的 requestStoreFront 推前缀（见 list 的 prefix），
+            // 于是账号换区 / 首次登录给的 storefront 永远不生效，已购库一直查错区.
+            if let updated = Self.storeFrontHeader(in: response), updated != account.fullStoreFront {
+                LoginLogger.shared.log("[已购] 账号 storefront 由 \(account.requestStoreFront) 校正为 \(updated)",
+                                       category: .appStore)
+                account.fullStoreFront = updated
+            }
+            if response.statusCode == 401 || response.statusCode == 403 { throw PurchaseHistoryError.tokenExpired }
+            guard response.statusCode == 200 else {
+                throw PurchaseHistoryError.badResponse("\(path) HTTP \(response.statusCode)")
+            }
+            return data
+        }
+
+        private func headers() -> [(String, String)] {
+            let now = Date()
+            let date = DateFormatter()
+            date.locale = Locale(identifier: "en_US_POSIX")
+            date.timeZone = TimeZone(secondsFromGMT: 0)
+            date.dateFormat = "EEE, dd MMM yyyy HH:mm:ss 'GMT'"
+            return [
+                ("Accept", "*/*"), ("Accept-Language", "en-us"),
+                ("Client-Cloud-DAAP-Request-Reason", "5"),
+                ("Client-Cloud-Purchase-Daap-Version", "1.1/Configurator-2.0"),
+                ("Client-DAAP-Version", "3.12"), ("Date", date.string(from: now)),
+                ("iCloud-DSID", account.directoryServicesIdentifier),
+                ("X-Apple-I-Client-Time", ISO8601DateFormatter().string(from: now)),
+                ("X-Apple-I-Locale", "en_US"), ("X-Apple-I-TimeZone", TimeZone.current.identifier),
+                ("X-Apple-Store-Front", account.requestStoreFront),
+                ("X-Apple-TZ", "\(TimeZone.current.secondsFromGMT(for: now) / 60)"),
+                ("X-Dsid", account.directoryServicesIdentifier), ("X-Guid", guid),
+                ("X-Token", account.passwordToken), ("User-Agent", userAgent),
+            ]
+        }
+
+        func prepare() async throws {
+            guard let assets = SAPAssetsLocator.url,
+                  StoreAuthenticationProtocol.isDeviceGUID(guid) else {
+                throw PurchaseHistoryError.signerUnavailable
+            }
+            // `isDeviceGUID` 放行 **12...32** 位偶数长度十六进制 GUID，而 SAP 的
+            // hardwareID 只要**前 12 位 = 6 字节**.原来固定 `stride(from: 0, to: 12, by: 2)`
+            // 再按 `offsetBy:` 取下标 —— GUID 恰好 12 位（DeviceIdentifier.random() 的默认长度）
+            // 时最后一个下标正好落在 endIndex，`guid[index ..< guid.index(index, offsetBy: 2)]`
+            // 越界 trap，整个进程崩溃，且崩在已购列表这种基础路径上.
+            // 改成「先截前 12 位，再按 2 位步进」：下标永远在 prefix 范围内；不足 12 位时
+            // 得到的字节数 < 6，由下一行 guard 兜住（不再 trap）.
+            let guidHead = guid.prefix(12)
+            var bytes: [UInt8] = []
+            bytes.reserveCapacity(6)
+            var cursor = guidHead.startIndex
+            while guidHead.distance(from: cursor, to: guidHead.endIndex) >= 2 {
+                let pairEnd = guidHead.index(cursor, offsetBy: 2)
+                guard let byte = UInt8(guidHead[cursor ..< pairEnd], radix: 16) else {
+                    throw PurchaseHistoryError.signerUnavailable
+                }
+                bytes.append(byte)
+                cursor = pairEnd
+            }
+            guard bytes.count == 6 else { throw PurchaseHistoryError.signerUnavailable }
+            let signer = try SAPContext(assetsURL: assets, hardwareID: Data(bytes))
+            let bagURL = URL(string: "https://init.itunes.apple.com/bag.xml?guid=\(guid)")!
+            let (bagData, bagResponse) = try await perform(URLRequest(url: bagURL))
+            guard bagResponse.statusCode == 200, let bag = StoreAuthenticationProtocol.plist(bagData) else {
+                throw PurchaseHistoryError.badResponse("SAP bag HTTP \(bagResponse.statusCode)")
+            }
+            let nested = bag["urlBag"] as? [String: Any] ?? [:]
+            func value(_ key: String) -> Any? { bag[key] ?? nested[key] }
+            // 与登录侧口径统一 —— 只要求端点**落在 Apple 自有域内**，不再 pin 具体主机名；
+            // bag 缺字段时用内置兜底.此前登录已放宽而已购没放宽，会出现
+            // 「登录能过、已购签不出」的不对称（jsbox-re 发现）.
+            let bagVersion = StoreAuthenticationProtocol.string(value("sign-sap-version"))
+            if !bagVersion.isEmpty, bagVersion != "200" {
+                LoginLogger.shared.log("[已购] bag 的 sign-sap-version=\(bagVersion)（非 200），按 200 处理",
+                                       category: .appStore)
+            }
+            let certificateURL = publicURL(value("sign-sap-setup-cert"))
+                ?? URL(string: StoreAuthenticationProtocol.fallbackSAPCertURL)
+            let setupURL = publicURL(value("sign-sap-setup"))
+                ?? URL(string: StoreAuthenticationProtocol.fallbackSAPSetupURL)
+            guard let certificateURL, let setupURL else {
+                throw PurchaseHistoryError.signerUnavailable
+            }
+            let (certData, certResponse) = try await perform(URLRequest(url: certificateURL))
+            guard certResponse.statusCode == 200,
+                  let cert = StoreAuthenticationProtocol.plist(certData)?["sign-sap-setup-cert"] as? Data else {
+                throw PurchaseHistoryError.badResponse("SAP certificate HTTP \(certResponse.statusCode)")
+            }
+            let exchange = try signer.exchangeData(cert, version: 200)
+            var setup = URLRequest(url: setupURL)
+            setup.httpMethod = "POST"
+            setup.setValue("application/x-apple-plist", forHTTPHeaderField: "Content-Type")
+            setup.httpBody = try PropertyListSerialization.data(
+                fromPropertyList: ["sign-sap-setup-buffer": exchange], format: .xml, options: 0)
+            let (replyData, replyResponse) = try await perform(setup)
+            guard replyResponse.statusCode == 200,
+                  let reply = StoreAuthenticationProtocol.plist(replyData)?["sign-sap-setup-buffer"] as? Data else {
+                throw PurchaseHistoryError.badResponse("SAP setup HTTP \(replyResponse.statusCode)")
+            }
+            _ = try signer.exchangeData(reply, version: 200)
+            guard signer.complete else { throw PurchaseHistoryError.signerUnavailable }
+            self.signer = signer
+        }
+
+        private func perform(_ original: URLRequest) async throws -> (Data, HTTPURLResponse) {
+            try Task.checkCancellation()
+            var request = original
+            // 规则 29：失败路径超时 10s 封顶 —— SAP 端点 5xx 慢响应曾把 storefront 循环拖到几十秒.
+            request.timeoutInterval = 10
+            request.httpShouldHandleCookies = false
+            request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+            if let url = request.url {
+                for (name, value) in account.cookie.buildCookieHeader(url) {
+                    request.setValue(value, forHTTPHeaderField: name)
+                }
+            }
+            let (data, response) = try await session.data(for: request)
+            guard let http = response as? HTTPURLResponse, let url = http.url else {
+                throw PurchaseHistoryError.badResponse("no response")
+            }
+            account.cookie.mergeCookies(HTTPClientCookie.parseResponse(http.allHeaderFields, for: url))
+            return (data, http)
+        }
+
+        /// 响应头 `X-Set-Apple-Store-Front`（形如 `143441-1,34`）—— Apple 用它校正账号所在区.
+        /// 只接受「数字区号(-1)?,(数字)」这一种形态，避免把异常头写进账号快照.
+        static func storeFrontHeader(in response: HTTPURLResponse) -> String? {
+            guard let raw = response.value(forHTTPHeaderField: "X-Set-Apple-Store-Front")?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+                  !raw.isEmpty,
+                  raw.range(of: "^[0-9]+(-[0-9]+)?,[0-9]+$", options: .regularExpression) != nil else {
+                return nil
+            }
+            return raw
+        }
+
+        /// 与登录侧同款 —— https + Apple 自有域（不再 pin 具体主机名）
+        private func publicURL(_ value: Any?) -> URL? {
+            guard let text = value as? String, let url = URL(string: text),
+                  url.scheme?.lowercased() == "https", let host = url.host?.lowercased(),
+                  StoreAuthenticationProtocol.isAppleHost(host),
+                  url.user == nil, url.password == nil, url.fragment == nil,
+                  url.port == nil || url.port == 443 else { return nil }
+            return url
+        }
+    }
+
+    // Pure DAAP codecs: use the same parser in production and offline regression tests.
+    static func itemsBody(sessionID: UInt32, revision: UInt32) -> Data {
+        let payload = tag("mstc", uint32(UInt32(Date().timeIntervalSince1970)))
+            + tag("mlid", uint32(sessionID)) + tag("mikd", Data([2]))
+            + tag("musr", uint32(revision)) + tag("mder", uint32(0))
+            + tag("mque", Data(query.utf8)) + tag("aetl", Data())
+        return tag("adsr", payload)
+    }
+
+    static func tag(_ name: String, _ payload: Data) -> Data {
+        Data(name.utf8) + uint32(UInt32(payload.count)) + payload
+    }
+
+    static func uint32(_ value: UInt32) -> Data {
+        var big = value.bigEndian
+        return withUnsafeBytes(of: &big) { Data($0) }
+    }
+
+    static func checkStatus(_ data: Data, label: String) throws {
+        guard let status = try firstUInt(data, tag: "mstt") else {
+            throw PurchaseHistoryError.badResponse("\(label) 缺少 DAAP mstt")
+        }
+        if status == 401 || status == 403 { throw PurchaseHistoryError.tokenExpired }
+        guard status == 200 else { throw PurchaseHistoryError.rejected("\(label) 被拒绝（DAAP \(status)）") }
+    }
+
+    static func firstUInt(_ data: Data, tag target: String) throws -> UInt64? {
+        var result: UInt64?
+        try walk(data) { name, value in
+            guard result == nil, name == target else { return }
+            if value.count == 4 { result = UInt64(value.withUnsafeBytes { $0.loadUnaligned(as: UInt32.self).bigEndian }) }
+            if value.count == 8 { result = value.withUnsafeBytes { $0.loadUnaligned(as: UInt64.self).bigEndian } }
+        }
+        return result
+    }
+
+    private static let containers: Set<String> = [
+        "adbs", "adsr", "aply", "avdb", "mbcl", "mccr", "mcty", "mdcl", "mlcl", "mlit", "mlog", "msrv", "mupd",
+    ]
+
+    static func walk(_ data: Data, depth: Int = 0, visit: (String, Data) throws -> Void) throws {
+        guard depth <= 16 else { throw PurchaseHistoryError.badResponse("DMAP 嵌套过深") }
+        var offset = 0
+        while offset < data.count {
+            guard data.count - offset >= 8 else { throw PurchaseHistoryError.badResponse("DMAP 头被截断") }
+            let name = String(decoding: data.subdata(in: offset ..< offset + 4), as: UTF8.self)
+            let length = Int(data.subdata(in: offset + 4 ..< offset + 8)
+                .withUnsafeBytes { $0.loadUnaligned(as: UInt32.self).bigEndian })
+            guard length <= data.count - offset - 8 else { throw PurchaseHistoryError.badResponse("DMAP 内容被截断") }
+            let value = data.subdata(in: offset + 8 ..< offset + 8 + length)
+            try visit(name, value)
+            if containers.contains(name) { try walk(value, depth: depth + 1, visit: visit) }
+            offset += 8 + length
+        }
+    }
+
+    /// DAAP 记录计数：`mtco` = 服务端声称的总数，`mrco` = 本次实际返回数.
+    /// 两个 tag 的**缺失即失败**只在 `recordCounts` 一处判定 —— 原来 `items()` 的日志用
+    /// `?? "missing"` 静默容忍、`parseItems` 却硬抛，同一份响应有两套口径.
+    static func recordCounts(_ data: Data) throws -> (total: UInt64, returned: UInt64) {
+        guard let returned = try firstUInt(data, tag: "mrco"),
+              let total = try firstUInt(data, tag: "mtco") else {
+            throw PurchaseHistoryError.badResponse("items 缺少记录计数")
+        }
+        return (total, returned)
+    }
+
+    static func parseItems(_ data: Data) throws -> [OwnedApp] {
+        guard String(decoding: data.prefix(4), as: UTF8.self) == "adbs" else {
+            throw PurchaseHistoryError.badResponse("items 缺少 adbs")
+        }
+        try checkStatus(data, label: "items")
+        var apps: [OwnedApp] = []
+        var seen = Set<Int64>()
+        var recordCount = 0
+        try walk(data) { name, payload in
+            guard name == "mlit" else { return }
+            recordCount += 1
+            var app = OwnedApp(id: 0, bundleId: "", name: "", version: "", purchaseDate: nil)
+            try walk(payload) { field, value in
+                switch field {
+                case "aeSI":
+                    if value.count == 4 { app.id = Int64(value.withUnsafeBytes { $0.loadUnaligned(as: UInt32.self).bigEndian }) }
+                    if value.count == 8 { app.id = Int64(bitPattern: value.withUnsafeBytes { $0.loadUnaligned(as: UInt64.self).bigEndian }) }
+                case "aeBI": app.bundleId = String(decoding: value, as: UTF8.self)
+                case "aeLN": app.name = String(decoding: value, as: UTF8.self)
+                case "minm": if app.name.isEmpty { app.name = String(decoding: value, as: UTF8.self) }
+                case "aePd": app.version = String(decoding: value, as: UTF8.self)
+                case "asdp":
+                    if value.count == 4 {
+                        let seconds = value.withUnsafeBytes { $0.loadUnaligned(as: UInt32.self).bigEndian }
+                        app.purchaseDate = Date(timeIntervalSince1970: TimeInterval(seconds))
+                    }
+                default: break
+                }
+            }
+            guard app.id > 0 else { throw PurchaseHistoryError.badResponse("已购条目缺少有效 aeSI") }
+            if seen.insert(app.id).inserted { apps.append(app) }
+        }
+        let counts = try recordCounts(data)
+        guard counts.returned == UInt64(recordCount) else {
+            throw PurchaseHistoryError.badResponse("条目数与 DAAP 计数不一致")
+        }
+        guard counts.total >= counts.returned else {
+            throw PurchaseHistoryError.badResponse("条目数与 DAAP 计数不一致")
+        }
+        let returned = counts.returned
+        let total = counts.total
+        // DAAP 已购库**不做服务端分页**（对齐 ipatool：`ownedAppsPage` 只是对已取回数组做本地切片，
+        // `fetchOwnedAppsForStorefront` 一次性取全量，且完全不校验 mtco/mrco）.
+        // 这里若 Apple 只回了一部分（returned < total），按已返回的条目继续，不再硬失败 ——
+        // 否则一个被截断的响应会让整个「已购列表」打不开，用户连已下架的都看不到、更下不了.
+        if total != returned {
+            LoginLogger.shared.log("[已购] Apple 只返回部分记录（\(returned)/\(total)），按已返回 \(apps.count) 条继续",
+                                   category: .appStore)
+        }
+        return apps.sorted { ($0.purchaseDate ?? .distantPast) > ($1.purchaseDate ?? .distantPast) }
+    }
+
+    // MARK: - 下架图标（NB 下架库）
+
+    /// 下架应用的图标：Apple 的 `lookup` 对下架应用**天然返回空**（它就是因为下架才缺席），
+    /// 所以这些行在已购列表里一直只显示字母块.NB 下架库收录时留下了 `iconPath`
+    /// （mzstatic CDN 直链），按 **App Store ID → Bundle ID → 名称** 依次认领，
+    /// 认不到就不写（宁缺勿错 —— 图标配错比字母块更糟）.
+    ///
+    /// 只在**已判定下架**的条目上调用（调用方要先跑完 `lookup` 才知道哪些下架），
+    /// 并发 4、总量封顶 30，避免把已购列表拖慢.
+    static func offSaleIcons(for apps: [OwnedApp], limit: Int = 30) async -> [Int64: String] {
+        let targets = Array(apps.prefix(limit)).filter { !$0.name.isEmpty || !$0.bundleId.isEmpty }
+        guard !targets.isEmpty else { return [:] }
+        var table: [Int64: String] = [:]
+        var index = 0
+        while index < targets.count {
+            let slice = Array(targets[index ..< min(index + 4, targets.count)])
+            index += 4
+            await withTaskGroup(of: (Int64, String?).self) { group in
+                for app in slice {
+                    group.addTask { await offSaleIcon(for: app) }
+                }
+                for await (id, icon) in group {
+                    if let icon, !icon.isEmpty { table[id] = icon }
+                }
+            }
+        }
+        return table
+    }
+
+    /// 单个下架应用 → 图标直链.搜不到 / 认不出身份 ⇒ `nil`（不猜）.
+    private static func offSaleIcon(for app: OwnedApp) async -> (Int64, String?) {
+        let key = app.name.isEmpty ? app.bundleId : app.name
+        guard !key.isEmpty,
+              let hits = try? await NBStoreClient.searchOffSaleApp(keyword: key),
+              !hits.isEmpty else { return (app.id, nil) }
+        let byID = hits.first { ($0.storeID ?? "") == app.idText }
+        let byBundle = app.bundleId.isEmpty
+            ? nil
+            : hits.first { ($0.bundleID ?? "").caseInsensitiveCompare(app.bundleId) == .orderedSame }
+        let byName = hits.first { $0.displayName.caseInsensitiveCompare(key) == .orderedSame }
+        guard let match = byID ?? byBundle ?? byName else { return (app.id, nil) }
+        return (app.id, match.displayIcon)
+    }
+}

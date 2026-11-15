@@ -1,0 +1,813 @@
+import SwiftUI
+import UIKit
+
+/// AppStore 应用详情.
+struct AppStoreDetailView: View {
+    @State var item: AppStoreItem
+
+    /// 从「已购列表」的下架条目进来时为 true：App Store 已查不到它 ——
+    /// 详情改吃 NB 下架库内嵌的那份 lookup 快照（不白屏），且不给「去 App Store 安装」.
+    var delisted: Bool = false
+    /// 从「已购列表」进来时带上的账号邮箱：历史版本 / 下载要用**持有该已购的那个账号**，
+    /// 不能默认拿全局「当前下载账号」（两者可能不是同一个）.
+    var accountEmail: String? = nil
+
+    @ObservedObject private var center = IPADownloadCenter.shared
+    @State private var expanded = false
+    @State private var isFavorite = false
+    @State private var favoriteCount = 0
+
+    // 安装方式
+    @State private var showInstallOptions = false
+    @State private var showAccountPicker = false
+
+    // 预览浏览器
+    //
+    // 从 `viewerIndex: Int?` 改成「图数组 + 看第几张」——图标预览要看的是图标、
+    // 截图预览要看的是截图，共用一个查看器就得让数组跟着点的那一项变（列表页本来就是这套写法）.
+    // 「图数组 + 看第几张」**两份都收进 `ImagePreviewTarget`**，页面上不再留
+    // `previewImages`（原来数组与触发器是两次独立写入，弹窗会读到旧的空数组 → 「没有可查看的图片」）.
+    @State private var previewTarget: ImagePreviewTarget?
+
+    // 内置网页
+    @State private var browserTarget: LinkShareTarget?
+
+    // 下载管理
+    @State private var showDownloadManager = false
+
+    // App 隐私（App Store 商品页 HTML，免登录；拿不到就整节不显示）
+    @State private var privacyGroups: [AppPrivacyGroup] = []
+
+    var body: some View {
+        List {
+            if delisted { delistedSection }
+            headerSection
+            if !item.screenshots.isEmpty { screenshotsSection }
+            infoSection
+            if let notes = item.releaseNotes, !notes.isEmpty { releaseNotesSection(notes) }
+            if let desc = item.summary, !desc.isEmpty { descriptionSection(desc) }
+            if !privacyGroups.isEmpty { privacySection }
+            moreSection
+        }
+        .listStyle(.insetGrouped)
+        .navigationTitle(item.name)
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                // 每点一次 = 收进收藏栏一次（收藏栏按时间独立成条）；
+                // 要撤销请长按 → 「清空该应用的收藏」.
+                Button {
+                    let count = AppFavoritesStore.shared.add(item)
+                    isFavorite = true
+                    ToastCenter.shared.show(count > 1 ? "已收藏（第 \(count) 次）" : "已加入收藏栏")
+                } label: {
+                    HStack(spacing: 3) {
+                        Image(systemName: isFavorite ? "star.fill" : "star")
+                            .foregroundStyle(isFavorite ? AppTheme.warning : .secondary)
+                        if favoriteCount > 1 {
+                            Text("\(favoriteCount)")
+                                .font(.caption2.monospacedDigit())
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                .contextMenu {
+                    if favoriteCount > 0 {
+                        Button(role: .destructive) {
+                            AppFavoritesStore.shared.removeAll(appId: item.id)
+                            isFavorite = false
+                            ToastCenter.shared.show("已移出收藏栏")
+                        } label: {
+                            Label("清空该应用的收藏", systemImage: "star.slash")
+                        }
+                    }
+                }
+            }
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    showDownloadManager = true
+                } label: {
+                    // 有进行中的任务时带小圆点
+                    Image(systemName: center.activeJobs.isEmpty
+                          ? "arrow.down.circle" : "arrow.down.circle.fill")
+                        .foregroundStyle(center.activeJobs.isEmpty ? Color.secondary : AppTheme.categoryDownload)
+                }
+            }
+        }
+        .sheet(isPresented: $showDownloadManager) {
+            NavigationStack {
+                // AppStore 商店的「下载管理」**只列 Apple ID 通道**的下载
+                // （用户要求「每个入口只显示自己来源的东西」）—— 第三方软件源 / 免登录源的
+                // 下载不再混进本页（它们各自在自己商店的下载管理里）.
+                // 来源集合要覆盖**本页自己能发起的全部下载**：`:123` / `:555` 走
+                // `startWithAppleID`（.appleID），`:592` 走 `startFromI4Source`（.i4Free）.
+                // 原先只传 `[.appleID]` ⇒ 本页发起的爱思源下载在自己的下载管理里看不到.
+                IPADownloadManagerView(filterSource: [.appleID, .i4Free])
+                    .toolbar {
+                        ToolbarItem(placement: .topBarTrailing) {
+                            Button("完成") { showDownloadManager = false }
+                        }
+                    }
+            }
+        }
+        .sheet(isPresented: $showInstallOptions) {
+            InstallOptionsSheet(
+                appleIDSubtitle: appleIDSubtitle,
+                onAppleID: {
+                    showInstallOptions = false
+                    chooseAppleIDAndInstall()
+                },
+                onI4: {
+                    showInstallOptions = false
+                    installFromFreeSource()
+                },
+                onAcquireLicense: {
+                    showInstallOptions = false
+                    acquireLicense()
+                })
+            .presentationDetents([.height(344)])
+            .presentationDragIndicator(.visible)
+        }
+        .sheet(isPresented: $showAccountPicker) {
+            AppleIDPickerSheet { email in
+                showAccountPicker = false
+                IPADownloadCenter.shared.startWithAppleID(item: item, email: email)
+                ToastCenter.shared.show("已开始用「\(email)」下载")
+            }
+            .presentationDetents([.medium])
+        }
+        .sheet(item: $browserTarget) { target in
+            InAppBrowserView(title: target.title, url: target.url)
+        }
+        .fullScreenCover(item: $previewTarget) { target in
+            // 预览组件已搬去 `ImagePreviewSupport.swift`（`ImageGalleryViewer`），
+            // 与爱思源详情页共用同一套 —— 这里只是换个名字，行为一字未改.
+            // `urls` 改读预览数组（点图标就是 [图标]，点截图就是整组截图）.
+            // 这份数组现在**在 target 里**（不再读页面上的 `previewImages`）
+            ImageGalleryViewer(urls: target.urls, startIndex: target.index)
+        }
+        .toastHost()
+        .task { await loadDetail() }
+        .onAppear { refreshFavorite() }
+        // 下拉刷新：先清掉商品页缓存（含平台限制类失败的负缓存）再重新取数 ——
+        // 用户换网络 / 挂代理 / 换账号后能立刻重试，不必等负缓存 TTL 到期.
+        .refreshable {
+            AppStoreService.clearProductPageCache()
+            await loadDetail()
+        }
+    }
+
+    /// 同步星号状态（收藏栏按次计数，同一应用可能有多条）
+    private func refreshFavorite() {
+        favoriteCount = AppFavoritesStore.shared.count(appId: item.id)
+        isFavorite = favoriteCount > 0
+    }
+
+    /// Apple ID 通道的副标题（未登录时说明清楚）
+    private var appleIDSubtitle: String {
+        let list = AppStoreDownloadStore.shared.usableAccounts
+        if list.isEmpty { return "尚未登录 Apple ID" }
+        if list.count == 1 { return list[0].email }
+        return "共 \(list.count) 个账号，可自选"
+    }
+
+    private var activeJob: IPADownloadCenter.Job? {
+        center.activeJob(bundleId: item.bundleId, name: item.name)
+    }
+
+    /// 下架提示：这些条目 Apple 已经搜不到，页面信息来自下架库收录的快照.
+    private var delistedSection: some View {
+        Section {
+            Label("已从 App Store 下架 · 信息来自下架库快照.",
+                  systemImage: "info.circle")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    // MARK: 头部（图标 + 信息 + 获取按钮：同一张卡）
+
+    private var headerSection: some View {
+        Section {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(alignment: .top, spacing: 14) {
+                    iconView
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(item.name).font(.headline).lineLimit(2)
+                        if let seller = item.seller {
+                            Text(seller).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                        }
+                        HStack(spacing: 8) {
+                            Text(item.priceText)
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(item.priceText == "免费" ? AppTheme.success : AppTheme.categoryStore)
+                            if let r = item.ratingText {
+                                Label(r, systemImage: "star.fill")
+                                    .font(.caption).foregroundStyle(AppTheme.pending)
+                            }
+                            if let c = item.ratingCount {
+                                Text("(\(c.formattedCount))")
+                                    .font(.caption2).foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                    Spacer(minLength: 0)
+                }
+
+                installArea
+            }
+            .padding(.vertical, 6)
+        }
+    }
+
+    /// 图标：长按只弹菜单，点菜单里的「查看图标 / 提取图标」才动作（避免误触）.
+    ///
+    /// 两项都换成 `ImagePreviewSupport.swift` 里的共用实现 —— 与 AppleID 列表、
+    /// 爱思源两处一字不差（原来这里只有「提取图标」）.
+    private var iconView: some View {
+        AsyncImage(url: URL(string: item.iconURL ?? item.iconSmallURL ?? "")) { phase in
+            switch phase {
+            case .success(let img): img.resizable().scaledToFit()
+            case .failure: Image(systemName: "app.dashed").foregroundStyle(.secondary)
+            default: ProgressView().controlSize(.small)
+            }
+        }
+        .frame(width: 96, height: 96)
+        .clipShape(RoundedRectangle(cornerRadius: 21, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: 21, style: .continuous))
+        .contextMenu {
+            iconMenuItems(iconURL: item.iconURL ?? item.iconSmallURL,
+                          fileNameBase: "\(item.bundleId ?? item.id)-icon") {
+                // 图数组由 `showIconPreview` 写进 target
+                showIconPreview(item.iconURL ?? item.iconSmallURL, target: $previewTarget)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var installArea: some View {
+        if let job = activeJob {
+            // 与「下载管理」页同款的三段式展示 —— 阶段胶囊 + 文字 + 百分比 + 进度条 + 操作.
+            // 原先只有「一行文字 + 一条百分比 + 细进度条」，看不出当前处于哪个阶段
+            //（下载与安装共用同一条 0→100% 的总体进度，光看数字分不清是在下包还是在装包）.
+            VStack(alignment: .leading, spacing: 10) {
+                // ▸▸▸ ：**与其它 5 个下载渲染页统一**.
+                //
+                // 「阶段文案」的唯一真源是 `job.displayStage`（见 `IPADownloadCenter.Job.displayStage`）：
+                // 它**只特判 `.paused`**（该态恒返回「已暂停」），其余阶段一律原样透出 `stageText`；
+                // `.failed` / `.done` **不**归一 —— 归一会把「文件不存在」「已下载」这类具体原因
+                // 抹成「失败」「已完成」，丢信息.本页此前各自拼 `phase == .paused ? "已暂停" : stageText`
+                // 去遮「暂停态却被滞后回调刷成『下载中』」的矛盾 —— 现在直接读这一个取值，不再推导.
+                //
+                // 胶囊画的是 `phase.title`（阶段名）；「额外一行」只在文案与胶囊**不同**时才画，
+                // 免得同屏出现两遍相同文字（如「下载中」）.所以「等待中 + 排队中」「下载中 + 准备中」
+                // 这种**两段**是有意的（胶囊 = 阶段、黑字 = 细节），与改前一致，**不是**回归.
+                // 本页状态行由 `activeJob`（只认 `phase.isBusy`）驱动 ⇒ 实际只会落到
+                // `.waiting / .downloading / .paused / .installing` 四态（`.done` / `.failed` 走下面另一分支）.
+                HStack(spacing: 8) {
+                    phaseChip(job.phase)
+                    if job.displayStage != job.phase.title {
+                        Text(job.displayStage)
+                            .font(.subheadline.weight(.medium))
+                            .lineLimit(1)
+                    }
+                    Spacer(minLength: 8)
+                    Text("\(Int(job.overall * 100))%")
+                        .font(.subheadline.monospacedDigit().weight(.semibold))
+                        .foregroundStyle(.secondary)
+                }
+                ProgressView(value: min(1, max(0, job.overall)))
+                    .animation(.easeOut(duration: 0.15), value: job.overall)
+
+                HStack(spacing: 16) {
+                    // 暂停/继续：只有直链下载期间可用（安装阶段不可暂停）
+                    //
+                    // 这个按钮的两半都是从 `center` **实时**读的
+                    //（`activeJob` 是计算属性，视图持有 `@ObservedObject center`，
+                    // 所以 `jobs` 一变就会重画 —— 原诊断「本地缓存了一份 phase」并不存在）.
+                    // 但**动作**这里再加固一层：点击那一刻**现取一次**任务最新状态，
+                    // 不用渲染时的快照 —— 否则快照过期时（如下载刚好自己完成）会误发暂停/继续.
+                    // **失败的任务在这一页也要能重试**.
+                    // 用户原话「…而且不能继续」——他就是在详情页遇到失败后无处可点
+                    //（原先这一格只会画一个灰的「暂停」，点不动）.
+                    // 只改这一个状态位的文案/动作/颜色，**布局（间距、字号、行高）一律不动**.
+                    Button {
+                        guard let live = center.job(job.id) else { return }
+                        switch live.phase {
+                        case .failed: center.retry(live.id)
+                        case .paused: center.resume(live.id)
+                        default:      center.pause(live.id)
+                        }
+                    } label: {
+                        if job.phase == .failed {
+                            Label("重试", systemImage: "arrow.clockwise")
+                                .font(.caption.weight(.medium))
+                                .lineLimit(1)
+                        } else {
+                            Label(job.phase == .paused ? "继续" : "暂停",
+                                  systemImage: job.phase == .paused ? "play.fill" : "pause.fill")
+                                .font(.caption.weight(.medium))
+                                .lineLimit(1)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(job.phase == .failed
+                                     ? AppTheme.pending
+                                     : (job.canPause ? AppTheme.categoryDownload : Color.secondary))
+                    // 失败态**必须可点**（否则又回到「显示暂停但点不动」那种死状态）
+                    .disabled(job.phase != .failed && !job.canPause)
+
+                    Button {
+                        // 旧代码无条件弹「已取消并删除该安装包」—— 台账只读（损坏）/ 文件被占用时
+                        // **根本没删成**，这是假成功.现在按 `cancel` 返回的实际结果提示
+                        // （口径同 `IPADownloadManagerView.reportRemoval`）.
+                        if let result = center.cancel(job.id) {
+                            switch result {
+                            case .removed:
+                                ToastCenter.shared.show("已删除安装包")
+                            case .rejectedReadOnly:
+                                ToastCenter.shared.show("未删除安装包：下载台账文件损坏，本次改动未保存")
+                            case .fileRemovalFailed:
+                                ToastCenter.shared.show("未删除安装包：文件无法删除（可能被占用）")
+                            }
+                        } else {
+                            // `nil` = 还没有落地文件（任务还在下载）→ 只是取消，没有删除动作.
+                            ToastCenter.shared.show("已取消下载")
+                        }
+                    } label: {
+                        Label("删除安装包", systemImage: "trash")
+                            .font(.caption.weight(.medium))
+                            .lineLimit(1)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(AppTheme.danger)
+
+                    Spacer(minLength: 0)
+
+                    Button {
+                        showDownloadManager = true
+                    } label: {
+                        Label("下载管理", systemImage: "list.bullet")
+                            .font(.caption.weight(.medium))
+                            .lineLimit(1)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(AppTheme.categoryDownload)
+                }
+                .fixedSize(horizontal: false, vertical: true)
+            }
+        } else if let failed = center.lastFinishedJob(bundleId: item.bundleId, name: item.name),
+                  failed.phase == .failed, let err = failed.error {
+            // 改用 AppErrorRow 的**按钮位**（trailing）—— 整颗复用 getButton，
+            // 不再自己拼「info.circle + 橙字 + 按钮」三件套（ui-error-inline.md 第三节把这里
+            // 记为「需按钮位形态」的遗留项：原字号 caption、取色 .orange 与全仓错误行不统一）.
+            AppErrorRow(message: err, trailing: { getButton })
+        } else {
+            getButton
+        }
+    }
+
+    /// 阶段胶囊：颜色区分「下载中 / 安装中 / 已暂停 / 等待中」
+    private func phaseChip(_ phase: IPADownloadCenter.Phase) -> some View {
+        // Step 3 批 6-C：手写胶囊收编到共享 `SizePill` 的 `.tiny` 档（caption2 + 6 / 1）；
+        // 字重 `.semibold` 与底色 14% 和档位默认逐项一致；`.lineLimit(1)` / `.fixedSize()` 留在调用处.
+        SizePill(text: phase.title,
+                 tint: phaseTint(phase),
+                 level: .tiny,
+                 weight: .semibold,
+                 fillOpacity: 0.14)
+            .lineLimit(1)
+            .fixedSize()
+    }
+
+    private func phaseTint(_ phase: IPADownloadCenter.Phase) -> Color {
+        switch phase {
+        case .downloading: return AppTheme.categoryDownload
+        case .installing:  return AppTheme.pending
+        case .paused:      return AppTheme.unselected
+        case .waiting:     return .secondary
+        case .done:        return AppTheme.success
+        case .failed:      return AppTheme.danger
+        }
+    }
+
+    /// 「获取」按钮：弹出安装方式选择
+    private var getButton: some View {
+        Button {
+            showInstallOptions = true
+        } label: {
+            Text(item.priceText == "免费" ? "获取" : "购买 \(item.priceText)")
+                .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(TintedButtonStyle(tint: AppTheme.categoryStore, radius: AppRadius.button))
+    }
+
+    // MARK: 截图
+
+    private var screenshotsSection: some View {
+        Section {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 12) {
+                    ForEach(Array(item.screenshots.enumerated()), id: \.offset) { index, url in
+                        Button {
+                            // 整组截图 + 起始下标**一次写进 target**（原来分两次写，
+                            // 弹窗可能先构建 → 读到旧的空数组 → 「没有可查看的图片」）
+                            previewTarget = ImagePreviewTarget(index: index,
+                                                               urls: item.screenshots)
+                        } label: {
+                            AsyncImage(url: URL(string: url)) { phase in
+                                switch phase {
+                                case .success(let img): img.resizable().scaledToFill()
+                                case .failure: Color(.tertiarySystemFill)
+                                default: ProgressView().controlSize(.small)
+                                }
+                            }
+                            .frame(width: 180, height: 320)
+                            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.vertical, 4)
+            }
+            .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 0))
+        } header: {
+            Text("预览")
+        }
+    }
+
+    // MARK: 信息
+
+    private var infoSection: some View {
+        Section("信息") {
+            infoRow("开发者", item.seller)
+            infoRow("类别", item.genres.isEmpty ? item.primaryGenre : item.genres.joined(separator: "、"))
+            infoRow("大小", item.sizeText)
+            infoRow("版本", item.version)
+            infoRow("兼容性", item.minimumOS.map { "需要 iOS \($0) 或更高版本" })
+            infoRow("语言", item.languages.isEmpty ? nil : "\(item.languages.count) 种语言")
+            infoRow("年龄分级", item.contentRating)
+            infoRow("上架时间", DateText.string(from: item.releaseDate, style: .day))
+            infoRow("更新时间", DateText.string(from: item.updatedDate, style: .day))
+            infoRow("支持设备", item.supportedDevicesCount > 0 ? "\(item.supportedDevicesCount) 款" : nil)
+            infoRow("Bundle ID", item.bundleId)
+            infoRow("AppID", item.id)
+        }
+    }
+
+    private func infoRow(_ title: String, _ value: String?) -> some View {
+        HStack(alignment: .top) {
+            Text(title).font(.subheadline).foregroundStyle(.secondary)
+            Spacer(minLength: 12)
+            Text(value?.isEmpty == false ? (value ?? "—") : "—")
+                .font(.subheadline)
+                .multilineTextAlignment(.trailing)
+                .textSelection(.enabled)
+        }
+        .padding(.vertical, 2)
+    }
+
+    private func releaseNotesSection(_ notes: String) -> some View {
+        Section("新功能 · \(item.version ?? "")") {
+            Text(notes).font(.footnote).padding(.vertical, 2)
+        }
+    }
+
+    private func descriptionSection(_ desc: String) -> some View {
+        Section("简介") {
+            Text(expanded ? desc : String(desc.prefix(220)) + (desc.count > 220 ? "…" : ""))
+                .font(.footnote)
+                .padding(.vertical, 2)
+            if desc.count > 220 {
+                Button(expanded ? "收起" : "展开全文") {
+                    withAnimation { expanded.toggle() }
+                }
+                .font(.footnote)
+            }
+        }
+    }
+
+    // MARK: App 隐私
+
+    /// 「App 隐私」：三组（用于追踪 / 与你关联 / 不与你关联），组内每条 = 类别名 + 用途.
+    /// 数据来自商品页 HTML（与历史版本同一条免登录通道），拿不到时该节不显示.
+    private var privacySection: some View {
+        Section("App 隐私") {
+            ForEach(privacyGroups) { group in
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(group.title)
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    ForEach(group.categories) { category in
+                        privacyCategoryRow(category)
+                    }
+                }
+                .padding(.vertical, 4)
+            }
+        }
+    }
+
+    private func privacyCategoryRow(_ category: AppPrivacyCategory) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            if let symbol = category.systemImage {
+                Image(systemName: symbol)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 22, alignment: .center)
+            }
+            VStack(alignment: .leading, spacing: 2) {
+                Text(category.title).font(.subheadline)
+                if !category.purposes.isEmpty {
+                    Text(category.purposes.joined(separator: "、"))
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                if !category.dataTypes.isEmpty {
+                    Text(category.dataTypes.joined(separator: "、"))
+                        .font(.caption2).foregroundStyle(.tertiary)
+                }
+            }
+            .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    // MARK: 更多
+
+    private var moreSection: some View {
+        Section {
+            NavigationLink {
+                // 下架已购应用：账号通道（App Store 下载协议）对「已购」的下架应用仍能给出
+                // 全量版本身份且能直接下载指定版本，所以下架态把它提到第一跳.
+                AppStoreVersionHistoryView(item: item,
+                                           country: AppStoreService.countryCode,
+                                           accountFirst: delisted,
+                                           preferredEmail: accountEmail)
+            } label: {
+                Label("历史版本", systemImage: "clock.arrow.circlepath")
+            }
+            // 下架应用在 App Store 里已经搜不到，系统安装页会直接报「找不到」——不给这个入口.
+            if !delisted {
+                Button {
+                    _ = AppStoreInstaller.openInAppStore(item)
+                } label: {
+                    Label("去 App Store 安装", systemImage: "arrow.up.forward.app")
+                }
+            }
+            if let u = item.webURL {
+                Button {
+                    browserTarget = LinkShareTarget(title: item.name, url: u)
+                } label: {
+                    Label("网页版商店页", systemImage: "safari")
+                }
+            }
+            // 失败原因已由头部 installArea 展示，这里不再重复一遍.
+        }
+    }
+
+    // MARK: 动作
+
+    /// 多账号 → 弹窗自选；单账号 → 直接用；无账号 → 提示
+    private func chooseAppleIDAndInstall() {
+        let list = AppStoreDownloadStore.shared.usableAccounts
+        guard !list.isEmpty else {
+            ToastCenter.shared.show("尚未登录 Apple ID —— 请先用「从爱思源快速安装」")
+            return
+        }
+        if list.count > 1 {
+            showAccountPicker = true
+            return
+        }
+        IPADownloadCenter.shared.startWithAppleID(item: item, email: list[0].email)
+        ToastCenter.shared.show("已开始用「\(list[0].email)」下载")
+    }
+
+    /// 获取许可证：用「当前下载账号」把该应用加入授权列表（免费应用）.
+    /// 与下载链路里 9610 分支做的是同一件事 —— 刷新登录 → buyProduct.
+    private func acquireLicense() {
+        guard let email = AppStoreDownloadStore.shared.emailForDownloads(), !email.isEmpty else {
+            ToastCenter.shared.show("先登录一个 Apple ID")
+            return
+        }
+        ToastCenter.shared.show("正在获取许可证…")
+        Task {
+            do {
+                let message = try await AppStoreLocalInstallService.acquireLicense(
+                    item: item, email: email) { @Sendable line in
+                        // Swift 6：@Sendable 无捕获闭包 → 非 MainActor 隔离，
+                        // 消除「sending MainActor 闭包给 nonisolated 方法」的诊断.
+                        LoginLogger.shared.log("[下载中心] \(line)", category: .download)
+                    }
+                ToastCenter.shared.show(message)
+            } catch {
+                ToastCenter.shared.show("获取许可证失败：\(error.localizedDescription)")
+                LoginLogger.shared.log("[下载中心] 获取许可证失败：\(error.localizedDescription)",
+                                       category: .download)
+            }
+        }
+    }
+
+    /// 免登录源：按 bundleId 找包 → 下载（可暂停）→ 安装
+    private func installFromFreeSource() {
+        guard let bid = item.bundleId, !bid.isEmpty else {
+            ToastCenter.shared.show("该应用缺少 Bundle ID，无法从源匹配")
+            return
+        }
+        ToastCenter.shared.show("正在查找安装包…")
+        Task {
+            _ = await IPADownloadCenter.shared.startFromI4Source(
+                name: item.name, bundleId: bid, iconURL: item.iconURL,
+                storeItemId: item.id)
+        }
+    }
+
+    /// 进入详情时：Lookup 补全字段（预览图 / 大小 / 版本 / 兼容性…都来自这里），
+    /// 同时取「App 隐私」—— 走商品页 HTML（与历史版本页**共用同一份 HTML 缓存**）.
+    /// 两条通道互不依赖，并行发；隐私拿不到就保持空 → 该节不显示.
+    private func loadDetail() async {
+        let appId = item.id
+        // 抓取区域在发起时就定死：URL 与缓存键都用它，免得和「进商店时跟随账号区」的
+        // 时机错开，抓到一个空结果的区（第一次进详情看不到、刷新才有）.
+        let region = AppStoreService.countryCode
+        // 下架应用：Apple lookup 天然回空，先吃 NB 下架库内嵌的那份 lookup 快照把页面填满.
+        if delisted { await mergeDelistedDetail(appId: appId) }
+        async let lookup = AppStoreService.lookup(id: appId, country: region)
+        async let privacy = AppStoreService.privacyDetail(appId: appId, country: region)
+
+        if let full = try? await lookup {
+            var merged = full
+            if merged.iconURL == nil { merged.iconURL = item.iconURL }
+            if merged.summary == nil { merged.summary = item.summary }
+            if merged.screenshots.isEmpty { merged.screenshots = item.screenshots }
+            item = merged
+        }
+        privacyGroups = (try? await privacy) ?? []
+        if privacyGroups.isEmpty, AppStoreService.countryCode != region {
+            privacyGroups = (try? await AppStoreService.privacyDetail(appId: appId)) ?? []
+        }
+    }
+
+    /// 下架应用：Apple 的 `lookup` 与商品页都查不到它.NB 下架库收录时把当初那份
+    /// 完整 lookup 整段存了下来（`lookupData`，43 个键），直接映射成详情填满页面 —— 不白屏.
+    /// 按 **App Store ID → Bundle ID → 名称** 认领，认不出就不动（保持已购那点已知信息）.
+    private func mergeDelistedDetail(appId: String) async {
+        let key = item.name.isEmpty ? (item.bundleId ?? appId) : item.name
+        guard !key.isEmpty,
+              let hits = try? await NBStoreClient.searchOffSaleApp(keyword: key),
+              !hits.isEmpty else { return }
+        let byID = hits.first { ($0.storeID ?? "") == appId }
+        let byBundle = (item.bundleId?.isEmpty == false)
+            ? hits.first { ($0.bundleID ?? "").caseInsensitiveCompare(item.bundleId ?? "") == .orderedSame }
+            : nil
+        let byName = hits.first { $0.displayName.caseInsensitiveCompare(key) == .orderedSame }
+        guard let detail = (byID ?? byBundle ?? byName)?.lookupDetail else { return }
+
+        var merged = item
+        if merged.iconURL == nil { merged.iconURL = detail.artwork512 ?? detail.artwork100 }
+        if merged.iconSmallURL == nil { merged.iconSmallURL = detail.artwork100 }
+        if merged.seller == nil { merged.seller = detail.sellerName ?? detail.artistName }
+        if merged.version == nil { merged.version = detail.version }
+        if merged.releaseNotes == nil { merged.releaseNotes = detail.releaseNotes }
+        if merged.summary == nil { merged.summary = detail.descriptionText }
+        if merged.screenshots.isEmpty { merged.screenshots = detail.screenshotURLs }
+        if merged.minimumOS == nil { merged.minimumOS = detail.minimumOSVersion }
+        if merged.fileSizeBytes == nil { merged.fileSizeBytes = detail.fileSizeBytes }
+        if merged.genres.isEmpty { merged.genres = detail.genres }
+        if merged.rating == nil { merged.rating = detail.averageRating }
+        if merged.ratingCount == nil { merged.ratingCount = detail.ratingCount }
+        if merged.formattedPrice == nil { merged.formattedPrice = detail.formattedPrice }
+        if merged.bundleId == nil { merged.bundleId = detail.bundleID }
+        item = merged
+        LoginLogger.shared.log("[已购] 下架详情命中 NB 快照：「\(detail.name)」", category: .appStore)
+    }
+}
+
+// MARK: - 安装方式选择（爱思那条弹窗的加强版）
+
+struct InstallOptionsSheet: View {
+    let appleIDSubtitle: String
+    let onAppleID: () -> Void
+    let onI4: () -> Void
+    /// 获取许可证：把该应用加入当前账号的授权列表（免费应用）
+    let onAcquireLicense: () -> Void
+
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Text("选择安装方式")
+                .font(.headline)
+                .padding(.top, 18)
+                .padding(.bottom, 14)
+
+            VStack(spacing: 10) {
+                option(icon: "person.crop.circle.badge.checkmark",
+                       tint: AppTheme.categoryStore,
+                       title: "使用已登录 AppleID 安装",
+                       subtitle: appleIDSubtitle,
+                       action: onAppleID)
+                option(icon: "bolt.fill",
+                       tint: AppTheme.success,
+                       title: "从爱思源快速安装",
+                       subtitle: "免登录，服务端已签名",
+                       action: onI4)
+                option(icon: "key.fill",
+                       tint: AppTheme.pending,
+                       title: "获取许可证",
+                       subtitle: "加入账号授权列表",
+                       action: onAcquireLicense)
+            }
+            .padding(.horizontal, 16)
+
+            Spacer(minLength: 0)
+
+            Button {
+                dismiss()
+            } label: {
+                Text("取消")
+                    .font(.body.weight(.medium))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
+                    .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: AppRadius.button, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal, 16)
+            .padding(.bottom, 16)
+        }
+    }
+
+    private func option(icon: String, tint: Color, title: String, subtitle: String,
+                        action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                ZStack {
+                    Circle().fill(tint.opacity(0.14)).frame(width: 40, height: 40)
+                    Image(systemName: icon).font(.system(size: 18, weight: .semibold)).foregroundStyle(tint)
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title).font(.subheadline.weight(.semibold)).foregroundStyle(.primary)
+                    Text(subtitle).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                }
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right").font(.caption).foregroundStyle(.tertiary)
+            }
+            .padding(12)
+            .background(AppSurface.card,
+                        in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+// MARK: - AppleID 账号选择（多账号时自选一个下载）
+
+struct AppleIDPickerSheet: View {
+    let onPick: (String) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var accounts: [AppStoreAccount] = []
+
+    var body: some View {
+        NavigationStack {
+            List {
+                ForEach(accounts, id: \.email) { account in
+                    Button {
+                        onPick(account.email)
+                    } label: {
+                        HStack(spacing: 10) {
+                            Image(systemName: "person.crop.circle.fill")
+                                .font(.title3)
+                                .foregroundStyle(AppTheme.categoryStore)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(account.email).font(.subheadline)
+                                Text("store \(account.store)")
+                                    .font(.caption2).foregroundStyle(.secondary)
+                            }
+                            Spacer(minLength: 0)
+                            if account.email == AppStoreDownloadStore.shared.selectedAccount?.email {
+                                Text("当前").font(.caption2).foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                        .buttonStyle(.plain)
+                }
+            }
+            .navigationTitle("选择 AppleID")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("取消") { dismiss() }
+                }
+            }
+        }
+        .onAppear { accounts = AppStoreDownloadStore.shared.usableAccounts }
+    }
+}
+
+private extension Int {
+    /// 12345 → 1.2万
+    var formattedCount: String {
+        if self >= 10000 {
+            return String(format: "%.1f万", Double(self) / 10000)
+        }
+        return "\(self)"
+    }
+}
