@@ -1,0 +1,89 @@
+name: Build zcontainer (Zcontainer branch)
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Select Xcode
+        run: |
+          set -euo pipefail
+          echo "xcodebuild: $(xcodebuild -version | tr '\n' ' ')"
+          xcodebuild -list -project LiveContainer.xcodeproj
+
+      - name: Build (unsigned)
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project LiveContainer.xcodeproj \
+            -scheme LiveContainer \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            build | tee /tmp/xcodebuild.log
+          APP="$(find build/Build/Products/Release-iphoneos -maxdepth 1 -name '*.app' -type d | head -n1)"
+          echo "APP=$APP" >> "$GITHUB_ENV"
+          echo "APP=$APP"
+
+      - name: Package unsigned IPA
+        run: |
+          set -euo pipefail
+          VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Info.plist")"
+          IPA="zcontainer-${VERSION}-Zcontainer-unsigned.ipa"
+          rm -rf Payload && mkdir Payload
+          cp -R "$APP" Payload/
+          zip -qry "$IPA" Payload
+          ls -lh "$IPA"
+          echo "IPA=$IPA" >> "$GITHUB_ENV"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zcontainer-build-log
+          path: /tmp/xcodebuild.log
+          if-no-files-found: warn
+
+      - name: Upload IPA
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zcontainer-ipa
+          path: ${{ env.IPA }}
+          if-no-files-found: error
+
+      - name: Publish Release (on tag)
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          NOTES="$(mktemp)"
+          { echo "$(date '+%Y%m%d-%H%M%S') $TAG Update："
+            echo "1. zcontainer + iManager 构建（未签名 IPA）"
+            echo
+            echo "[编译环境]"
+            echo "Xcode: $(xcodebuild -version | tr '\n' ' ')"
+            echo "Build: $(sw_vers -buildVersion 2>/dev/null || true)"
+            echo "SDK: $(xcrun --sdk iphoneos --show-sdk-version)"
+          } > "$NOTES"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$IPA" --clobber
+          else
+            gh release create "$TAG" --title "zcontainer $TAG" --notes-file "$NOTES" "$IPA"
+          fi
