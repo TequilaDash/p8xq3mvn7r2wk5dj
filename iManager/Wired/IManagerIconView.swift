@@ -18,8 +18,10 @@ struct IManagerIconView: View {
         .clipShape(RoundedRectangle(cornerRadius: size * 0.23, style: .continuous))
     }
 
+    private final class BundleToken {}
+
     private static let image: UIImage? = {
-        let bundle = Bundle(for: IManagerRootView.self)
+        let bundle = Bundle(for: BundleToken.self)
         guard let url = bundle.url(forResource: "IManagerIcon", withExtension: "png") else { return nil }
         return UIImage(contentsOfFile: url.path)
     }()
