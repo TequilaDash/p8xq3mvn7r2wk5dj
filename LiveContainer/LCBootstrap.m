@@ -1,5 +1,8 @@
 extern void TDVRootInstallIfRequested(void);
 
+#include <sys/syslimits.h>
+#include <string.h>
+
 // Host home captured before any guest can setenv("HOME"). Constructors of
 // linked frameworks run before main(), so this value is the host container.
 static char tdHostHomeBuf[PATH_MAX];
