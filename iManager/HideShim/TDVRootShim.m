@@ -37,7 +37,9 @@
 #include <sys/attr.h>
 #include <sys/mount.h>
 #include <sys/param.h>
+#include <sys/proc.h>
 #include <sys/stat.h>
+#include <sys/sysctl.h>
 #include <sys/syslimits.h>
 #include <unistd.h>
 
@@ -389,9 +391,10 @@ static gid_t tdv_getegid(void) {
 
 #pragma mark - sysctl 伪值表 (TD_SYSCTL_SPOOF)
 
-// 检测器高频查询: hw.machine / kern.osversion / kern.bootargs.
-// 拦截面 = sysctlbyname (按名查询; 检测器全部走这条). 裸 MIB 通道 (sysctl(3)) 的
-// 二级 MIB 与键名映射随 SDK 变化且检测器不用, 不拦, 纯透传.
+// 检测器高频查询: hw.machine / kern.osversion / kern.bootargs (按名) 与
+// kern.proc PFLAGS (裸 MIB). 两个入口是不同符号, 必须分别拦:
+//   · sysctlbyname(name)   -> 名值表 (TDVSysctlSpoofLookup)
+//   · sysctl(mib, namelen) -> 自身 kinfo_proc 的 p_flag 清洗 (见下)
 // 未启用/未命中一律透传真实现 (fail-open 与本 shim 其余层一致).
 // 门控数据源与伪值表在 TDVRootConfig (TDVSysctlSpoofEnabled / TDVSysctlSpoofLookup).
 extern int tdv_real_sysctlbyname(const char *, void *, size_t *, void *, size_t)
@@ -414,6 +417,28 @@ static int tdv_sysctlbyname(const char *name, void *oldp, size_t *oldlenp,
         }
     }
     return tdv_real_sysctlbyname(name, oldp, oldlenp, newp, newlen);
+}
+
+// 裸 MIB 通道: Reveil 的两条 PFlag 检查都读
+//   mib = [CTL_KERN, KERN_PROC, KERN_PROC_PID, getpid()] -> struct kinfo_proc
+//     · DebuggerChecker:                kp_proc.p_flag & P_TRACED (0x800)
+//     · ReverseEngineeringToolsChecker: kp_proc.p_flag & P_SELECT (0x40)
+// sysctlbyname 拦不到这条 (不同符号). 只伪化"查自身"这一条 MIB: 别的 pid /
+// KERN_PROC_ALL / 非 proc 子树一律透传 —— 跨进程语义不由本进程决定.
+extern int tdv_real_sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp,
+                           void *newp, size_t newlen) __asm("_sysctl");
+
+static int tdv_sysctl_impl(int *name, u_int namelen, void *oldp, size_t *oldlenp,
+                           void *newp, size_t newlen) {
+    int rc = tdv_real_sysctl(name, namelen, oldp, oldlenp, newp, newlen);
+    if (rc != 0 || newp != NULL || !oldp || !oldlenp) return rc;
+    if (!TDVSysctlSpoofEnabled() || !name || namelen != 4) return rc;
+    if (name[0] != CTL_KERN || name[1] != KERN_PROC || name[2] != KERN_PROC_PID) return rc;
+    if (name[3] != getpid()) return rc;
+    if (*oldlenp < sizeof(struct kinfo_proc)) return rc;
+    struct kinfo_proc *kp = (struct kinfo_proc *)oldp;
+    kp->kp_proc.p_flag &= ~(P_TRACED | P_SELECT);
+    return rc;
 }
 
 #pragma mark - SecTask entitlement 隐藏 (TD_SECTASK_SPOOF)
@@ -672,6 +697,7 @@ TDV_INTERPOSE(tdv_geteuid, tdv_real_geteuid);
 TDV_INTERPOSE(tdv_getgid, tdv_real_getgid);
 TDV_INTERPOSE(tdv_getegid, tdv_real_getegid);
 TDV_INTERPOSE(tdv_sysctlbyname, tdv_real_sysctlbyname);
+TDV_INTERPOSE(tdv_sysctl_impl, tdv_real_sysctl);
 TDV_INTERPOSE(tdv_sectask_copy_impl, tdv_real_sectask_copy);
 static CFDictionaryRef tdv_sectask_copy_values_impl(tdv_SecTaskRef task,
                                                     CFArrayRef entitlements,

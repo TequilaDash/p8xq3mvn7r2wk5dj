@@ -38,8 +38,10 @@ bool TDVRootIsEnabled(void);
 bool TDVDyldTrimEnabled(void);
 
 // sysctl 伪值表 (TD_SYSCTL_SPOOF=1, 由 launcher 按 per-app sysctlSpoof 透传):
-// 访客 sysctl/sysctlbyname 命中下表键时返回伪值 (检测器读 hw.machine /
-// kern.osversion / kern.bootargs 一查一个准 —— libBroadpatch 190 符号审计结论).
+// 双通道: sysctlbyname 命中名称表返回伪值 (hw.machine / kern.osversion /
+// kern.bootargs 一查一个准 —— libBroadpatch 190 符号审计结论); sysctl(3) 裸 MIB
+// 只处理 [CTL_KERN, KERN_PROC, KERN_PROC_PID, self] 的 kinfo_proc.p_flag
+// (清 P_TRACED/P_SELECT, Reveil 两条 PFlag 检查走这条).
 // 命中伪值表返回 true 并写 out; 未启用/未命中返回 false (调用方透传真值).
 // 伪值来源: TD_SYSCTL_<NAME> env (大写化, '.'->'_'), 未设则用内置默认.
 bool TDVSysctlSpoofEnabled(void);
