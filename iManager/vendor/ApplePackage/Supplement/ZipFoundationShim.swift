@@ -1,0 +1,694 @@
+import Foundation
+
+// MARK: - ZIPFoundation 兼容层（TequilaDash / Theos 适配）
+//
+// ApplePackage 用 ZIPFoundation 往下载的 IPA 里注入 sinf（App Store 的
+// FairPlay 签名数据，缺它 IPA 装不上）。Theos 不能引 SwiftPM，所以这里用
+// 项目已有的 **SWCompression**（Deflate 压缩/解压）+ 一段精简的 ZIP 写入
+// 逻辑替代，保持调用点 API 形状不变：
+// - `ApplePackageArchive(url:accessMode:)` / `.update` / `.read`
+// - 遍历 `for entry in archive`、`archive[path]`
+// - `archive.extract(entry, consumer:)`
+// - `archive.addEntry(with:type:uncompressedSize:compressionMethod:provider:)`
+
+public struct ZipEntryRef {
+    public let path: String
+    /// 该条目 local header 在文件中的偏移。
+    public let localHeaderOffset: UInt32
+    public let compressedSize: UInt32
+    public let uncompressedSize: UInt32
+    public let crc32: UInt32
+    /// 0 = 存储，8 = deflate
+    public let compressionMethod: UInt16
+    /// 中央目录里的原始描述（用于重写中央目录时原样保留）。
+    let centralDirRecord: Data
+}
+
+public enum ZipAccessMode { case read, update, create }
+
+public enum ApplePackageZipError: Error, LocalizedError {
+    case cannotOpen(String)
+    case malformed(String)
+    case entryNotFound(String)
+
+    public var errorDescription: String? {
+        switch self {
+        case .cannotOpen(let p): return "无法打开 ZIP：\(p)"
+        case .malformed(let m): return "ZIP 结构异常：\(m)"
+        case .entryNotFound(let p): return "ZIP 中找不到条目：\(p)"
+        }
+    }
+}
+
+/// 极简 ZIP 读写器：读（遍历 / 解压）+ 追加条目（deflate）。
+public final class ApplePackageArchive {
+
+    public let url: URL
+    private let fileHandle: FileHandle
+    /// 整包重写（`replaceEntries`）后置位 —— 之后的 `deinit` 不再尝试落盘。
+    private var didRewrite = false
+    private(set) public var entries: [ZipEntryRef] = []
+    /// 中央目录在文件中的起始偏移（追加新条目时从这里截断）。
+    private var centralDirOffset: UInt64 = 0
+    private var pendingAdds: [(path: String, data: Data, method: ZipCompressionMethod)] = []
+
+    public init(url: URL, accessMode: ZipAccessMode) throws {
+        self.url = url
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            throw ApplePackageZipError.cannotOpen(url.path)
+        }
+        let handle = try FileHandle(forUpdating: url)
+        self.fileHandle = handle
+        try parseCentralDirectory()
+    }
+
+    deinit {
+        if !didRewrite {
+            do {
+                try flushPendingAdds()
+            } catch {
+                // 追加失败不抛（deinit 不能抛）
+            }
+        }
+        try? fileHandle.close()
+    }
+
+    // MARK: - 读取
+
+    /// 解压并读取某个条目的内容。
+    public func extract(_ entry: ZipEntryRef, consumer: (Data) -> Void) throws {
+        fileHandle.seek(toFileOffset: UInt64(entry.localHeaderOffset))
+        let header = fileHandle.readData(ofLength: 30)
+        guard header.count == 30 else { throw ApplePackageZipError.malformed("local header 过短") }
+        let nameLength = header.uint16(at: 26)
+        let extraLength = header.uint16(at: 28)
+        fileHandle.seek(toFileOffset: UInt64(entry.localHeaderOffset) + 30 + UInt64(nameLength) + UInt64(extraLength))
+        var compressed = fileHandle.readData(ofLength: Int(entry.compressedSize))
+        guard compressed.count == Int(entry.compressedSize) else {
+            throw ApplePackageZipError.malformed("条目数据不完整：\(entry.path)")
+        }
+        if entry.compressionMethod == 8 {
+            compressed = try Deflate.decompress(data: compressed)
+        }
+        consumer(compressed)
+    }
+
+    public subscript(path: String) -> ZipEntryRef? {
+        entries.first { $0.path == path }
+    }
+
+    // MARK: - 删除（仅从中央目录摘除）
+
+    /// 把某个条目从**中央目录**里摘掉（v0.3.546 新增）。
+    ///
+    /// ## 为什么不是真的从文件里删掉字节
+    ///
+    /// ZIP 的权威索引是中央目录 —— 条目的数据块留在文件里但**不被中央目录引用**时，
+    /// 解压器一律看不到它。真正的字节级删除要把后面所有内容前移、并重算所有
+    /// `localHeaderOffset`，在流式读写的场景下又慢又容易写坏（一次 200MB 的 IPA 要搬一遍）。
+    ///
+    /// 只摘中央目录的代价是文件不再缩小（垃圾字节留在原处），
+    /// 但**语义上是干净的替换**：同名条目在中央目录里只会出现一次，
+    /// 解压结果以新的为准。这对我们完全够用 —— `PackageSINFWriter` 要的
+    /// 就是「把包内那份不属于本机的 sinf 换成服务端下发的这一份」。
+    ///
+    /// ## 调用顺序约束
+    ///
+    /// 必须**在 `addEntry` 之前**调用。若先 `addEntry` 再删，删的会是旧条目、
+    /// 而新条目已经挂进 `pendingAdds` —— 结果两个都进中央目录（重名），比不删更糟。
+    ///
+    /// ## v0.3.558：本方法是**纯内存操作**，删完必须自己落盘
+    ///
+    /// 它只改 `entries` 数组，不碰文件。而 `flush()` 在 `pendingAdds` 为空时是 no-op，
+    /// 所以「`removeEntry` + 之后某次 `flush()`」这个组合**不会让删除生效**：
+    /// 那次 flush 重新拼中央目录时，`entries` 里旧记录还在（除非删的时候正好也有 pending）
+    /// → 中央目录里出现**同名两条** → 苹果解压器报
+    /// `PackageExtractionFailed (Could not extract archive)`（真机 0.4 秒内失败）。
+    ///
+    /// 正确用法（见 `PackageSINFWriter`）：
+    /// ```
+    /// archive.removeEntry(with: path)
+    /// try archive.flushCentralDirectory()   // 让「删」真正落盘
+    /// try archive.addEntry(with: path, …)
+    /// try archive.flush()
+    /// ```
+    ///
+    /// v0.3.568 起 `PackageSINFWriter` 改走 `replaceEntries(with:data:)`（整包重写），
+    /// `removeEntry` 在产线上已无调用点；要替换条目请直接用 `replaceEntries`.
+    public func removeEntry(with path: String) {
+        entries.removeAll { $0.path == path }
+    }
+
+    // MARK: - 整包重写批量替换（v0.3.568）
+
+    /// **一次整包重写里，把 `paths` 命中的全部条目替换成同一份 `data`。**
+    ///
+    /// 逐条替换语义 —— `paths` 里任意一条命中即替换成 `data`：
+    ///   · 命中 → 写新数据的 local header + 数据（存储，method=0），中央目录记录用
+    ///     `version made by = 0x314`（与苹果条目同源）；
+    ///   · 未命中 → 原样搬运 local header + name/extra + payload，中央目录记录只改
+    ///     `localHeaderOffset`（偏移 42..<46）；
+    ///   · `paths` 里「包里本来没有」的 → 按追加处理；
+    ///   · 单次遍历 `entries`、**单次**写中央目录 + EOCD、**单次**原子替换。
+    ///
+    /// ## 为什么需要它
+    ///
+    /// 逐条替换**一次打开只能安全替换一条** —— 每次调用都整包重写并 `close()`，
+    /// 而搬运其余条目用的是最初解析出来的**旧偏移** `entry.localHeaderOffset`；
+    /// 第一次重写后偏移全变、内存 `entries` 未重解析，第二次调用会抛
+    /// `ApplePackageZipError.malformed("local header 异常")`。
+    /// 一个 IPA 内**可能有**多份 sinf（实测某素材 41 份；但真实 App Store 包 Loon 仅 1 份，
+    /// 见 2026-10-05 实测），逐条各开一次 = N 次整包重写，性能不可接受 ⇒ 需要批量替换。
+    /// **批量替换这个能力本身有效，与「包里一定有多份」无关。**
+    ///
+    /// - Parameters:
+    ///   - paths: 要替换的条目路径（相对 IPA 根，如 `Payload/X.app/SC_Info/X.sinf`）。
+    ///     重复项会被去重（保持首次出现顺序）。
+    ///   - data: 新数据（写入方式固定为存储 method=0；sinf 只有 ~1KB，无需压缩）。
+    /// - Returns: **实际写入**的路径（命中替换的 + 追加新增的），供调用方写日志 / 复读校验。
+    ///
+    /// - Warning: 调用后 `fileHandle` 已关闭、内存 `entries`
+    ///   的偏移已失效，**本实例不可再复用**；要读回结果请重新 `init` 一个新实例。
+    @discardableResult
+    public func replaceEntries(with paths: [String], data: Data) throws -> [String] {
+        // 去重（保持顺序）：避免同一路径被追加两次
+        var seenTargets = Set<String>()
+        let uniquePaths = paths.filter { seenTargets.insert($0).inserted }
+        let targetSet = Set(uniquePaths)
+
+        let tmpURL = url.deletingLastPathComponent()
+            .appendingPathComponent(".\(url.lastPathComponent).rewrite-\(UUID().uuidString)")
+        // 兜底清理：本函数**任何**失败路径退出（含 writeNewEntry 的条目名/偏移守卫、
+        // cannotOpen、搬运越界、synchronize/close、rename 失败等）都不留 `.rewrite-*`。
+        // 成功路径下 tmpURL 已被 rename 消费，removeItem 为无害 no-op。
+        defer { try? FileManager.default.removeItem(at: tmpURL) }
+        FileManager.default.createFile(atPath: tmpURL.path, contents: nil)
+        let out: FileHandle
+        do {
+            out = try FileHandle(forWritingTo: tmpURL)
+        } catch {
+            throw ApplePackageZipError.cannotOpen(tmpURL.path)
+        }
+
+        // 源文件整体映射读（不整块载入内存）
+        let src = try Data(contentsOf: url, options: .mappedIfSafe)
+
+        var newCentral = Data()
+        var offset: UInt64 = 0
+        var writtenPaths: [String] = []
+        let crc = CRC32.data(data)
+        // ZIP32 字段宽度是 32 位：`UInt32(data.count)` 越界会**直接 trap**（不是静默截断），
+        // 因此上界判定必须在**转换之前**。该条件与循环无关（`data` 恒定），提到 writeNewEntry 之外只判一次。
+        guard data.count <= Int(UInt32.max) else {
+            throw ApplePackageZipError.malformed("条目数据超过 ZIP32 上限（\(data.count) 字节）")
+        }
+        let dataSize = UInt32(data.count)
+
+        /// 写一条「替换 / 新增」条目（local header + 数据 + 中央目录记录）。
+        /// 与单条替换路径的两处写法逐字节一致。
+        ///
+        /// ZIP32 字段（偏移 / 名字长度）在**截断前**显式校验：`UInt32(x)` 这类
+        /// 初始化器在越界时会直接 trap（不是静默截断），这里改成可捕获的 throw，
+        /// 既避免崩溃也避免写出坏包。条目**数据大小**的同类校验与循环无关，
+        /// 已上提到调用处（`writeNewEntry` 之前），见上文 `dataSize` 计算点。
+        func writeNewEntry(_ path: String) throws {
+            let nameData = Data(path.utf8)
+            guard nameData.count <= Int(UInt16.max) else {
+                throw ApplePackageZipError.malformed("条目名过长（\(nameData.count) 字节）")
+            }
+            guard offset <= UInt64(UInt32.max) else {
+                throw ApplePackageZipError.malformed("条目偏移超过 ZIP32 上限（\(offset)）")
+            }
+
+            var local = Data()
+            local.append(uint32Le(0x04034B50))
+            local.append(uint16Le(20))          // version needed
+            local.append(uint16Le(0))           // flags
+            local.append(uint16Le(0))           // method = 存储
+            local.append(uint16Le(0))           // mod time
+            local.append(uint16Le(0))           // mod date
+            local.append(uint32Le(crc))
+            local.append(uint32Le(dataSize))
+            local.append(uint32Le(dataSize))
+            local.append(uint16Le(UInt16(nameData.count)))
+            local.append(uint16Le(0))           // extra length
+            local.append(nameData)
+            local.append(data)
+            out.write(local)
+
+            var central = Data()
+            central.append(uint32Le(0x02014B50))
+            central.append(uint16Le(0x0314))    // version made by = Unix + 2.0（与苹果同源）
+            central.append(uint16Le(20))
+            central.append(uint16Le(0))         // flags
+            central.append(uint16Le(0))         // method = 存储
+            central.append(uint16Le(0))         // time
+            central.append(uint16Le(0))         // date
+            central.append(uint32Le(crc))
+            central.append(uint32Le(dataSize))
+            central.append(uint32Le(dataSize))
+            central.append(uint16Le(UInt16(nameData.count)))
+            central.append(uint16Le(0))         // extra
+            central.append(uint16Le(0))         // comment
+            central.append(uint16Le(0))         // disk
+            central.append(uint16Le(0))         // internal attrs
+            central.append(uint32Le(0))         // external attrs
+            central.append(uint32Le(UInt32(offset)))
+            central.append(nameData)
+            newCentral.append(central)
+
+            offset += UInt64(local.count)
+        }
+
+        for entry in entries {
+            if targetSet.contains(entry.path) {
+                try writeNewEntry(entry.path)
+                writtenPaths.append(entry.path)
+                continue
+            }
+
+            // 其余条目：原样搬运 local header + 数据
+            //
+            // 越界校验必须在 subdata **之前**：`Data.subdata(in:)` 越界会直接 trap
+            // （Signal 4），不是抛错 —— do/catch 兜不住 ⇒ 崩 App + 残留临时文件。
+            // 独立验证实测：CD 的 local_offset 越界时就是这个下场。
+            // 导入流程专门要处理**来源不明的 IPA**，所以这里必须防住。
+            let start = Int(entry.localHeaderOffset)
+            guard start >= 0, start + 30 <= src.count else {
+                try? FileManager.default.removeItem(at: tmpURL)
+                throw ApplePackageZipError.malformed(
+                    "local header 偏移越界：\(entry.path)（offset=\(start)，文件 \(src.count) 字节）")
+            }
+            var header = src.subdata(in: start ..< (start + 30))
+            guard header.count == 30, header.uint32(at: 0) == 0x04034B50 else {
+                try? FileManager.default.removeItem(at: tmpURL)
+                throw ApplePackageZipError.malformed("local header 异常：\(entry.path)")
+            }
+
+            // 清 bit3（data descriptor）：搬运时 DD 本身被丢弃，若**保留**标志位，
+            // 严格解压器会判非法 —— 独立验证实测 `unzip -t` rc=12
+            // 「invalid zip file with overlapped components」。
+            //
+            // 但只清标志**不够**：带 bit3 的条目，其本地头 crc/压缩后大小/原始大小三个
+            // 字段按规范是占位值（真实 App Store 包实测均为 0，真值在 DD 与中央目录里）。
+            // 一旦清掉 bit3，这三个字段就变成权威值 —— 若仍为 0，本地头便与「实际存在的
+            // payload + 中央目录」自相矛盾：`unzip` 按本地头把条目读成空、deflate 条目报
+            // `invalid compressed data to inflate`（真实包 nb.ipa 实测 rc=2 且内容丢失）。
+            // ⇒ 清标志的同时必须用**中央目录**的真值回填这三个字段（幂等、安全）。
+            let localFlags = header.uint16(at: 6)
+            if localFlags & 0x0008 != 0 {
+                header.replaceSubrange(6 ..< 8, with: uint16Le(localFlags & ~0x0008))
+                header.replaceSubrange(14 ..< 18, with: uint32Le(entry.crc32))
+                header.replaceSubrange(18 ..< 22, with: uint32Le(entry.compressedSize))
+                header.replaceSubrange(22 ..< 26, with: uint32Le(entry.uncompressedSize))
+            }
+
+            let nameLen = Int(header.uint16(at: 26))
+            let extraLen = Int(header.uint16(at: 28))
+            let payloadStart = start + 30 + nameLen + extraLen
+            let payloadLen = Int(entry.compressedSize)
+            guard payloadStart <= src.count,
+                  payloadLen >= 0, payloadStart + payloadLen <= src.count else {
+                try? FileManager.default.removeItem(at: tmpURL)
+                throw ApplePackageZipError.malformed(
+                    "条目数据越界：\(entry.path)（payloadStart=\(payloadStart)，len=\(payloadLen)，文件 \(src.count) 字节）")
+            }
+            let payload = src.subdata(in: payloadStart ..< (payloadStart + payloadLen))
+            guard payload.count == payloadLen else {
+                try? FileManager.default.removeItem(at: tmpURL)
+                throw ApplePackageZipError.malformed("条目数据不完整：\(entry.path)")
+            }
+
+            out.write(header)
+            out.write(src.subdata(in: (start + 30) ..< payloadStart))   // name + extra
+            out.write(payload)
+
+            var central = entry.centralDirRecord
+            guard offset <= UInt64(UInt32.max) else {
+                try? FileManager.default.removeItem(at: tmpURL)
+                throw ApplePackageZipError.malformed(
+                    "中央目录偏移超过 ZIP32 上限（offset=\(offset)，条目 \(entry.path)）")
+            }
+            central.replaceSubrange(42 ..< 46, with: uint32Le(UInt32(offset)))
+            // 中央目录的 flags 在偏移 8..<10（sig 0..<4 / version made by 4..<6 / version needed 6..<8）
+            let centralFlags = central.uint16(at: 8)
+            if centralFlags & 0x0008 != 0 {
+                central.replaceSubrange(8 ..< 10, with: uint16Le(centralFlags & ~0x0008))
+            }
+            newCentral.append(central)
+
+            offset += UInt64(30 + nameLen + extraLen + payloadLen)
+        }
+
+        // 目标路径里「包里本来没有」的 → 追加
+        let hitSet = Set(writtenPaths)
+        for path in uniquePaths where !hitSet.contains(path) {
+            try writeNewEntry(path)
+            writtenPaths.append(path)
+        }
+
+        // 中央目录 + EOCD
+        out.write(newCentral)
+        let total = entries.count + (writtenPaths.count - hitSet.count)
+        guard total <= Int(UInt16.max) else {
+            try? FileManager.default.removeItem(at: tmpURL)
+            throw ApplePackageZipError.malformed("条目数超出 ZIP 上限")
+        }
+        // ZIP32 EOCD 的 centralSize / centralOffset 是 32 位：>4GB 的包在这里会被
+        // `UInt32(...)` trap（不是静默截断）。改为显式 throw，失败-安全。
+        guard newCentral.count <= Int(UInt32.max), offset <= UInt64(UInt32.max) else {
+            try? FileManager.default.removeItem(at: tmpURL)
+            throw ApplePackageZipError.malformed(
+                "中央目录超出 ZIP32 上限（centralSize=\(newCentral.count)，centralOffset=\(offset)）")
+        }
+        out.write(eocdData(entryCount: UInt16(total),
+                           centralSize: UInt32(newCentral.count),
+                           centralOffset: UInt32(offset)))
+        try out.synchronize()
+        try out.close()
+
+        // ── 原子替换：先把原句柄关掉，再换文件 ────────────────────────────────
+        //
+        // ## 为什么必须是**单次** `rename(2)`（v0.4.x 修数据丢失缺陷）
+        //
+        // 【为什么不能「先删后移」】旧实现是：`replaceItemAt` 失败后
+        // `removeItem(url)` + `moveItem(tmp→url)`。若 `moveItem` **也**失败
+        // （磁盘将满 / 权限 / 跨卷），则原包**已删**、tmp 又被外层
+        // `defer { try? removeItem(tmpURL) }` 清掉 —— **原包与新包同时消失**，
+        // 用户的 IPA 没了；且源已不存在，`RepairService` 报 E6 后**不可重试**。
+        // ⇒ 铁律：**任何一步失败都不能先动原包**。
+        //
+        // 【为什么不是「备份 + 两次 rename + 恢复」】即便先备份再替换，
+        // `rename(url→.orig-*)` 与 `rename(tmp→url)` **两次之间有一个 url 缺失窗口**：
+        // 进程若恰在此刻崩溃 / 被杀，调用方会看到文件消失（虽可从 `.orig-*` 找回，
+        // 但那是「两步、可恢复」，**不是无窗口**）。
+        //
+        // 【正解】`rename(2)` 在同一目录 / 同一文件系统内是**原子替换**：
+        // 要么成功、要么原文件完好，**不存在任何中间态** ⇒ 无需备份、无需恢复。
+        try? fileHandle.close()
+        didRewrite = true
+
+        // 单次 rename：成功返回 0；失败返回 -1 且 errno 有效（此时 url **未被改动**）。
+        // 返回值必须检查 —— 失败必须抛出，绝不允许 `_ = rename(...)` 静默吞掉。
+        if rename(tmpURL.path, url.path) != 0 {
+            let e = errno
+            throw ApplePackageZipError.cannotOpen(
+                "原子替换失败（原包未改动，可安全重试）：\(tmpURL.path) → \(url.path)：errno=\(e) (\(String(cString: strerror(e))))")
+        }
+
+        return writtenPaths
+    }
+
+    // MARK: - 追加
+
+    /// 追加一个条目。真正的写入在 `flush()` 时统一完成。
+    ///
+    /// v0.3.550：**支持 `compressionMethod: .none`（存储）**。
+    ///
+    /// 之前这里只有一条 deflate 路，写死 `method = 8` —— 但我们这个压缩器
+    /// 是 SWCompression 里那个**自陈为 "a band-aid solution"** 的静态 Huffman 实现
+    /// （`Deflate+Compress.swift` 注释原话），只生成**单个** block，超过 65535 字节
+    /// 还会退化。sinf 这种小文件完全没必要冒这个险：**存储方式（method=0）**
+    /// 在 ZIP 里是合法的，任何解压器都认，而且省掉一次编码。
+    ///
+    /// 需要压缩的调用点（如注入大文件）仍可传 `.deflate`，行为不变。
+    public func addEntry(
+        with path: String,
+        type: ZipEntryType = .file,
+        uncompressedSize: Int64,
+        compressionMethod: ZipCompressionMethod = .deflate,
+        provider: (Int64, Int) -> Data
+    ) throws {
+        var data = Data()
+        var position: Int64 = 0
+        let total = Int(uncompressedSize)
+        while position < total {
+            let size = Swift.min(1 << 20, total - Int(position))
+            data.append(provider(position, size))
+            position += Int64(size)
+        }
+        pendingAdds.append((path: path, data: data, method: compressionMethod))
+    }
+
+    public enum ZipEntryType { case file, directory, symlink }
+    public enum ZipCompressionMethod { case none, deflate }
+
+    /// 把待追加条目写入文件，并重写中央目录。
+    ///
+    /// ⚠️ `pendingAdds` 为空时本方法**直接 return、什么都不做** ——
+    /// 所以它**不能**用来「把 removeEntry 的效果落盘」。
+    /// 摘条目之后必须走 `flushCentralDirectory()`（v0.3.558 新增）。
+    public func flush() throws {
+        try flushPendingAdds()
+    }
+
+    /// 只重写中央目录 + EOCD（不动条目数据）。
+    ///
+    /// v0.3.558：给 `removeEntry(with:)` 配的落盘口。
+    ///
+    /// `removeEntry` 只改内存 `entries`，而 `flush()` 在 `pendingAdds` 为空时是 no-op，
+    /// 于是「删」根本没有落到文件上 → 下次 `flush()` 重新拼中央目录时
+    /// **旧记录被原样带上**，与新增的同名条目一起写进中央目录（**重名**）。
+    /// 真机表现就是 0.4~1.2 秒内 `PackageExtractionFailed (Could not extract archive)`。
+    ///
+    /// 本方法在「旧中央目录起点」原地重写一份**合法**的中央目录 + EOCD：
+    /// 条目数、总长、偏移全部按当前 `entries` 重算，尾部截断到新 EOCD 末尾。
+    /// 中间态永远是**结构完整**的 ZIP，所以即便后续 add 失败，包也不会被写坏。
+    public func flushCentralDirectory() throws {
+        fileHandle.seek(toFileOffset: centralDirOffset)
+
+        var allCentral = Data()
+        for entry in entries { allCentral.append(entry.centralDirRecord) }
+
+        fileHandle.write(allCentral)
+        fileHandle.write(eocdData(entryCount: UInt16(entries.count),
+                                  centralSize: UInt32(allCentral.count),
+                                  centralOffset: UInt32(centralDirOffset)))
+        try fileHandle.truncate(atOffset: fileHandle.offsetInFile)
+        try fileHandle.synchronize()
+    }
+
+    /// 拼一份 EOCD（22 字节，无注释）。
+    private func eocdData(entryCount: UInt16, centralSize: UInt32, centralOffset: UInt32) -> Data {
+        var eocd = Data()
+        eocd.append(uint32Le(0x06054B50))
+        eocd.append(uint16Le(0))            // disk number
+        eocd.append(uint16Le(0))            // disk with cd
+        eocd.append(uint16Le(entryCount))
+        eocd.append(uint16Le(entryCount))
+        eocd.append(uint32Le(centralSize))
+        eocd.append(uint32Le(centralOffset))
+        eocd.append(uint16Le(0))            // comment length
+        return eocd
+    }
+
+    private func flushPendingAdds() throws {
+        guard !pendingAdds.isEmpty else { return }
+        let adds = pendingAdds
+        pendingAdds.removeAll()
+
+        // 1) 截掉原中央目录 + EOCD，定位追加起点
+        fileHandle.seek(toFileOffset: centralDirOffset)
+        var output = Data()
+        var newEntries: [ZipEntryRef] = []
+
+        for add in adds {
+            let nameData = Data(add.path.utf8)
+            let crc = CRC32.data(add.data)
+            // v0.3.550：按调用方指定的方式写（`.none` = 存储，method 0；`.deflate` = 8）。
+            let useDeflate = (add.method == .deflate)
+            let payload = useDeflate ? Deflate.compress(data: add.data) : add.data
+            let methodCode: UInt16 = useDeflate ? 8 : 0
+            let localOffset = UInt64(centralDirOffset) + UInt64(output.count)
+
+            var local = Data()
+            local.append(uint32Le(0x04034B50))
+            local.append(uint16Le(20))          // version needed
+            local.append(uint16Le(0))           // flags
+            local.append(uint16Le(methodCode))  // method
+            local.append(uint16Le(0))           // mod time
+            local.append(uint16Le(0))           // mod date
+            local.append(uint32Le(crc))
+            local.append(uint32Le(UInt32(payload.count)))
+            local.append(uint32Le(UInt32(add.data.count)))
+            local.append(uint16Le(UInt16(nameData.count)))
+            local.append(uint16Le(0))           // extra length
+            local.append(nameData)
+            local.append(payload)
+            output.append(local)
+
+            // 中央目录记录
+            var central = Data()
+            central.append(uint32Le(0x02014B50))
+            central.append(uint16Le(20))        // version made by
+            central.append(uint16Le(20))        // version needed
+            central.append(uint16Le(0))         // flags
+            central.append(uint16Le(methodCode))// method
+            central.append(uint16Le(0))         // time
+            central.append(uint16Le(0))         // date
+            central.append(uint32Le(crc))
+            central.append(uint32Le(UInt32(payload.count)))
+            central.append(uint32Le(UInt32(add.data.count)))
+            central.append(uint16Le(UInt16(nameData.count)))
+            central.append(uint16Le(0))         // extra
+            central.append(uint16Le(0))         // comment
+            central.append(uint16Le(0))         // disk number
+            central.append(uint16Le(0))         // internal attrs
+            central.append(uint32Le(0))         // external attrs
+            central.append(uint32Le(UInt32(localOffset)))
+            central.append(nameData)
+            newEntries.append(ZipEntryRef(path: add.path,
+                                          localHeaderOffset: UInt32(localOffset),
+                                          compressedSize: UInt32(payload.count),
+                                          uncompressedSize: UInt32(add.data.count),
+                                          crc32: crc,
+                                          compressionMethod: methodCode,
+                                          centralDirRecord: central))
+        }
+
+        // 2) 写入：新条目数据 + 旧中央目录 + 新条目中央目录 + EOCD
+        fileHandle.seek(toFileOffset: centralDirOffset)
+        fileHandle.write(output)
+        var allCentral = Data()
+        for entry in entries { allCentral.append(entry.centralDirRecord) }
+        for entry in newEntries { allCentral.append(entry.centralDirRecord) }
+        fileHandle.write(allCentral)
+
+        fileHandle.write(eocdData(entryCount: UInt16(entries.count + newEntries.count),
+                                  centralSize: UInt32(allCentral.count),
+                                  centralOffset: UInt32(centralDirOffset + UInt64(output.count))))
+
+        // v0.3.550：**必须截断**，否则包会被写坏（真机实证）。
+        //
+        // 我们是从**旧中央目录的起点**开始覆写的：
+        //     centralDirOffset ─┬─ 旧中央目录 ─┬─ 旧 EOCD
+        //                       └─ 新条目 + 新中央目录 + 新 EOCD（长度通常与旧的不同）
+        //
+        // 若新写的总长 **比旧的短**（删掉一个条目又只加一个更小的，就可能短），
+        // 文件尾部会残留**旧 EOCD 的一部分字节**。解压器找 EOCD 是**从文件末尾往回扫**，
+        // 于是先撞上那个残留的假 EOCD —— 它指向的中央目录区已经被新内容覆盖，
+        // 结构对不上 → 解压直接失败。
+        //
+        // 真机上的表现（2026-10-02 日志）：
+        //   [下载中心] 安装失败 ChatGPT-x.ipa：
+        //     UnknownErrorType("PackageExtractionFailed (Could not extract archive)")
+        // 就是这条 —— 下载好的 IPA 在写入 sinf 之后解不开了。
+        //
+        // `truncate(atOffset:)` 按当前句柄位置截断，正好落在新 EOCD 的末尾。
+        try fileHandle.truncate(atOffset: fileHandle.offsetInFile)
+        try fileHandle.synchronize()
+
+        entries.append(contentsOf: newEntries)
+        centralDirOffset = centralDirOffset + UInt64(output.count)
+    }
+
+    // MARK: - 解析中央目录
+
+    private func parseCentralDirectory() throws {
+        let fileSize = try FileHandle(forReadingFrom: url).seekToEndOfFile()
+        // 读尾部 64KB 定位 EOCD
+        let tailLength = Swift.min(UInt64(1 << 16), fileSize)
+        fileHandle.seek(toFileOffset: fileSize - tailLength)
+        let tail = fileHandle.readData(ofLength: Int(tailLength))
+        guard let eocdRange = tail.range(of: Data([0x50, 0x4B, 0x05, 0x06]), options: Data.SearchOptions.backwards) else {
+            throw ApplePackageZipError.malformed("未找到 EOCD")
+        }
+        let eocdOffset = fileSize - tailLength + UInt64(eocdRange.lowerBound)
+        let eocd = tail.subdata(in: eocdRange.lowerBound ..< Swift.min(eocdRange.lowerBound + 22, tail.count))
+        guard eocd.count >= 22 else { throw ApplePackageZipError.malformed("EOCD 过短") }
+        let cdSize = eocd.uint32(at: 12)
+        let cdOffset = eocd.uint32(at: 16)
+        centralDirOffset = UInt64(cdOffset)
+
+        fileHandle.seek(toFileOffset: UInt64(cdOffset))
+        let centralData = fileHandle.readData(ofLength: Int(cdSize))
+        guard centralData.count == Int(cdSize) else { throw ApplePackageZipError.malformed("中央目录读取不完整") }
+
+        var position = 0
+        while position + 46 <= centralData.count {
+            guard centralData.uint32(at: position) == 0x02014B50 else { break }
+            let method = centralData.uint16(at: position + 10)
+            let crc = centralData.uint32(at: position + 16)
+            let compressedSize = centralData.uint32(at: position + 20)
+            let uncompressedSize = centralData.uint32(at: position + 24)
+            let nameLength = Int(centralData.uint16(at: position + 28))
+            let extraLength = Int(centralData.uint16(at: position + 30))
+            let commentLength = Int(centralData.uint16(at: position + 32))
+            let localOffset = centralData.uint32(at: position + 42)
+            let nameStart = position + 46
+            guard nameStart + nameLength <= centralData.count else { break }
+            let nameData = centralData.subdata(in: nameStart ..< (nameStart + nameLength))
+            guard let name = String(data: nameData, encoding: .utf8) else { break }
+            let recordLength = 46 + nameLength + extraLength + commentLength
+            // 记录自身长度必须完整落在已读入的 CD 区内：extraLength / commentLength 可被
+            // 损坏或恶意包声明成远大于实际的值，直接 `subdata(in:)` 会越界 trap（Signal 4，
+            // 不是抛错）。导入流程要处理**来源不明**的 IPA，会走到这条解析路径，
+            // 故在此显式 throw（可捕获），既不崩溃也把坏包干净拒掉。
+            guard position + recordLength <= centralData.count else {
+                throw ApplePackageZipError.malformed(
+                    "中央目录记录越界：position=\(position)，recordLength=\(recordLength)，CD \(centralData.count) 字节")
+            }
+            entries.append(ZipEntryRef(path: name,
+                                       localHeaderOffset: localOffset,
+                                       compressedSize: compressedSize,
+                                       uncompressedSize: uncompressedSize,
+                                       crc32: crc,
+                                       compressionMethod: method,
+                                       centralDirRecord: centralData.subdata(in: position ..< (position + recordLength))))
+            position += recordLength
+        }
+    }
+}
+
+// MARK: Sequence
+
+extension ApplePackageArchive: Sequence {
+    public func makeIterator() -> IndexingIterator<[ZipEntryRef]> {
+        entries.makeIterator()
+    }
+}
+
+// MARK: - 小工具
+
+private func uint16Le(_ value: UInt16) -> Data {
+    Data([UInt8(value & 0xFF), UInt8((value >> 8) & 0xFF)])
+}
+
+private func uint32Le(_ value: UInt32) -> Data {
+    Data([UInt8(value & 0xFF), UInt8((value >> 8) & 0xFF),
+          UInt8((value >> 16) & 0xFF), UInt8((value >> 24) & 0xFF)])
+}
+
+private extension Data {
+    func uint16(at offset: Int) -> UInt16 {
+        guard offset + 2 <= count else { return 0 }
+        return UInt16(self[offset]) | (UInt16(self[offset + 1]) << 8)
+    }
+
+    func uint32(at offset: Int) -> UInt32 {
+        guard offset + 4 <= count else { return 0 }
+        return UInt32(self[offset])
+            | (UInt32(self[offset + 1]) << 8)
+            | (UInt32(self[offset + 2]) << 16)
+            | (UInt32(self[offset + 3]) << 24)
+    }
+}
+
+/// CRC32（zlib 多项式），ZIP 条目需要。
+private enum CRC32 {
+    static func data(_ data: Data) -> UInt32 {
+        var table = [UInt32](repeating: 0, count: 256)
+        for index in 0..<256 {
+            var value = UInt32(index)
+            for _ in 0..<8 {
+                value = (value & 1) != 0 ? (0xEDB88320 ^ (value >> 1)) : (value >> 1)
+            }
+            table[index] = value
+        }
+        var crc: UInt32 = 0xFFFF_FFFF
+        for byte in data {
+            crc = table[Int((crc ^ UInt32(byte)) & 0xFF)] ^ (crc >> 8)
+        }
+        return crc ^ 0xFFFF_FFFF
+    }
+}

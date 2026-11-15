@@ -1,0 +1,241 @@
+//
+//  Purchase.swift
+//  ApplePackage
+//
+//  Created by qaq on 9/15/25.
+//
+
+import Foundation
+
+public enum Purchase {
+    /// 购买请求打到哪条路径。
+    ///
+    /// Apple 的 bag.xml 里名字就叫 `buyProduct` 的官方端点其实是 `MZBuy.woa`；
+    /// 而 ipatool / ApplePackage 一直用的是 `MZFinance.woa` 那条。两者对同一个
+    /// 请求的应答不同（MZFinance 会给明确的 `failureType`，MZBuy token 失效时只回
+    /// 一句 `Unable to process your request.`），所以两条都留着，用于对照与兜底。
+    public enum BuyEndpoint: Sendable {
+        case finance
+        case official
+
+        var path: String {
+            switch self {
+            case .finance: return "/WebObjects/MZFinance.woa/wa/buyProduct"
+            case .official: return "/WebObjects/MZBuy.woa/wa/buyProduct"
+            }
+        }
+    }
+
+    /// 购买的结果。`alreadyOwned` 对应 Apple 的 5002（该账号已有此应用的授权）。
+    public enum Outcome: Sendable, Equatable {
+        case purchased
+        case alreadyOwned
+    }
+
+    @discardableResult
+    public nonisolated static func purchase(
+        account: inout AppStoreAccount,
+        app: Software,
+        endpoint: BuyEndpoint = .finance
+    ) async throws -> Outcome {
+        let deviceIdentifier = Configuration.deviceIdentifier
+
+        if (app.price ?? 0) > 0 {
+            try ensureFailed("purchasing paid apps is not supported")
+        }
+
+        do {
+            return try await purchaseWithParams(account: &account, app: app, guid: deviceIdentifier,
+                                                pricingParameters: "STDQ", endpoint: endpoint)
+        } catch let error as NSError {
+            if error.localizedDescription.contains("item is temporarily unavailable") {
+                return try await purchaseWithParams(account: &account, app: app, guid: deviceIdentifier,
+                                                    pricingParameters: "GAME", endpoint: endpoint)
+            } else {
+                throw error
+            }
+        }
+    }
+
+    private nonisolated static func purchaseWithParams(
+        account: inout AppStoreAccount,
+        app: Software,
+        guid: String,
+        pricingParameters: String,
+        endpoint: BuyEndpoint
+    ) async throws -> Outcome {
+        let client = HTTPClient(
+            eventLoopGroupProvider: .singleton,
+            configuration: .init(
+                tlsConfiguration: Configuration.tlsConfiguration,
+                // Follow explicitly below: URLSession's default 301/302 may turn POST into GET.
+                redirectConfiguration: .disallow,
+                timeout: .init(
+                    connect: .seconds(Configuration.timeoutConnect),
+                    read: .seconds(Configuration.timeoutRead)
+                )
+            ).then { $0.httpVersion = .http1Only }
+        )
+        defer { _ = client.shutdown() }
+
+        var request = try makeRequest(
+            account: account,
+            app: app,
+            guid: guid,
+            pricingParameters: pricingParameters,
+            endpoint: endpoint
+        )
+        var response: HTTPClient.Response
+        var redirects = 0
+        while true {
+            try Task.checkCancellation()
+            response = try await client.execute(request: request).get()
+            account.cookie.mergeCookies(response.cookies)
+            if let pod = response.headers.first(name: "pod"), Int(pod) != nil { account.pod = pod }
+            if let store = response.headers.first(name: "X-Set-Apple-Store-Front"), !store.isEmpty {
+                account.fullStoreFront = store
+            }
+            guard (300 ... 399).contains(response.status.code) else { break }
+            guard redirects < 3,
+                  let currentURL = URL(string: request.url),
+                  let location = response.headers.first(name: "location"), !location.isEmpty,
+                  let next = URL(string: location, relativeTo: currentURL)?.absoluteURL, next != currentURL else {
+                throw StoreAuthenticationError.invalidRedirect
+            }
+            let nextURL = try StoreAuthenticationProtocol.storeURL(next.absoluteString,
+                paths: [BuyEndpoint.finance.path, BuyEndpoint.official.path])
+            request.url = nextURL.absoluteString
+            var headers = request.headers.all.filter { $0.name.lowercased() != "cookie" }
+                .map { ($0.name, $0.value) }
+            headers += account.cookie.buildCookieHeader(nextURL)
+            request.headers = HTTPHeaders(headers)
+            redirects += 1
+        }
+        if response.status.code == 401 || response.status.code == 403 {
+            throw ApplePackageError.passwordTokenExpired
+        }
+        try ensure(response.status == .ok, "purchase request failed with status \(response.status.code)")
+
+        guard var body = response.body,
+              let data = body.readData(length: body.readableBytes)
+        else {
+            try ensureFailed("response body is empty")
+        }
+
+        let plist = try PropertyListSerialization.propertyList(
+            from: data,
+            options: [],
+            format: nil
+        ) as? [String: Any]
+        guard let dict = plist else { try ensureFailed("invalid response") }
+
+        if let failureType = dict["failureType"] as? String {
+            let customerMessage = dict["customerMessage"] as? String ?? ""
+            storeLog("购买被拒：failureType=\(failureType) "
+                + "customerMessage=\(customerMessage.isEmpty ? "none" : customerMessage) "
+                + "status=\(dict["status"] ?? "none")")
+            switch failureType {
+            case "2059":
+                try ensureFailed("item is temporarily unavailable")
+            case "2034", "2042":
+                // v0.3.330：交给调用方自动重登后重试（不再是一句死错误）
+                throw ApplePackageError.passwordTokenExpired
+            case "2002":
+                // v0.3.352：2002 = `FailureTypePasswordChanged`（Apple 文案 "Your password
+                // has changed."）。**实测**（离线回放 buyProduct，2026-09-12）：只要会话票据
+                // 是 Apple 当前不认的那一份，buyProduct 就稳定回 2002，而下载链路仍好用
+                // （已授权应用的 volumeStore 照样返包）。ipatool 把这条也算
+                // `ErrPasswordTokenExpired`（`CustomerMessagePasswordChanged`），据此
+                // **重登一次再重试** —— 而 ①2002 此前落在 default 里被当成普通失败
+                // ②于是「空包 → 获取许可」这一档永远拿不到授权。必须按令牌失效处理。
+                storeLog("购买令牌失效（2002 password changed）→ 需要刷新会话")
+                throw ApplePackageError.passwordTokenExpired
+            case "5002":
+                // v0.3.331：5002 = 该账号**已经有这个应用的授权**（ipatool 的
+                // FailureTypeLicenseAlreadyExists，cmd/purchase.go 里把它当成功、
+                // 继续走下载）。此前我们把它当失败，于是"已经买过的应用"永远报
+                // Apple 的 customerMessage「An unknown error has occurred」。
+                storeLog("该账号已拥有此应用（5002 LicenseAlreadyExists）")
+                return .alreadyOwned
+            default:
+                if let customerMessage = dict["customerMessage"] as? String {
+                    if customerMessage == "Subscription Required" {
+                        try ensureFailed("subscription required")
+                    }
+                    // Apple 在令牌失效时也会用这两条文案（ipatool 同款判定）
+                    if customerMessage.contains("Sign In to the iTunes Store") {
+                        throw ApplePackageError.passwordTokenExpired
+                    }
+                    if customerMessage.contains("password has") { // "Your password has changed."
+                        storeLog("购买令牌失效（password changed）→ 需要刷新会话")
+                        throw ApplePackageError.passwordTokenExpired
+                    }
+                    try ensureFailed(customerMessage)
+                }
+                try ensureFailed("purchase failed: \(failureType)")
+            }
+        }
+
+        if let jingleDocType = dict["jingleDocType"] as? String,
+           let status = dict["status"] as? Int
+        {
+            try ensure(jingleDocType == "purchaseSuccess" && status == 0, "failed to purchase app")
+        } else {
+            try ensureFailed("invalid purchase response")
+        }
+        return .purchased
+    }
+
+    private nonisolated static func makeRequest(
+        account: AppStoreAccount,
+        app: Software,
+        guid: String,
+        pricingParameters: String,
+        endpoint: BuyEndpoint
+    ) throws -> HTTPClient.Request {
+        let payload: [String: Any] = [
+            "appExtVrsId": "0",
+            "hasAskedToFulfillPreorder": "true",
+            "buyWithoutAuthorization": "true",
+            "hasDoneAgeCheck": "true",
+            "guid": guid,
+            "needDiv": "0",
+            "origPage": "Software-\(app.id)",
+            "origPageLocation": "Buy",
+            "price": "0",
+            "pricingParameters": pricingParameters,
+            "productType": "C",
+            "salableAdamId": app.id,
+        ]
+
+        let data = try PropertyListSerialization.data(fromPropertyList: payload, format: .xml, options: 0)
+
+        var headers: [(String, String)] = [
+            ("Content-Type", "application/x-apple-plist"),
+            ("User-Agent", Configuration.userAgent),
+            ("iCloud-DSID", account.directoryServicesIdentifier),
+            ("X-Dsid", account.directoryServicesIdentifier),
+            ("X-Apple-Store-Front", account.requestStoreFront),
+            ("X-Token", account.passwordToken),
+        ]
+
+        // v0.3.337：直接打账号自己的 store pod（对齐上游 `Configuration.purchaseAPIHost`）。
+        // 原来硬编码 `buy.itunes.apple.com` 再靠 302 跳到 `p<N>-buy` —— 多一跳，且
+        // 重定向由 URLSession 处理时请求头可能被改写（X-Token / X-Apple-Store-Front 都在）。
+        let host = (account.pod?.isEmpty == false)
+            ? "p\(account.pod!)-buy.itunes.apple.com"
+            : "buy.itunes.apple.com"
+        let urlString = "https://\(host)\(endpoint.path)"
+
+        for item in account.cookie.buildCookieHeader(URL(string: urlString)!) {
+            headers.append(item)
+        }
+
+        return try .init(
+            url: urlString,
+            method: .POST,
+            headers: .init(headers),
+            body: .data(data)
+        )
+    }
+}
