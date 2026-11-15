@@ -69,9 +69,12 @@ int LiveProcessMain(int argc, char *argv[]) {
         {@"csopsKeepDebugged", "TD_CSOPS_KEEP_DEBUGGED"},
     };
     for (size_t i = 0; i < sizeof(gateMap) / sizeof(gateMap[0]); i++) {
-        BOOL enabled = tdGlobalHide || [appInfo[gateMap[i].infoKey] boolValue];
-        if (strcmp(gateMap[i].envKey, "TD_CSOPS_KEEP_DEBUGGED") == 0 && tdGlobalHide) {
-            enabled = NO;
+        NSNumber *value = [appInfo[gateMap[i].infoKey] isKindOfClass:NSNumber.class] ? appInfo[gateMap[i].infoKey] : nil;
+        BOOL enabled;
+        if (strcmp(gateMap[i].envKey, "TD_CSOPS_KEEP_DEBUGGED") == 0) {
+            enabled = tdGlobalHide ? NO : (value ? value.boolValue : NO);
+        } else {
+            enabled = tdGlobalHide || (value ? value.boolValue : YES);
         }
         setenv(gateMap[i].envKey, enabled ? "1" : "0", 1);
     }

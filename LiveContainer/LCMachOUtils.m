@@ -247,6 +247,40 @@ int LCPatchExecSlice(const char *path, struct mach_header_64 *header, bool doInj
     return ans;
 }
 
+// 旧版本往依赖名槽里写路径时没有终止符, 磁盘上留下
+// "@loader_path/../../Tweaks/TweakLoader.dylibC" 这类脏名. 这类二进制不会因为
+// 补丁版本号相同而被重新修补, 必须在加载前识别出来, 让调用方强制重打并重签.
+bool LCMachOExecutableHasDirtyTweakLoader(const char *path) {
+    static const char *tweakLoaderPath = "@loader_path/../../Tweaks/TweakLoader.dylib";
+    const size_t prefixLen = strlen(tweakLoaderPath);
+    __block bool dirty = false;
+    LCParseMachO(path, true, ^(const char *slicePath, struct mach_header_64 *header, int fd, void *filePtr) {
+        if (dirty || header->cputype != CPU_TYPE_ARM64) return;
+        struct load_command *command = (struct load_command *)(header + 1);
+        for (uint32_t i = 0; i < header->ncmds; i++) {
+            if (command->cmdsize < sizeof(struct load_command)) break;
+            if (command->cmd == LC_LOAD_DYLIB || command->cmd == LC_LOAD_WEAK_DYLIB ||
+                command->cmd == 0x114514) {
+                struct dylib_command *dylib = (struct dylib_command *)command;
+                uint32_t offset = dylib->dylib.name.offset;
+                if (command->cmdsize > offset) {
+                    const char *name = (const char *)command + offset;
+                    size_t capacity = command->cmdsize - offset;
+                    size_t n = strnlen(name, capacity);
+                    if (n >= prefixLen && strncmp(name, tweakLoaderPath, prefixLen) == 0) {
+                        // 名字比预期长, 或整个槽里没有 NUL: dyld 会把后续字节读进依赖名.
+                        if (n > prefixLen || n == capacity) {
+                            dirty = true;
+                        }
+                    }
+                }
+            }
+            command = (struct load_command *)((char *)command + command->cmdsize);
+        }
+    });
+    return dirty;
+}
+
 NSString *LCParseMachO(const char *path, bool readOnly, LCParseMachOCallback callback) {
     int fd = open(path, readOnly ? O_RDONLY : O_RDWR, (mode_t)readOnly ? 0400 : 0600);
     if (fd < 0) {

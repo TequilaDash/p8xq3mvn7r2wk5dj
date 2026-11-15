@@ -112,9 +112,17 @@ extern const char *TDHostHomeDocumentsPath(void);
         [weakSelf.delegate appSceneVC:weakSelf didInitializeWithError:error];
     }];
     [_extension setRequestInterruptionBlock:^(NSUUID *uuid) {
-        [weakSelf appTerminationCleanUp];
-        NSError *error = [NSError errorWithDomain:@"LiveProcess" code:3 userInfo:@{NSLocalizedDescriptionKey: @"The app extension was interrupted or terminated before it reported a launch error."}];
-        [weakSelf.delegate appSceneVC:weakSelf didInitializeWithError:error];
+        AppSceneViewController *vc = weakSelf;
+        if(!vc) return;
+        // Interruption is also how a normal exit and a manual close end the
+        // extension. Only a launch that never got a pid is a real failure; the
+        // cleanup below already reports the exit to the delegate.
+        BOOL neverStarted = vc.pid <= 0 && !vc.isUserTerminating;
+        [vc appTerminationCleanUp];
+        if(neverStarted) {
+            NSError *error = [NSError errorWithDomain:@"LiveProcess" code:3 userInfo:@{NSLocalizedDescriptionKey: @"The app extension was interrupted before it finished starting."}];
+            [vc.delegate appSceneVC:vc didInitializeWithError:error];
+        }
     }];
     [_extension beginExtensionRequestWithInputItems:@[item] completion:^(NSUUID *identifier) {
         if(identifier) {
@@ -251,9 +259,14 @@ extern const char *TDHostHomeDocumentsPath(void);
     
     __weak typeof(self) weakSelf = self;
     [self.extension setRequestInterruptionBlock:^(NSUUID *uuid) {
-        [weakSelf appTerminationCleanUp];
-        NSError *error = [NSError errorWithDomain:@"LiveProcess" code:3 userInfo:@{NSLocalizedDescriptionKey: @"The app extension was interrupted or terminated."}];
-        [weakSelf.delegate appSceneVC:weakSelf didInitializeWithError:error];
+        AppSceneViewController *vc = weakSelf;
+        if(!vc) return;
+        BOOL neverStarted = vc.pid <= 0 && !vc.isUserTerminating;
+        [vc appTerminationCleanUp];
+        if(neverStarted) {
+            NSError *error = [NSError errorWithDomain:@"LiveProcess" code:3 userInfo:@{NSLocalizedDescriptionKey: @"The app extension was interrupted before it finished starting."}];
+            [vc.delegate appSceneVC:vc didInitializeWithError:error];
+        }
     }];
     self.contentView.layer.anchorPoint = CGPointMake(0, 0);
     self.contentView.layer.position = CGPointMake(0, 0);
@@ -266,6 +279,9 @@ extern const char *TDHostHomeDocumentsPath(void);
 }
 
 - (void)terminate {
+    // Manual close is not a launch failure: mark it so the interruption block
+    // reports a normal exit instead of raising the "extension interrupted" alert.
+    self.isUserTerminating = YES;
     if(self.isAppRunning) {
         [self.extension _kill:SIGTERM];
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{

@@ -28,6 +28,7 @@ API_AVAILABLE(ios(16.0))
 @property(nonatomic) int pid;
 @property(nonatomic) id<AppSceneViewControllerDelegate> delegate;
 @property(nonatomic) BOOL isAppRunning;
+@property(nonatomic) BOOL isUserTerminating;
 @property(nonatomic) BOOL shouldIgnoreSceneUpdates, shouldSkipDebounceOnce;
 @property(nonatomic) CGFloat scaleRatio;
 @property(nonatomic) UIView* contentView;

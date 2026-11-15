@@ -1,3 +1,11 @@
+20261116-000349 1.1.20 Update：
+1. 修复多任务误报：扩展中断与手动关闭不再弹“extension interrupted”，只有启动阶段失败才提示；访客 main 正常返回 (code 0) 视为正常退出，不再当错误。
+2. 修复 dylibC：启动前扫描二进制里的 TweakLoader 依赖名，发现尾随脏字节就强制重打补丁并重签，已安装的应用无需重装。
+3. 注入镜像始终裁剪：隐藏开关只决定 LiveContainer 自身镜像是否可见，TweakLoader 与 Documents/Tweaks 在任何模式下都不进入访客的 dyld 枚举（应对全能签 AISGuard_HasInjectedLoadCommands 一类自检）。
+4. 修正 csops 伪值位：补上 CS_REQUIRE_LV (0x2000) 并不再误清，消除“共享库验证是必须的 / 已禁用共享库校验”。
+5. 环境门控默认开启：关闭隐藏不再连带关掉 sysctl / SecTask / csops / proc 伪值；多任务扩展同步同一套门控。
+6. 新增 TDLaunchLog.txt（宿主 Documents）：记录每次启动的隐藏状态、门控与访客镜像索引，便于真机取证。
+
 20261115-233017 1.1.19 Update：
 1. 修复关闭全局或单应用隐藏后访客被立即终止：隐藏关闭时镜像扫描把宿主可执行文件当成访客，取到宿主 LC_MAIN 后跳错入口；现在扫描跳过宿主镜像，并在 dlopen 成功后按访客路径确定真实索引。
 2. appMainImageIndex 不再取被重绑的可见镜像数量，避免常驻进程内反复启动访客时索引偏移。

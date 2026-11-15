@@ -43,6 +43,27 @@ NSString *TDHostHomeDocumentsDir(void) {
     return path ? [NSString stringWithUTF8String:path] : nil;
 }
 
+// 设备上 NSLog 不容易取到, 把启动关键状态写进宿主 Documents 里的小文件
+// (TDLaunchLog.txt), 用户可以通过文件 App 直接导出. 只追加一行, 不做轮转以外
+// 的处理; 超过 64KB 时从头截断, 避免长期运行无限增长.
+static void TDAppendLaunchLog(NSString *line) {
+    NSString *dir = TDHostHomeDocumentsDir();
+    if (!dir || line.length == 0) return;
+    NSString *path = [dir stringByAppendingPathComponent:@"TDLaunchLog.txt"];
+    const char *cPath = path.fileSystemRepresentation;
+    FILE *f = fopen(cPath, "a");
+    if (!f) return;
+    fseek(f, 0, SEEK_END);
+    long size = ftell(f);
+    if (size > 65536) {
+        fclose(f);
+        f = fopen(cPath, "w");
+        if (!f) return;
+    }
+    fprintf(f, "%s %s\n", NSDate.date.description.UTF8String, line.UTF8String);
+    fclose(f);
+}
+
 extern char **environ;
 static int (*appMain)(int, char**, char**);
 NSUserDefaults *lcUserDefaults;
@@ -543,10 +564,16 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
     litehook_rebind_symbol(LITEHOOK_REBIND_GLOBAL, NSSetUncaughtExceptionHandler, hook_do_nothing, nil);
     
     BOOL hookDlopen = !isSharedBundle && LCSharedUtils.certificatePassword && isLiveProcess;
-    BOOL tdSysctlSpoof = tdGlobalHide || [guestAppInfo[@"sysctlSpoof"] boolValue];
-    BOOL tdSecTaskSpoof = tdGlobalHide || [guestAppInfo[@"secTaskSpoof"] boolValue];
-    BOOL tdCsopsSpoof = tdGlobalHide || [guestAppInfo[@"csopsSpoof"] boolValue];
-    BOOL tdProcSpoof = tdGlobalHide || [guestAppInfo[@"procSpoof"] boolValue];
+    // 环境门控默认开启: 用户关掉"隐藏"只是不希望裁剪 dyld 清单, 不应连带
+    // 把 sysctl/SecTask/csops/proc 的伪值也关掉. per-app 显式配置优先.
+    id tdSysctlValue = guestAppInfo[@"sysctlSpoof"];
+    id tdSecTaskValue = guestAppInfo[@"secTaskSpoof"];
+    id tdCsopsValue = guestAppInfo[@"csopsSpoof"];
+    id tdProcValue = guestAppInfo[@"procSpoof"];
+    BOOL tdSysctlSpoof = tdGlobalHide || (tdSysctlValue ? [tdSysctlValue boolValue] : YES);
+    BOOL tdSecTaskSpoof = tdGlobalHide || (tdSecTaskValue ? [tdSecTaskValue boolValue] : YES);
+    BOOL tdCsopsSpoof = tdGlobalHide || (tdCsopsValue ? [tdCsopsValue boolValue] : YES);
+    BOOL tdProcSpoof = tdGlobalHide || (tdProcValue ? [tdProcValue boolValue] : YES);
     // This process hosts multiple guests; every launch must replace the previous
     // guest's gates instead of inheriting them from the resident process.
     setenv("TD_SYSCTL_SPOOF", tdSysctlSpoof ? "1" : "0", 1);
@@ -561,6 +588,9 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
     TDVRootInstallIfRequested();
     NSLog(@"[TDGlobalHide] gates hide=%d sysctl=%d sectask=%d csops=%d proc=%d", (int)tdHideLiveContainer,
           (int)tdSysctlSpoof, (int)tdSecTaskSpoof, (int)tdCsopsSpoof, (int)tdProcSpoof);
+    TDAppendLaunchLog([NSString stringWithFormat:@"launch app=%@ hide=%d global=%d gates=%d%d%d%d",
+                       selectedApp, (int)tdHideLiveContainer, (int)tdGlobalHide,
+                       (int)tdSysctlSpoof, (int)tdSecTaskSpoof, (int)tdCsopsSpoof, (int)tdProcSpoof]);
     DyldHooksInit(tdHideLiveContainer, hookDlopen, [guestAppInfo[@"spoofSDKVersion"] unsignedIntValue]);
     
     if([guestContainerInfo[@"spoofIdentifierForVendor"] boolValue]) {
@@ -632,6 +662,7 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
             appError = @"dlopen: an unknown error occurred";
         }
         NSLog(@"[LCBootstrap] %@", appError);
+        TDAppendLaunchLog([NSString stringWithFormat:@"dlopen failed: %@", appError]);
         *path = oldPath;
         return appError;
     }
@@ -641,7 +672,10 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
     if (resolvedGuestIndex != UINT32_MAX) {
         appMainImageIndex = resolvedGuestIndex;
     }
+    LCRebuildImageRemap();
     NSLog(@"[LCBootstrap] guest image index=%u total=%u", appMainImageIndex, LCRealImageCount());
+    TDAppendLaunchLog([NSString stringWithFormat:@"guest index=%u total=%u path=%s",
+                       appMainImageIndex, LCRealImageCount(), appExecPath]);
     
     if([guestAppInfo[@"dontInjectTweakLoader"] boolValue] && ![guestAppInfo[@"dontLoadTweakLoader"] boolValue]) {
         tweakLoaderLoaded = true;
@@ -682,6 +716,11 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
     } else {
         char *argv32[] = {(char*)appExecPath, (char*)*path, NULL};
         ret = appMain(sizeof(argv32)/sizeof(*argv32) - 1, argv32, environ);
+    }
+    // code 0 是正常退出: 返回 nil, 不让上层把"访客自己退出"当成启动失败弹错误框.
+    if (ret == 0) {
+        NSLog(@"[LCBootstrap] guest main returned 0 (normal exit)");
+        return nil;
     }
     return [NSString stringWithFormat:@"App returned from its main function with code %d.", ret];
 }

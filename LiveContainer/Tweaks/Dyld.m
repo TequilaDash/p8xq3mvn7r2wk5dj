@@ -92,15 +92,22 @@ static uint32_t gTDVRemapCount[2];
 static _Atomic int gTDVRemapActive = 0;
 static bool gTDVRemapEnabled = false;
 static bool gTDVMapLogged = false;
+// 隐藏开关只控制 LiveContainer 自身镜像是否对访客可见; 注入的 tweak 镜像
+// (TweakLoader / Documents/Tweaks) 一律不进枚举表 —— 全能签一类的自检会
+// 枚举已加载镜像的 load command, 关掉"隐藏"不应该把注入面暴露出来.
+static bool gTDVHideLCImages = false;
 
 static bool tdv_is_hidden_path(const char *name) {
     if (!name || !name[0]) return false;
+    // 注入面: 无条件隐藏.
+    if (strstr(name, "/Documents/Tweaks/")) return true;
+    if (strstr(name, "/TweakLoader.dylib")) return true;
+    if (!gTDVHideLCImages) return false;
     if (lcMainBundlePath && lcMainBundlePath[0] &&
         strncmp(name, lcMainBundlePath, strlen(lcMainBundlePath)) == 0) {
         return true;
     }
     if (strstr(name, "/procursus/")) return true;
-    if (strstr(name, "/Documents/Tweaks/")) return true;
     return false;
 }
 
@@ -152,7 +159,11 @@ static void tdv_rebuild_image_remap(void) {
     int inactive = 1 - atomic_load(&gTDVRemapActive);
     uint32_t *buf = gTDVRemap[inactive];
     uint32_t n = 0;
-    uint32_t guest = tdv_guest_image_index();
+    uint32_t guest = tdv_guest_header_index();
+    if (guest == UINT32_MAX) {
+        // 还没有解析出访客时退化为"第一个非隐藏可执行文件", 保证 index 0 契约.
+        guest = tdv_guest_image_index();
+    }
     if (guest != UINT32_MAX) buf[n++] = guest;
     for (uint32_t i = 0; i < total && n < TDV_HIDE_CAP; i++) {
         if (i == guest) continue;
@@ -497,18 +508,22 @@ void DyldHooksInit(bool hideLiveContainer, bool hookDlopen, uint32_t spoofSDKVer
     
     // hook dlsym to solve RTLD_MAIN_ONLY, hook other functions to hide LiveContainer itself
     litehook_rebind_symbol(LITEHOOK_REBIND_GLOBAL, dlsym, hook_dlsym, nil);
-    if(hideLiveContainer) {
-        gTDVRemapEnabled = true;
-        // 已加载的镜像先打标记 + 改名, 再建映射表; 之后每加载一个镜像回调重建.
-        uint32_t initialCount = orig_dyld_image_count();
-        for (uint32_t i = 0; i < initialCount; i++) {
-            tdv_hide_image_if_needed(orig_dyld_get_image_header(i));
-        }
-        tdv_rebuild_image_remap();
-        litehook_rebind_symbol(LITEHOOK_REBIND_GLOBAL, _dyld_image_count, hook_dyld_image_count, nil);
-        litehook_rebind_symbol(LITEHOOK_REBIND_GLOBAL, _dyld_get_image_header, hook_dyld_get_image_header, nil);
-        litehook_rebind_symbol(LITEHOOK_REBIND_GLOBAL, _dyld_get_image_vmaddr_slide, hook_dyld_get_image_vmaddr_slide, nil);
-        litehook_rebind_symbol(LITEHOOK_REBIND_GLOBAL, _dyld_get_image_name, hook_dyld_get_image_name, nil);
+    // 裁剪层始终启用: 隐藏开关只决定 LC 自身镜像是否可见, 注入的 TweakLoader /
+    // Documents/Tweaks 镜像在任何模式下都不进入访客的镜像枚举.
+    gTDVHideLCImages = hideLiveContainer;
+    gTDVRemapEnabled = true;
+    uint32_t initialCount = orig_dyld_image_count();
+    for (uint32_t i = 0; i < initialCount; i++) {
+        tdv_hide_image_if_needed(orig_dyld_get_image_header(i));
+    }
+    tdv_rebuild_image_remap();
+    litehook_rebind_symbol(LITEHOOK_REBIND_GLOBAL, _dyld_image_count, hook_dyld_image_count, nil);
+    litehook_rebind_symbol(LITEHOOK_REBIND_GLOBAL, _dyld_get_image_header, hook_dyld_get_image_header, nil);
+    litehook_rebind_symbol(LITEHOOK_REBIND_GLOBAL, _dyld_get_image_vmaddr_slide, hook_dyld_get_image_vmaddr_slide, nil);
+    litehook_rebind_symbol(LITEHOOK_REBIND_GLOBAL, _dyld_get_image_name, hook_dyld_get_image_name, nil);
+    static bool gTDVCallbackRegistered = false;
+    if (!gTDVCallbackRegistered) {
+        gTDVCallbackRegistered = true;
         _dyld_register_func_for_add_image((void (*)(const struct mach_header *, intptr_t))hideLiveContainerImageCallback);
     }
     
@@ -567,6 +582,10 @@ uint32_t LCGuestImageIndexForPath(const char *path) {
         if (strcmp(base, guestName) == 0) return i - 1;
     }
     return UINT32_MAX;
+}
+
+void LCRebuildImageRemap(void) {
+    tdv_rebuild_image_remap();
 }
 
 #pragma mark - Fix black screen

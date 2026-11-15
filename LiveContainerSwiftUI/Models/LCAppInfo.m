@@ -432,6 +432,12 @@ static UIImage* LCDrawHomeScreenIcon(NSString* bundlePath, BOOL isDarkIcon) {
     // Update patch
     int currentPatchRev = 7;
     bool needPatch = [info[@"LCPatchRevision"] intValue] < currentPatchRev;
+    // 旧版本可能已经把脏依赖名写进二进制; 版本号相同但名字损坏时必须重打并重签,
+    // 否则 dlopen 会一直去找 TweakLoader.dylibC.
+    if (!needPatch && LCMachOExecutableHasDirtyTweakLoader(execPath.UTF8String)) {
+        NSLog(@"[LC] repairing dirty tweak loader dependency in %@", execPath);
+        needPatch = true;
+    }
     if (needPatch || forceSign) {
         // copy-delete-move to avoid EXC_BAD_ACCESS (SIGKILL - CODESIGNING)
         NSString *backupPath = [NSString stringWithFormat:@"%@/%@_LiveContainerPatchBackUp", appPath, _infoPlist[@"CFBundleExecutable"]];

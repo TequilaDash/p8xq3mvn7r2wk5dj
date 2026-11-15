@@ -104,6 +104,9 @@ uint32_t LCGuestImageIndexForPath(const char *path) {
     return UINT32_MAX;
 }
 
+void LCRebuildImageRemap(void) {
+}
+
 void *getDSCAddr(void) {
     return NULL;
 }

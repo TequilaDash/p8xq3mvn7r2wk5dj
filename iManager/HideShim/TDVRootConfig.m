@@ -245,20 +245,23 @@ bool TDVCsopsSpoofEnabled(void) {
     return gTDVCsopsSpoof;
 }
 
-// CS_OPS_STATUS 的相关位 (XNU bsd/kern/bsd_coderule.c):
-//   CS_GET_TASK_ALLOW 0x00002000 (get-task-allow entitlement 的内核投影)
+// CS_OPS_STATUS 的相关位 (XNU bsd/sys/codesign.h, 与 Reveil CsOps.swift 一致):
+//   CS_GET_TASK_ALLOW 0x00000004 (get-task-allow entitlement 的内核投影)
+//   CS_REQUIRE_LV     0x00002000 (require library validation)
 //   CS_DEBUGGED       0x10000000 (调试器已附加)
-#define TDV_CS_GET_TASK_ALLOW 0x00002000u
+#define TDV_CS_GET_TASK_ALLOW 0x00000004u
+#define TDV_CS_REQUIRE_LV     0x00002000u
 #define TDV_CS_DEBUGGED       0x10000000u
-// 伪值需要与真值同形状, 但这两位按门控清除; 其余位 (CS_VALID/CS_HARD/CS_KILL/
-// CS_RESTRICT/CS_PLATFORM_BINARY/CS_ENTITLEMENTS_VALID/CS_LINKER_SIGNED…) 原样保留,
-// 避免破坏访客对自身签名状态的一致性预期.
+// 伪值需要与真值同形状. 侧载宿主天然没有 CS_REQUIRE_LV, 检测器据此判
+// "共享库验证被禁用"; 这里补上该位, 让读到的状态与正常 App Store 应用一致.
+// CS_DEBUGGED 按门控清除; 其余位 (CS_VALID/CS_HARD/CS_KILL/CS_RESTRICT/
+// CS_PLATFORM_BINARY/CS_ENTITLEMENTS_VALID/CS_LINKER_SIGNED…) 原样保留.
 bool TDVCsopsSpoofLookup(unsigned int flagsIn, unsigned int *flagsOut) {
     if (!flagsOut || !TDVCsopsSpoofEnabled()) {
         return false;
     }
     unsigned int v = flagsIn;
-    v &= ~TDV_CS_GET_TASK_ALLOW;
+    v |= TDV_CS_REQUIRE_LV;
     if (!gTDVCsopsKeepDebugged) {
         v &= ~TDV_CS_DEBUGGED;
     }
