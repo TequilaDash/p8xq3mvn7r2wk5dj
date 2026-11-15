@@ -26,15 +26,18 @@ jobs:
       - name: Strip vendored xcframework code signatures
         run: |
           set -euo pipefail
-          # The prebuilt xcframework carries Marcin's team signature in each slice
-          # binary; Xcode's ProcessXCFramework refuses it with expected-signature
-          # mismatch. Strip LC_CODE_SIGNATURE and ad-hoc sign so the framework is
-          # self-consistent and unsigned (CODE_SIGNING_ALLOWED=NO build).
-          find OpenSSL/Frameworks/OpenSSL.xcframework -path '*/dSYMs' -prune -o \
-               -type f \( -name 'OpenSSL' -o -name '*.dylib' \) -print0 \
-            | xargs -0 -r -n1 sh -c 'codesign --remove-signature "$1" 2>/dev/null || true; codesign --force --sign - --timestamp=none "$1"'
-          find OpenSSL/Frameworks/OpenSSL.xcframework -path '*/dSYMs' -prune -o \
-               -type f \( -name 'OpenSSL' -o -name '*.dylib' \) -print | head -20
+          # Prebuilt slices carry the vendor's team signature; ProcessXCFramework
+          # rejects it. Re-sign every Mach-O slice ad-hoc so the framework is
+          # self-consistent under CODE_SIGNING_ALLOWED=NO.
+          count=0
+          while IFS= read -r -d '' f; do
+            if file -b "$f" | grep -q 'Mach-O'; then
+              codesign --force --sign - --timestamp=none "$f" || { echo "codesign failed: $f"; exit 1; }
+              count=$((count+1))
+            fi
+          done < <(find OpenSSL/Frameworks/OpenSSL.xcframework -path '*/dSYMs' -prune -o -type f -print0)
+          echo "ad-hoc signed $count Mach-O slices"
+          find OpenSSL/Frameworks/OpenSSL.xcframework -path '*/dSYMs' -prune -o -type f -name 'OpenSSL' -print | head -10
 
       - name: Build (unsigned)
         run: |
