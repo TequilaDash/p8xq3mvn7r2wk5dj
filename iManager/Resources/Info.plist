@@ -1,0 +1,335 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDisplayName</key>
+	<string>TequilaDash</string>
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>iOS App</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>com.apple.itunes.ipa</string>
+			</array>
+		</dict>
+	</array>
+	<key>CFBundleExecutable</key>
+	<string>TequilaDash</string>
+	<key>CFBundleIcons</key>
+	<dict>
+		<key>CFBundlePrimaryIcon</key>
+		<dict>
+			<key>CFBundleIconFiles</key>
+			<array>
+				<string>AppIcon29x29</string>
+				<string>AppIcon40x40</string>
+				<string>AppIcon57x57</string>
+				<string>AppIcon60x60</string>
+			</array>
+		</dict>
+	</dict>
+	<key>CFBundleIcons~ipad</key>
+	<dict>
+		<key>CFBundlePrimaryIcon</key>
+		<dict>
+			<key>CFBundleIconFiles</key>
+			<array>
+				<string>AppIcon29x29</string>
+				<string>AppIcon40x40</string>
+				<string>AppIcon57x57</string>
+				<string>AppIcon60x60</string>
+				<string>AppIcon50x50</string>
+				<string>AppIcon72x72</string>
+				<string>AppIcon76x76</string>
+			</array>
+		</dict>
+	</dict>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>TequilaDash</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0.3.891</string>
+	<key>CFBundleSignature</key>
+	<string>????</string>
+	<key>CFBundleSupportedPlatforms</key>
+	<array>
+		<string>iPhoneOS</string>
+	</array>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.tequila.dash.urlscheme</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>livecontainer</string>
+				<string>TequilaDash</string>
+			</array>
+		</dict>
+	</array>
+	<key>CFBundleVersion</key>
+	<string>1180</string>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<string>cydia</string>
+		<string>undecimus</string>
+		<string>sileo</string>
+		<string>zbra</string>
+		<string>filza</string>
+		<string>activator</string>
+		<string>itms-apps</string>
+		<string>itms-services</string>
+		<string>App-Prefs</string>
+		<string>prefs</string>
+		<string>shadowrocket</string>
+		<string>surge</string>
+		<string>loon</string>
+		<string>localdevvpn</string>
+		<string>shortcuts</string>
+	</array>
+	<key>LSRequiresIPhoneOS</key>
+	<true/>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
+	<key>MinimumOSVersion</key>
+	<string>18.0</string>
+	<key>NFCReaderUsageDescription</key>
+	<string>The guest app is requesting for this permission.</string>
+	<key>NSAlarmKitUsageDescription</key>
+	<string>The guest app is requesting for this permission.</string>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+		<key>NSExceptionDomains</key>
+		<dict>
+			<key>117.72.39.157</key>
+			<dict>
+				<key>NSExceptionAllowsInsecureHTTPLoads</key>
+				<true/>
+			</dict>
+			<key>124.222.32.246</key>
+			<dict>
+				<key>NSExceptionAllowsInsecureHTTPLoads</key>
+				<true/>
+			</dict>
+			<key>47.243.71.210</key>
+			<dict>
+				<key>NSExceptionAllowsInsecureHTTPLoads</key>
+				<true/>
+			</dict>
+			<key>i4.cn</key>
+			<dict>
+				<key>NSExceptionAllowsInsecureHTTPLoads</key>
+				<true/>
+				<key>NSIncludesSubdomains</key>
+				<true/>
+			</dict>
+			<key>nbtool8.com</key>
+			<dict>
+				<key>NSExceptionAllowsInsecureHTTPLoads</key>
+				<true/>
+				<key>NSIncludesSubdomains</key>
+				<true/>
+			</dict>
+		</dict>
+	</dict>
+	<key>NSAppleMusicUsageDescription</key>
+	<string>The guest app is requesting for this permission.</string>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>用于在两台设备之间通过蓝牙传输模拟定位坐标。</string>
+	<key>NSBluetoothPeripheralUsageDescription</key>
+	<string>The guest app is requesting for this permission.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_altserver._tcp</string>
+		<string>_remotepairing-pairable-host._tcp</string>
+		<string>_remotepairing-manual-pairing._tcp</string>
+		<string>_services._dns-sd._udp</string>
+		<string>_airplay._tcp</string>
+		<string>_raop._tcp</string>
+		<string>_sftp-ssh._tcp</string>
+		<string>_sleep-proxy._udp</string>
+		<string>_ssh._tcp</string>
+		<string>_apple-mobdev2._tcp</string>
+		<string>_asquic._udp</string>
+		<string>_companion-link._tcp</string>
+		<string>_meshcop._udp</string>
+		<string>_remotepairing._tcp</string>
+		<string>_rp-tunnel._tcp</string>
+		<string>_srpl-tls._tcp</string>
+		<string>_trel._udp</string>
+		<string>_http._tcp</string>
+		<string>_https._tcp</string>
+		<string>_smb._tcp</string>
+		<string>_afpovertcp._tcp</string>
+		<string>_printer._tcp</string>
+		<string>_ipp._tcp</string>
+		<string>_ipps._tcp</string>
+		<string>_scanner._tcp</string>
+		<string>_daap._tcp</string>
+		<string>_dpap._tcp</string>
+		<string>_airport._tcp</string>
+		<string>_homekit._tcp</string>
+		<string>_hap._tcp</string>
+		<string>_touch-able._tcp</string>
+		<string>_spotify-connect._tcp</string>
+		<string>_googlecast._tcp</string>
+		<string>_device-info._tcp</string>
+		<string>_workstation._tcp</string>
+		<string>_rfb._tcp</string>
+		<string>_net-assistant._udp</string>
+		<string>_rdlink._tcp</string>
+		<string>_stikpairprobe._tcp</string>
+		<string>_webdav._tcp</string>
+		<string>_webdavs._tcp</string>
+		<string>_ftp._tcp</string>
+		<string>_telnet._tcp</string>
+		<string>_coap._udp</string>
+		<string>_coaps._udp</string>
+		<string>_mqtt._tcp</string>
+		<string>_adb._tcp</string>
+		<string>_airdrop._tcp</string>
+		<string>_sidecar._tcp</string>
+		<string>_sonos._tcp</string>
+		<string>_plex._tcp</string>
+		<string>_amzn-alexa._tcp</string>
+		<string>_home-assistant._tcp</string>
+		<string>_rtsp._tcp</string>
+		<string>_sip._udp</string>
+		<string>_sip._tcp</string>
+		<string>_h323._tcp</string>
+		<string>_h323._udp</string>
+		<string>_ws._tcp</string>
+		<string>_wss._tcp</string>
+		<string>_remoted._tcp</string>
+		<string>_coredevice._tcp</string>
+		<string>_appletv-v2._tcp</string>
+		<string>_apple-mobdev._tcp</string>
+		<string>_jitstreamer._tcp</string>
+		<string>_matter._tcp</string>
+		<string>_matterc._udp</string>
+		<string>_airprint._tcp</string>
+		<string>_vnc._tcp</string>
+	</array>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>The guest app is requesting for this permission.</string>
+	<key>NSCalendarsWriteOnlyAccessUsageDescription</key>
+	<string>The guest app is requesting for this permission.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>The guest app is requesting for this permission.</string>
+	<key>NSContactsUsageDescription</key>
+	<string>The guest app is requesting for this permission.</string>
+	<key>NSFaceIDUsageDescription</key>
+	<string>使用 Face ID 验证沙盒容器锁定，保护已锁定的应用.</string>
+	<key>NSFallDetectionUsageDescription</key>
+	<string>The guest app is requesting for this permission.</string>
+	<key>NSGKFriendListUsageDescription</key>
+	<string>The guest app is requesting for this permission.</string>
+	<key>NSHealthClinicalHealthRecordsShareUsageDescription</key>
+	<string>The guest app is requesting for this permission.</string>
+	<key>NSHealthShareUsageDescription</key>
+	<string>The guest app is requesting for this permission.</string>
+	<key>NSHealthUpdateUsageDescription</key>
+	<string>The guest app is requesting for this permission.</string>
+	<key>NSHomeKitUsageDescription</key>
+	<string>The guest app is requesting for this permission.</string>
+	<key>NSIdentityUsageDescription</key>
+	<string>The guest app is requesting for this permission.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>本地网络权限用于无线配对广播（_remotepairing-pairable-host._tcp）与同一 Wi-Fi 下的 SSH 无线调试。仅局域网可达，可随时关闭。</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>开启位置更新可帮助 TequilaDash 在后台保持无线配对广播 alive，仅在配对期间按需使用。</string>
+	<key>NSLocationTemporaryUsageDescriptionDictionary</key>
+	<string>The guest app is requesting for this permission.</string>
+	<key>NSLocationUsageDescription</key>
+	<string>The guest app is requesting for this permission.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>开启位置更新可帮助 TequilaDash 在后台保持无线配对广播 alive，仅在配对期间按需使用。</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>The guest app is requesting for this permission.</string>
+	<key>NSMotionUsageDescription</key>
+	<string>The guest app is requesting for this permission.</string>
+	<key>NSNearbyInteractionAllowOnceUsageDescription</key>
+	<string>The guest app is requesting for this permission.</string>
+	<key>NSNearbyInteractionUsageDescription</key>
+	<string>The guest app is requesting for this permission.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>用于把提取的应用图标与预览图保存到相册</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>The guest app is requesting for this permission.</string>
+	<key>NSRemindersFullAccessUsageDescription</key>
+	<string>The guest app is requesting for this permission.</string>
+	<key>NSSensorKitUsageDescription</key>
+	<string>The guest app is requesting for this permission.</string>
+	<key>NSSiriUsageDescription</key>
+	<string>The guest app is requesting for this permission.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>The guest app is requesting for this permission.</string>
+	<key>NSUserTrackingUsageDescription</key>
+	<string>The guest app is requesting for this permission.</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>audio</string>
+		<string>location</string>
+		<string>bluetooth-peripheral</string>
+		<string>bluetooth-central</string>
+	</array>
+	<key>UIFileSharingEnabled</key>
+	<true/>
+	<key>UILaunchScreen</key>
+	<dict/>
+	<key>UIRequiredDeviceCapabilities</key>
+	<array>
+		<string>arm64</string>
+	</array>
+	<key>UISupportedInterfaceOrientations</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+	<key>UISupportedInterfaceOrientations~ipad</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationPortraitUpsideDown</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+	<key>UISupportsDocumentBrowser</key>
+	<true/>
+	<key>UTImportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>iOS App</string>
+			<key>UTTypeIdentifier</key>
+			<string>com.apple.itunes.ipa</string>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>ipa</string>
+				</array>
+			</dict>
+		</dict>
+	</array>
+</dict>
+</plist>

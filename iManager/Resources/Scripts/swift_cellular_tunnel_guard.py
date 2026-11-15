@@ -1,0 +1,460 @@
+# -*- coding: utf-8 -*-
+"""Cellular 隧道支持防复发检查.
+
+背景（用户原话）：
+    「你看看sidestore更新的cellular refresh 也就是蜂窝网络刷新 研究一下移植过来
+     因为我们现有隧道连接都依赖wifi网络 蜂窝网络无法使用的 我们要适配蜂窝网络
+     并在更多-设置里新增"Cellular隧道支持"按钮 开启后对隧道连接支持蜂窝网络下连接」
+
+★ v0.3.613 重大纠正（撤回 v0.3.612 的错误判断）：
+    v0.3.612 曾把「快捷指令」当成「把 App 该做的事推给用户」而**彻底删除**，
+    并在本 guard 里写成「用户批评成立，禁止加回」—— **这条判断是错的，用户并未批评过它**。
+
+    用户实测后的原话：「蜂窝隧道支持也支持了鸡毛？」（= 砍掉快捷指令后功能完全失效）。
+
+    事实（SideStore 源码 `SideStore/Core/Shortcuts/CellularRefreshManager.swift`，208 行）：
+    iOS 在**蜂窝上网**时对「回环 VPN 访问本机服务」有**系统级限制**，
+    不关蜂窝必然 `connect: Connection refused (os error 61)`。
+    SideStore 能在蜂窝下连通，**靠的正是** `shortcuts://run-shortcut?name=TurnOffData`
+    临时关掉蜂窝数据这一步。把它删掉 = 功能不存在。
+
+    ⇒ 本 guard 从「禁止快捷指令」**反转为「要求快捷指令」**（照 SideStore 移植）。
+
+机制（现方案，照 SideStore 移植）：
+  · 判是否蜂窝：`NWPathMonitor` 的 `usesInterfaceType(.wifi)`（等价 SideStore 的 `isWifiSatisfied`）；
+  · 建隧道前：蜂窝模式下先执行 `TurnOffData` 快捷指令临时关蜂窝 -> 等隧道就绪 -> 用完 `TurnOnData` 恢复；
+  · 快捷指令名**可自定义**（`TurnOffDataShortcutName` / `TurnOnDataShortcutName`），
+    默认 `TurnOffData` / `TurnOnData`（对齐 SideStore `AppConstants.Shortcuts`）；
+  · **默认关**（`UserDefaults` 无值即 false）⇒ 开关不开时全部 no-op，不改变 Wi-Fi 下既有行为.
+
+本脚本是「以后不会再有人把这条关键步骤删掉」的守门人，在提交前拦住.
+
+检查范围：
+  · TequilaDash/Engine/CellularTunnelManager.swift        （引擎文件）
+  · TequilaDash/Views/RootView.swift                       （设置页开关）
+  · TequilaDash/Engine/AppDiscovery.swift                  （接线点：应用列表，走 TunnelContext）
+  · TequilaDash/Engine/UninstallService.swift              （接线点：卸载，走 TunnelContext）
+  · TequilaDash/Engine/LocationEngine.swift                （接线点：虚拟定位，本次报障核心）
+  · 全 TequilaDash/ 目录                                    （快捷指令调用是否在位 / Wi-Fi 硬信念文案）
+  · 全部含 `let deviceIP = LocalDevVPN.targetIP` 的隧道入口（23 个引擎/服务/视图文件）
+
+检查规则：
+  R1 [ERROR] CellularTunnelManager.swift 缺失，或未定义 enabledKey = "TequilaDash.CellularTunnelSupport".
+  R2 [ERROR] 设置页开关的 @AppStorage 默认值不是 false（必须默认关 ⇒ 零行为变化）.
+  R3 [ERROR] 设置页找不到绑定该 @AppStorage 的 Toggle（开关没接上）.
+  R4 [ERROR] **快捷指令调用缺失** —— CellularTunnelManager.swift 里必须同时出现
+             `shortcuts://`（或 run-shortcut）与 `TurnOffData` / `TurnOnData` 默认名，
+             且必须实现 `turnOffDataIfNeeded` / `turnOnDataIfNeeded` 两个方法。
+             （v0.3.613 反转：删掉这一步 = 蜂窝功能失效，用户已实测）
+  R5 [ERROR] 快捷指令名**不可自定义** —— 必须能通过
+             `TurnOffDataShortcutName` / `TurnOnDataShortcutName` 覆盖默认名
+             （对齐 SideStore 的 `turnOffDataShortcutName`）。
+  R6 [ERROR] 任一「真正建隧道」的入口文件（含 `let deviceIP = LocalDevVPN.targetIP` 锚点）
+             未调用 CellularTunnelManager.shared.prepareForTunnel()（接线断了）.
+  R7 [ERROR] 全仓重新出现「把 Wi-Fi 说成前提条件」的误导文案
+             （如「（Wi-Fi 下）」「建议在 Wi-Fi 下」「请连 Wi-Fi」）.
+  R8 [ERROR] CellularTunnelManager.swift 的就绪轮询退回**单地址**探测
+             （不得只用 `LocalDevVPN.isTunnelReachable()`；必须用多候选并行的
+              `LocalDevVPN.isAnyCandidateReachable(timeout:)`）.
+
+误报处理：Swift/ObjC 匹配前先剥离**注释**、保留字符串字面量.
+剥离保留换行 ⇒ 行号不错位.
+
+用法：
+    python swift_cellular_tunnel_guard.py [仓库根，默认 .]
+    仓库根 = 含 TequilaDash/ 的那一层（即 P1_TequilaDash_宿主仓库）
+退出码：0 = 全部通过；1 = 有 ERROR；2 = 参数/路径错误。
+"""
+import os
+import re
+import sys
+
+MANAGER_REL = os.path.join("TequilaDash", "Engine", "CellularTunnelManager.swift")
+ROOTVIEW_REL = os.path.join("TequilaDash", "Views", "RootView.swift")
+# v0.3.741：开关从设置页一级条目搬进二级页（用户 2026-11-01 要求「更多里的开关改成入口，
+# 二级界面才给开关」），故 @AppStorage 与 Toggle 允许落在这两处之一，RootView 必须留入口。
+SUPPORT_REL = os.path.join("TequilaDash", "Views", "CellularSupportView.swift")
+DISCOVERY_REL = os.path.join("TequilaDash", "Engine", "AppDiscovery.swift")
+UNINSTALL_REL = os.path.join("TequilaDash", "Engine", "UninstallService.swift")
+LOCATION_REL = os.path.join("TequilaDash", "Engine", "LocationEngine.swift")
+
+ENABLED_KEY = "TequilaDash.CellularTunnelSupport"
+
+# v0.3.613：R4/R5 已反转为「必须用快捷指令」（见 check_shortcut_dependency_present /
+# check_shortcut_name_configurable）。旧的两个常量（SHORTCUT_DEP_PATTERNS /
+# SHORTCUT_TEXT_MARKER）是「禁止出现」时代的产物，已删除 —— 留着会让后来者误读规则方向。
+# R7：Wi-Fi 硬信念文案（即「告诉用户必须/建议连 Wi-Fi 才能用」）.
+#   补充（本轮修复）：199aae2 删掉了「保持 Wi-Fi」等，却漏了 LocationEngine.swift 的
+#   「（Wi-Fi 下）」与 VirtualLocationSettingsView 的「建议在 Wi-Fi 下」——
+#   因为旧模式集不含它们。这里补齐：凡把 Wi-Fi 说成前提条件的措辞一律拦下.
+#   注意：不能笼统禁止「Wi-Fi」二字（如「不影响 Wi-Fi 下的连接」是如实说明，应放行），
+#   故只列「Wi-Fi 作前提」的具体措辞.
+WIFI_STRICT_PATTERNS = (
+    "stay on Wi-Fi", "保持 Wi-Fi", "保持Wi-Fi",
+    "建议在 Wi-Fi", "请连 Wi-Fi", "请连接 Wi-Fi", "需要 Wi-Fi", "需 Wi-Fi",
+    "（Wi-Fi 下）", "(Wi-Fi 下)", "Wi-Fi 下才能", "只能在 Wi-Fi",
+)
+
+# R6：隧道设备地址解析的锚点行 —— 凡出现此行的文件都是「真正建隧道」的入口，
+#   必须在建隧道前调用 CellularTunnelManager.shared.prepareForTunnel().
+TUNNEL_DEVICEIP_ANCHOR = "let deviceIP = LocalDevVPN.targetIP"
+PREPARE_CALL = "CellularTunnelManager.shared.prepareForTunnel()"
+
+# R8：蜂窝就绪轮询必须走多候选并行探测.
+#   本机可能同时装着 Surge / Loon / Shadowrocket 等（各起一条 utun），
+#   只探第一条 utun（`isTunnelReachable()` = `targetIP` 单地址）会探错隧道 ⇒
+#   必须用 `LocalDevVPN.isAnyCandidateReachable(timeout:)`（并行探全部候选，取第一个可达）.
+REQUIRED_MULTI_CANDIDATE_PROBE = "LocalDevVPN.isAnyCandidateReachable"
+FORBIDDEN_SINGLE_ADDRESS_PROBE = "LocalDevVPN.isTunnelReachable()"
+
+SOURCE_EXTS = (".swift", ".m", ".h", ".mm")
+
+
+def strip_comments(src):
+    """把注释替换成等长空格（保留换行与字符串字面量），行号不错位.
+
+    与「剥离注释+字符串」不同：这里**保留字符串字面量** ——
+    R4/R5 要抓的 `shortcuts://…` 与「快捷指令」正是出现在字符串/文案里；
+    而注释里提到这些词（如解释「为什么不用快捷指令」）属正常说明，不该误报.
+    """
+    out = list(src)
+    n = len(src)
+    i = 0
+    while i < n:
+        # Swift 多行字符串 """..."""：整体保留（内部不算注释）.
+        if src[i:i + 3] == '"""':
+            i += 3
+            while i < n and src[i:i + 3] != '"""':
+                i += 1
+            if i < n:
+                i += 3
+            continue
+        if src[i] == '"':
+            i += 1
+            while i < n:
+                if src[i] == "\\":
+                    i += 2
+                    continue
+                if src[i] == '"':
+                    i += 1
+                    break
+                i += 1
+            continue
+        if src[i] == "/" and i + 1 < n and src[i + 1] == "/":
+            while i < n and src[i] != "\n":
+                out[i] = " "
+                i += 1
+            continue
+        if src[i] == "/" and i + 1 < n and src[i + 1] == "*":
+            out[i] = out[i + 1] = " "
+            i += 2
+            while i < n and not (src[i] == "*" and i + 1 < n and src[i + 1] == "/"):
+                if src[i] != "\n":
+                    out[i] = " "
+                i += 1
+            if i < n:
+                out[i] = " "
+                if i + 1 < n:
+                    out[i + 1] = " "
+                i += 2
+            continue
+        i += 1
+    return "".join(out)
+
+
+def read(path):
+    return open(path, encoding="utf-8", errors="replace").read()
+
+
+def iter_source_files(root):
+    """遍历 TequilaDash/ 下所有 Swift/ObjC 源文件，产出 (相对路径, 绝对路径)."""
+    base = os.path.join(root, "TequilaDash")
+    for dirpath, _dirnames, filenames in os.walk(base):
+        for name in filenames:
+            if not name.endswith(SOURCE_EXTS):
+                continue
+            full = os.path.join(dirpath, name)
+            rel = os.path.relpath(full, root).replace("\\", "/")
+            yield rel, full
+
+
+def check_manager(path):
+    """R1：引擎文件存在 + 定义了 enabledKey."""
+    findings = []
+    if not os.path.isfile(path):
+        findings.append(("R1", "找不到 %s（引擎文件缺失）." % MANAGER_REL.replace("\\", "/")))
+        return findings
+    # enabledKey 的值是字符串字面量，strip_comments 保留字符串 ⇒ 直接用原文匹配.
+    if not re.search(r'enabledKey\s*=\s*"%s"' % re.escape(ENABLED_KEY), read(path)):
+        findings.append(("R1", "%s 未定义 enabledKey = \"%s\"." % (
+            MANAGER_REL.replace("\\", "/"), ENABLED_KEY)))
+    return findings
+
+
+def check_multi_candidate_probe(path):
+    """R8：就绪轮询必须走多候选并行探测（不得退回单地址 `isTunnelReachable()`）."""
+    findings = []
+    if not os.path.isfile(path):
+        return findings
+    stripped = strip_comments(read(path))
+    if REQUIRED_MULTI_CANDIDATE_PROBE not in stripped:
+        findings.append(("R8", "%s 未使用 %s —— 蜂窝轮询必须并行探**全部**候选对端"
+                               "（本机可能同时装着 Surge / Loon / Shadowrocket，各起一条 utun；"
+                               "只探第一条 utun 会探错隧道）." % (
+                                   MANAGER_REL.replace("\\", "/"), REQUIRED_MULTI_CANDIDATE_PROBE)))
+    if FORBIDDEN_SINGLE_ADDRESS_PROBE in stripped:
+        findings.append(("R8", "%s 出现 %s —— 单地址探测只覆盖 `targetIP` 一个候选，"
+                               "禁止用于蜂窝就绪轮询." % (
+                                   MANAGER_REL.replace("\\", "/"), FORBIDDEN_SINGLE_ADDRESS_PROBE)))
+    return findings
+
+
+DECL_RE = re.compile(
+    r'@AppStorage\s*\(\s*CellularTunnelManager\.enabledKey\s*\)'
+    r'\s*(?:private\s+|public\s+|internal\s+)?var\s+(\w+)\s*=\s*(\w+)')
+
+
+def _collect_toggle_hosts(root):
+    """收集两处（设置页 / 二级页）的 @AppStorage 声明与 Toggle 绑定情况."""
+    hosts = []
+    for rel in (ROOTVIEW_REL, SUPPORT_REL):
+        path = os.path.join(root, rel)
+        if not os.path.isfile(path):
+            continue
+        stripped = strip_comments(read(path))
+        m = DECL_RE.search(stripped)
+        if not m:
+            continue
+        var_name = m.group(1)
+        has_toggle = bool(re.search(r'Toggle\s*\([^)]*isOn\s*:\s*\$' + re.escape(var_name) + r'\b',
+                                    stripped))
+        hosts.append((rel.replace("\\", "/"), var_name, m.group(2), has_toggle))
+    return hosts
+
+
+def check_settings_toggle(root):
+    """R2/R3：@AppStorage 默认 false + Toggle 绑定该变量 + 二级页化后设置页留入口."""
+    findings = []
+    hosts = _collect_toggle_hosts(root)
+    if not hosts:
+        findings.append(("R2", "%s 与 %s 都找不到绑定 CellularTunnelManager.enabledKey 的 "
+                               "@AppStorage 声明." % (ROOTVIEW_REL.replace("\\", "/"),
+                                                     SUPPORT_REL.replace("\\", "/"))))
+        return findings
+    for rel, var_name, default_value, _has_toggle in hosts:
+        if default_value != "false":
+            findings.append(("R2", "%s 的 @AppStorage(%s) 默认值为 %s —— 必须默认 false（默认关 ⇒ "
+                                   "开关不开时全部 no-op，不改变 Wi-Fi 下既有行为）." % (
+                                       rel, var_name, default_value)))
+    toggle_hosts = [h for h in hosts if h[3]]
+    if not toggle_hosts:
+        findings.append(("R3", "%s / %s 都找不到绑定 $%s 的 Toggle（开关没接上）." % (
+            ROOTVIEW_REL.replace("\\", "/"), SUPPORT_REL.replace("\\", "/"), hosts[0][1])))
+    elif toggle_hosts[0][0].endswith("CellularSupportView.swift"):
+        root_path = os.path.join(root, ROOTVIEW_REL)
+        root_src = strip_comments(read(root_path)) if os.path.isfile(root_path) else ""
+        if "CellularSupportView()" not in root_src:
+            findings.append(("R3", "%s 没有 NavigationLink 指向 CellularSupportView() —— "
+                                   "开关搬进二级页后，设置页必须留入口，否则用户找不到开关." %
+                             ROOTVIEW_REL.replace("\\", "/")))
+    return findings
+
+
+def check_shortcut_dependency_present(root):
+    """R4：CellularTunnelManager.swift **必须**实现快捷指令调用（照 SideStore 移植）.
+
+    v0.3.613 反转：v0.3.612 曾把这一步删掉，导致蜂窝下必然
+    `connect: Connection refused (os error 61)`（iOS 对蜂窝上网时的回环 VPN 有系统级限制），
+    用户实测「蜂窝隧道支持也支持了鸡毛」。
+    SideStore 能在蜂窝下连通，靠的正是 `shortcuts://run-shortcut?name=TurnOffData`。
+    """
+    findings = []
+    full = os.path.join(root, MANAGER_REL)
+    if not os.path.exists(full):
+        return findings  # R1 已报缺失
+    body = strip_comments(read(full))
+
+    # 4.1 必须有 shortcuts:// 或 run-shortcut
+    if not any(pat in body for pat in ("shortcuts://", "run-shortcut")):
+        findings.append(("R4", "%s 缺少 `shortcuts://`（或 run-shortcut）调用 —— "
+                               "关/开蜂窝这一步是 SideStore 能在蜂窝下连通的关键，"
+                               "删掉 = 蜂窝功能失效（用户已实测）. 照 "
+                               "SideStore/Core/Shortcuts/CellularRefreshManager.swift 补回." % (
+                                   MANAGER_REL.replace("\\", "/"))))
+
+    # 4.2 必须有默认快捷指令名
+    for name in ("TurnOffData", "TurnOnData"):
+        if name not in body:
+            findings.append(("R4", "%s 缺少默认快捷指令名 `%s`（对齐 SideStore "
+                                   "AppConstants.Shortcuts.default%sShortcutName）." % (
+                                       MANAGER_REL.replace("\\", "/"), name, name)))
+
+    # 4.3 必须实现两个方法
+    for fn in ("turnOffDataIfNeeded", "turnOnDataIfNeeded"):
+        if not re.search(r'func\s+' + fn + r'\s*\(', body):
+            findings.append(("R4", "%s 未实现 `%s()` —— 必须照 SideStore "
+                                   "CellularRefreshManager 的同名方法补上." % (
+                                       MANAGER_REL.replace("\\", "/"), fn)))
+    return findings
+
+
+def check_shortcut_name_configurable(root):
+    """R5：快捷指令名**必须可自定义**（对齐 SideStore 的 turnOffDataShortcutName）."""
+    findings = []
+    full = os.path.join(root, MANAGER_REL)
+    if not os.path.exists(full):
+        return findings
+    body = strip_comments(read(full))
+    for key in ("TurnOffDataShortcutName", "TurnOnDataShortcutName"):
+        if key not in body:
+            findings.append(("R5", "%s 缺少 UserDefaults key `%s` —— 快捷指令名必须可由用户覆盖"
+                                   "（对齐 SideStore 的 turnOffDataShortcutName / "
+                                   "turnOnDataShortcutName），否则用户改名后功能失效." % (
+                                       MANAGER_REL.replace("\\", "/"), key)))
+    return findings
+
+    return findings
+
+
+def check_wiring(path, label):
+    """R6：某接线点必须调用 prepareForTunnel()."""
+    findings = []
+    if not os.path.isfile(path):
+        findings.append(("R6", "找不到接线点文件 %s（%s）." % (path.replace("\\", "/"), label)))
+        return findings
+    stripped = strip_comments(read(path))
+    if not re.search(r'CellularTunnelManager\.shared\.prepareForTunnel\s*\(\s*\)', stripped):
+        findings.append(("R6", "%s（%s）未调用 CellularTunnelManager.shared.prepareForTunnel() —— "
+                               "蜂窝下建隧道前必须有界等隧道就绪." % (path.replace("\\", "/"), label)))
+    return findings
+
+
+def check_wiring_all_tunnel_entries(root):
+    """R6（泛化）：所有「真正建隧道」的入口文件都必须调用 prepareForTunnel().
+
+    判据：文件含锚点 `let deviceIP = LocalDevVPN.targetIP`（即该处解析设备地址去建隧道）.
+    只看**实际代码**（strip_comments 后），避免被注释里的说明误报.
+    """
+    findings = []
+    for rel, full in iter_source_files(root):
+        if not rel.endswith(".swift"):
+            continue
+        try:
+            stripped = strip_comments(read(full))
+        except OSError:
+            continue
+        if TUNNEL_DEVICEIP_ANCHOR not in stripped:
+            continue
+        if PREPARE_CALL not in stripped:
+            findings.append(("R6", "%s 含隧道入口锚点「%s」，却未调用 %s —— "
+                                   "蜂窝下建隧道前必须先有界等隧道就绪." % (
+                                       rel, TUNNEL_DEVICEIP_ANCHOR, PREPARE_CALL)))
+    return findings
+
+
+def check_wifi_strict_text(root):
+    """R7：全 TequilaDash/ 不得再出现 Wi-Fi 硬信念文案."""
+    findings = []
+    for rel, full in iter_source_files(root):
+        try:
+            lines = strip_comments(read(full)).splitlines()
+        except OSError:
+            continue
+        for idx, line in enumerate(lines, 1):
+            for pat in WIFI_STRICT_PATTERNS:
+                if pat in line:
+                    findings.append(("R7", "%s:%d 出现「%s」—— Wi-Fi 硬信念文案（研究报告 §2.2/§2.3 "
+                                           "证实隧道只连本地地址，与 Wi-Fi/蜂窝无关）." % (rel, idx, pat)))
+                    break
+    return findings
+
+
+def main():
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    root = args[0] if args else "."
+
+    if not os.path.isdir(os.path.join(root, "TequilaDash")):
+        print("仓库根下找不到 TequilaDash/ ：%s" % os.path.abspath(root))
+        print("用法: python swift_cellular_tunnel_guard.py [仓库根]")
+        return 2
+
+    findings = []
+    findings += check_manager(os.path.join(root, MANAGER_REL))
+    findings += check_multi_candidate_probe(os.path.join(root, MANAGER_REL))
+    findings += check_settings_toggle(root)
+    # v0.3.762 第二次反转（用户裁定「把快捷指令的方案删了 以后我们不需要用到快捷指令」）：
+    # R4/R5 从「必须用快捷指令」再反转为「禁止快捷指令」——shortcuts:// 跳前台与卡点弹窗严重冲突.
+    findings += check_no_shortcut_dependency(root)
+    findings += check_no_shortcut_guide_references(root)
+    findings += check_wiring(os.path.join(root, DISCOVERY_REL), "应用列表")
+    findings += check_wiring(os.path.join(root, UNINSTALL_REL), "卸载")
+    findings += check_wiring(os.path.join(root, LOCATION_REL), "虚拟定位")
+    findings += check_wiring_all_tunnel_entries(root)
+    findings += check_wifi_strict_text(root)
+
+    for rule, msg in findings:
+        print("ERROR %s  %s" % (rule, msg))
+
+    print("-" * 72)
+    print("检查：Cellular隧道支持（引擎文件 / 设置开关 / 快捷指令调用在位 / 快捷指令名可自定义 / "
+          "全部隧道入口接线 / 无 Wi-Fi 硬信念文案）")
+    print("命中: %d" % len(findings))
+    if not findings:
+        print("✓ 引擎文件与键名齐备、开关默认关且已接上、快捷指令调用在位且名可自定义、"
+              "全部隧道入口均已调用 prepareForTunnel、无 Wi-Fi 硬信念文案 —— 合规")
+    return 1 if findings else 0
+
+
+
+
+def check_no_shortcut_dependency(root):
+    """R4（v0.3.762 反转）：CellularTunnelManager.swift **禁止**快捷指令调用.
+
+    历史：v0.3.612 删快捷指令（错误）→ v0.3.613 照 SideStore 要求快捷指令 →
+    v0.3.762 用户实测「自动模式没弹卡点卡、反而被跳到快捷指令 App」后裁定：
+    「把快捷指令的方案删了 以后我们不需要用到快捷指令！严重冲突！」.
+    根因 = 门编排失败后，建隧道链路的旧无参调用仍按旧语义自动执行
+    `UIApplication.open(shortcuts://run-shortcut?...)` 跳前台，把 App 踢到后台，
+    卡点弹窗永远看不见.
+
+    新不变量：关/开蜂窝只允许 私有 CoreTelephony API 或 交由卡点弹窗引导手动，
+    引擎文件里不得出现任何 shortcuts:// / run-shortcut / UIApplication.open.
+    """
+    findings = []
+    full = os.path.join(root, MANAGER_REL)
+    if not os.path.exists(full):
+        return findings  # R1 已报缺失
+    body = strip_comments(read(full))
+    for pat in ("shortcuts://", "run-shortcut", "UIApplication.shared.open", "runShortcutTurn"):
+        if pat in body:
+            findings.append(("R4", "%s 出现 `%s` —— 快捷指令方案已删（v0.3.762 用户裁定），关/开蜂窝只允许私有 CoreTelephony API 或卡点弹窗引导手动，任何路径不得跳快捷指令 App." % (
+                MANAGER_REL.replace("\\", "/"), pat)))
+    for fn in ("turnOffDataIfNeeded", "turnOnDataIfNeeded"):
+        if not re.search(r'func\s+' + fn + r'\s*\(', body):
+            findings.append(("R4", "%s 未实现 `%s()` —— 私有开关/卡点弹窗两路仍需这两个入口." % (
+                MANAGER_REL.replace("\\", "/"), fn)))
+    return findings
+
+
+def check_no_shortcut_guide_references(root):
+    """R5（v0.3.762 反转）：全仓不得再引用已删除的快捷指令文件/类型.
+
+    CellularShortcutInstaller.swift / CellularShortcutGuideView.swift /
+    CellularIntents.swift 已随快捷指令方案删除；任何残留引用都会编译失败.
+    """
+    findings = []
+    for pat in ("CellularShortcutInstaller", "CellularShortcutGuideView", "CellularIntents"):
+        for rel, full in iter_source_files(root):
+            if not rel.endswith(".swift"):
+                continue
+            try:
+                stripped = strip_comments(read(full))
+            except OSError:
+                continue
+            if pat in stripped:
+                findings.append(("R5", "%s 仍引用 `%s` —— 该快捷指令类型已随方案删除（v0.3.762），残留引用会编译失败." % (rel, pat)))
+    return findings
+
+
+if __name__ == "__main__":
+    sys.exit(main())
