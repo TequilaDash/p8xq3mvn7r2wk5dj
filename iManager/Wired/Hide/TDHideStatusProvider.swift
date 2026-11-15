@@ -2,22 +2,29 @@ import Foundation
 
 enum TDHideStatusProvider {
     static func currentRows() -> [TDHideStatusView.LayerRow] {
+        let globalOn = UserDefaults.standard.bool(forKey: "TDGlobalSpoof")
         let (enabled, total) = dyldTrimCoverage()
         let dyldState: TDHideStatusView.LayerRow.State
-        if total == 0 || enabled == 0 {
-            dyldState = .off
-        } else if enabled == total {
+        let dyldTitle: String
+        if globalOn {
             dyldState = .active
+            dyldTitle = "dyld 镜像裁剪 (全局生效)"
         } else {
-            dyldState = .partial
+            if total == 0 || enabled == 0 {
+                dyldState = .off
+            } else if enabled == total {
+                dyldState = .active
+            } else {
+                dyldState = .partial
+            }
+            dyldTitle = "dyld 镜像裁剪 (\(enabled)/\(total))"
         }
-
-        let spoof = UserDefaults.standard.bool(forKey: "TDGlobalSpoof")
+        let spoofOn = UserDefaults.standard.bool(forKey: "TDGlobalSpoof")
 
         return [
             .init(id: "env", icon: "leaf", title: "访客环境清洗", state: .builtIn),
             .init(id: "dyld", icon: "square.stack.3d.up.slash",
-                  title: "dyld 镜像裁剪 (\(enabled)/\(total))", state: dyldState),
+                  title: dyldTitle, state: dyldState),
             .init(id: "spoof", icon: "theatermasks",
                   title: "伪值层", state: spoof ? .active : .off),
             .init(id: "tweaks", icon: "folder.badge.questionmark",

@@ -514,7 +514,8 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
         setenv("TD_PROC_SPOOF", "1", 1);
     }
     TDVRootInstallIfRequested();
-    DyldHooksInit([guestAppInfo[@"hideLiveContainer"] boolValue], hookDlopen, [guestAppInfo[@"spoofSDKVersion"] unsignedIntValue]);
+    BOOL tdHideLiveContainer = [guestAppInfo[@"hideLiveContainer"] boolValue] || tdGlobalHide;
+    DyldHooksInit(tdHideLiveContainer, hookDlopen, [guestAppInfo[@"spoofSDKVersion"] unsignedIntValue]);
     
     if([guestContainerInfo[@"spoofIdentifierForVendor"] boolValue]) {
         NSString* idForVendorStr = guestContainerInfo[@"spoofedIdentifierForVendor"];
