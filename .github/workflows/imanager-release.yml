@@ -16,9 +16,15 @@ jobs:
       scheme: LiveContainer
       archive_path: archive
     steps:
-      - uses: maxim-lobanov/setup-xcode@v1
-        with:
-          xcode-version: '27.2'
+      - name: Select Xcode 27.x if present
+        run: |
+          set -euo pipefail
+          ls /Applications | grep -i '^Xcode' || true
+          XC="$(ls -d /Applications/Xcode*27*.app 2>/dev/null | sort -V | tail -n1 || true)"
+          if [ -n "$XC" ]; then
+            sudo xcode-select -s "$XC/Contents/Developer"
+          fi
+          xcodebuild -version
 
       - name: Checkout (with pristine submodules)
         uses: actions/checkout@v6
