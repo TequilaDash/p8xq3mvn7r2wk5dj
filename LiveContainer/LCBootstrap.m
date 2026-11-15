@@ -495,6 +495,17 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
         method_setImplementation(class_getInstanceMethod(swiftNSProcessInfo, selector), class_getMethodImplementation(NSProcessInfo.class, selector));
     }
     
+    // M44-ordering fix: read TDGlobalSpoof BEFORE NUD defaults hook rewrites the
+    // standardUserDefaults domain to the guest's.
+    // File-based flag: NSUserDefaults is hooked by NUDGuestHooksInit for the
+    // whole process once a guest has run, so any later read (even pre-NUD in
+    // this launch) can be served from the guest domain. A plain file in the
+    // HOST container is immune to that.
+    NSString *tdFlagPath = [NSHomeDirectory() stringByAppendingPathComponent:@"Documents/TDGlobalHide"];
+    BOOL tdGlobalHide = [[NSString stringWithContentsOfFile:tdFlagPath encoding:NSUTF8StringEncoding error:nil] isEqualToString:@"1"];
+    BOOL tdHideLiveContainer = tdGlobalHide || [guestAppInfo[@"hideLiveContainer"] boolValue];
+    NSLog(@"[TDGlobalHide] guest=%d global=%d (pre-NUD)", (int)[guestAppInfo[@"hideLiveContainer"] boolValue], (int)tdGlobalHide);
+
     // hook NSUserDefault before running libraries' initializers
     NUDGuestHooksInit();
     SecItemGuestHooksInit();
@@ -507,14 +518,12 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
     litehook_rebind_symbol(LITEHOOK_REBIND_GLOBAL, NSSetUncaughtExceptionHandler, hook_do_nothing, nil);
     
     BOOL hookDlopen = !isSharedBundle && LCSharedUtils.certificatePassword && isLiveProcess;
-    BOOL tdGlobalHide = [[NSUserDefaults standardUserDefaults] boolForKey:@"TDGlobalSpoof"];
-    NSLog(@"[TDGlobalHide] guest=%d global=%d", (int)[guestAppInfo[@"hideLiveContainer"] boolValue], (int)tdGlobalHide);
-    if([guestAppInfo[@"hideLiveContainer"] boolValue] || tdGlobalHide) {
+    if(tdHideLiveContainer) {
         setenv("TD_SYSCTL_SPOOF", "1", 1);
         setenv("TD_PROC_SPOOF", "1", 1);
     }
     TDVRootInstallIfRequested();
-    BOOL tdHideLiveContainer = [guestAppInfo[@"hideLiveContainer"] boolValue] || tdGlobalHide;
+
     DyldHooksInit(tdHideLiveContainer, hookDlopen, [guestAppInfo[@"spoofSDKVersion"] unsignedIntValue]);
     
     if([guestContainerInfo[@"spoofIdentifierForVendor"] boolValue]) {
