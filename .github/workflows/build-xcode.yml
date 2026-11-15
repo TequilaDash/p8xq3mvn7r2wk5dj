@@ -172,7 +172,7 @@ jobs:
             # 编译环境指纹（来自复用产物；旧产物无 build-env.txt 时优雅缺省）。
             ENVF="$(find /tmp/reuse -name 'build-env.txt' -type f 2>/dev/null | head -n1)"
             NOTEF="$(mktemp)"
-            { echo "由 Xcode 原生工程（方案 A）构建的未签名 IPA（双版本）。**复用 run ${RUN} 的成功构建产物，未重复编译**。标准版 TequilaDash-<ver>-xcode-unsigned.ipa 仅需普通证书；隧道版 TequilaDash-Tunnel-<ver>-xcode-unsigned.ipa 随包携带 packet-tunnel-provider，需带 Network Extension 权限的证书/侧载工具给主 App 与扩展都施加 NE。侧载时由工具（Sideloadly/ESign/TrollStore）施加 entitlements。bundle id=com.tequila.dash。"
+            { echo "由 Xcode 原生工程（方案 A）构建的未签名 IPA（标准版）。**复用 run ${RUN} 的成功构建产物，未重复编译**。标准版 TequilaDash-<ver>-xcode-unsigned.ipa 仅需普通证书，侧载时由工具（Sideloadly/ESign/TrollStore）施加 entitlements。bundle id=com.tequila.dash。"
               if [ -n "${ENVF:-}" ]; then echo; echo "### 构建环境（来自复用产物）"; cat "$ENVF"; fi; } > "$NOTEF"
             if gh release view "$TAG" >/dev/null 2>&1; then
               echo "Release $TAG 已存在，仅追加/覆盖 asset"
@@ -764,7 +764,6 @@ jobs:
           # 否则 grep -m1 会命中注释行，版本号变成乱码导致 zip 文件名含空格而失败）
           VERSION="$(grep -m1 '^[[:space:]]*MARKETING_VERSION:' project.yml | sed -E 's/.*"([0-9.]+)".*/\1/')"
           STD_IPA="TequilaDash-${VERSION}-xcode-unsigned.ipa"
-          TUN_IPA="TequilaDash-Tunnel-${VERSION}-xcode-unsigned.ipa"
           # extensionkit 扩展的落位由 project.yml 的
           # `copy: { destination: plugins }` 保证（xcodegen 官方的 Copy Files Phase 覆盖），
           # 产物直接进 PlugIns/。这里只做校验，不做移动 —— 移动必须在 Xcode 侧完成，
@@ -812,22 +811,8 @@ jobs:
           echo "producing UNSIGNED standard IPA"
           package_ipa "$STD_IPA"
 
-          # ── 隧道版 ──
-          # 主 App 随包 entitlements 覆盖为隧道版（含 networkextension）。
-          # 标准版 Payload 副本在上一步已生成，此处覆盖不会污染它。
-          cp TequilaDash-Tunnel.entitlements "$APP/TequilaDash.entitlements" 2>/dev/null || true
-          # ★ 最容易漏：扩展 .appex 也必须携带自己的 NE entitlements，否则侧载工具
-          #   不知道给扩展施加 packet-tunnel-provider，隧道无法建立。
-          if [ -n "${APPEX:-}" ]; then
-            cp TequilaDashTunnel/TequilaDashTunnel.entitlements "$APPEX/TequilaDashTunnel.entitlements" 2>/dev/null || true
-          else
-            echo "::warning::TequilaDashTunnel.appex 未找到 —— 隧道版扩展可能无法启用"
-          fi
-          echo "producing UNSIGNED tunnel IPA"
-          package_ipa "$TUN_IPA"
-
+          # 单版本（0.3.889 起 owner 决定不再内置隧道版，减负担）。
           echo "IPA=$STD_IPA" >> "$GITHUB_ENV"
-          echo "IPA_TUNNEL=$TUN_IPA" >> "$GITHUB_ENV"
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
 
       - name: Weak-import guard (v0.3.746 crash-class blocker)
@@ -883,17 +868,7 @@ jobs:
               echo "::error::SAPAssets 缺失于 $IPA —— Apple ID 登录会失败"; exit 1; }
             rm -f "/tmp/sap_list_$$.txt"
           done
-          # 隧道版必须真的带上含 NE 权限的 entitlements（主 App + 扩展各一份）
-          if [ -f "${IPA_TUNNEL:-}" ]; then
-            # 先落盘再 grep（R-CI-5：pipefail 下 `unzip -p | grep -q` 会因 SIGPIPE 误判）。
-            unzip -p "$IPA_TUNNEL" 'Payload/TequilaDash.app/TequilaDash.entitlements' > /tmp/tun_app.ent 2>/dev/null || true
-            grep -q 'com.apple.developer.networking.networkextension' /tmp/tun_app.ent || {
-              echo "::error::隧道版主 App entitlements 缺 NE 权限"; exit 1; }
-            unzip -p "$IPA_TUNNEL" 'Payload/TequilaDash.app/PlugIns/TequilaDashTunnel.appex/TequilaDashTunnel.entitlements' > /tmp/tun_ext.ent 2>/dev/null || true
-            grep -q 'com.apple.developer.networking.networkextension' /tmp/tun_ext.ent || {
-              echo "::error::隧道版扩展 entitlements 缺 NE 权限"; exit 1; }
-            echo "tunnel entitlements OK (app + appex)"
-          fi
+          # （无隧道版校验）
           # LiveProcess 扩展（m5 方案 S3）：两个 IPA 都必须带 .appex，且 CFBundleVersion 与主 App 一致，
           # entitlements 文件随包携带 —— 缺一样侧载后扩展就起不来.
           # 注意比对基准是**构建号**（CFBundleVersion=1077 这类），不是营销号 $VERSION
@@ -975,15 +950,12 @@ jobs:
           if [ -z "${IPA:-}" ] || [ ! -f "${IPA:-}" ]; then
             echo "IPA 未产出，跳过 Release 发布"; exit 0
           fi
-          # 双版本：收集本次产出的全部 IPA（标准版 + 隧道版），逐个上传为 asset。
+          # 单版本：仅标准版（0.3.889 起不再发布内置隧道版）。
           ASSETS=("$IPA")
-          if [ -n "${IPA_TUNNEL:-}" ] && [ -f "${IPA_TUNNEL:-}" ]; then
-            ASSETS+=("$IPA_TUNNEL")
-          fi
           echo "将上传 asset: ${ASSETS[*]}"
           TAG="${GITHUB_REF_NAME}"
           NOTEF="$(mktemp)"
-          { echo "由 Xcode 原生工程（方案 A）构建的未签名 IPA（双版本）。标准版 TequilaDash-<ver>-xcode-unsigned.ipa 仅需普通证书；隧道版 TequilaDash-Tunnel-<ver>-xcode-unsigned.ipa 随包携带 packet-tunnel-provider，需带 Network Extension 权限的证书/侧载工具给主 App 与扩展都施加 NE。侧载时由工具（Sideloadly/ESign/TrollStore）施加 entitlements。bundle id=com.tequila.dash。"
+          { echo "由 Xcode 原生工程（方案 A）构建的未签名 IPA（标准版）。标准版 TequilaDash-<ver>-xcode-unsigned.ipa 仅需普通证书，侧载时由工具（Sideloadly/ESign/TrollStore）施加 entitlements。bundle id=com.tequila.dash。"
             if [ -f build-env.txt ]; then echo; echo "### 构建环境（本次产物真实编译环境）"; cat build-env.txt; fi; } > "$NOTEF"
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "Release $TAG 已存在，仅追加/覆盖 asset"
