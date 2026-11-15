@@ -1,6 +1,6 @@
-20261115-184416 1.1.8 Update：
-1. 全局隐藏模式开启时，所有访客均启用 dyld 镜像裁剪（复用上游 hide 实现，不再叠加第二套裁剪）。
-2. 隐藏状态页：全局开启时 dyld 行显示“全局生效”；关闭时恢复按 per-app 统计的 x/x 与 部分开启。
+20261115-185753 1.1.9 Update：
+1. 修复全局隐藏模式无效：NUDUserDefaults hook 会把 standardUserDefaults 域改写为访客域，导致 LCBootstrap 读不到宿主的全局开关。将读取提前到 NUD hook 之前。
+2. 启动日志新增 [TDGlobalHide] guest/global (pre-NUD)，可在 td-console.log 中核对。
 
 [编译环境]
 构建时自动填充
