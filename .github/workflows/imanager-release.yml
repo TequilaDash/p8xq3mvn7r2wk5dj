@@ -38,7 +38,7 @@ jobs:
             -archivePath "$archive_path" \
             -scheme "$scheme" \
             -project LiveContainer.xcodeproj \
-            -sdk iphoneos -arch arm64 -configuration Release | xcpretty
+            -sdk iphoneos -arch arm64 -configuration Release 2>&1 | tee build.log
           exit ${PIPESTATUS[0]}
 
       - name: Package unsigned IPA (upstream script)
@@ -50,7 +50,7 @@ jobs:
         with:
           name: zcontainer-build-log
           path: |
-            **/*.log
+            build.log
           if-no-files-found: warn
 
       - name: Upload IPA
