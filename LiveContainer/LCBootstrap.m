@@ -1,22 +1,3 @@
-extern void TDVRootInstallIfRequested(void);
-
-#include <sys/syslimits.h>
-#include <string.h>
-
-// Host home captured before any guest can setenv("HOME"). Constructors of
-// linked frameworks run before main(), so this value is the host container.
-static char tdHostHomeBuf[PATH_MAX];
-__attribute__((constructor)) static void tdCaptureHostHome(void) {
-    const char *h = getenv("HOME");
-    if (h && h[0] == '/') {
-        strlcpy(tdHostHomeBuf, h, sizeof(tdHostHomeBuf));
-    }
-}
-NSString *TDHostHomeDocumentsDir(void) {
-    if (tdHostHomeBuf[0] == 0) tdCaptureHostHome();
-    NSString *home = [NSString stringWithUTF8String:tdHostHomeBuf];
-    return [home stringByAppendingPathComponent:@"Documents"];
-}
 #import "FoundationPrivate.h"
 #import "LCMachOUtils.h"
 #import "LCSharedUtils.h"
@@ -37,6 +18,26 @@ NSString *TDHostHomeDocumentsDir(void) {
 #include "../litehook/src/litehook.h"
 #import "Tweaks/Tweaks.h"
 #include <mach-o/ldsyms.h>
+
+extern void TDVRootInstallIfRequested(void);
+
+#include <sys/syslimits.h>
+#include <string.h>
+
+// Host home captured before any guest can setenv("HOME"). Constructors of
+// linked frameworks run before main(), so this value is the host container.
+static char tdHostHomeBuf[PATH_MAX];
+__attribute__((constructor)) static void tdCaptureHostHome(void) {
+    const char *h = getenv("HOME");
+    if (h && h[0] == '/') {
+        strlcpy(tdHostHomeBuf, h, sizeof(tdHostHomeBuf));
+    }
+}
+NSString *TDHostHomeDocumentsDir(void) {
+    if (tdHostHomeBuf[0] == 0) tdCaptureHostHome();
+    NSString *home = [NSString stringWithUTF8String:tdHostHomeBuf];
+    return [home stringByAppendingPathComponent:@"Documents"];
+}
 
 extern char **environ;
 static int (*appMain)(int, char**, char**);
