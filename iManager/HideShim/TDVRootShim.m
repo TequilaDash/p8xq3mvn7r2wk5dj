@@ -400,6 +400,18 @@ static gid_t tdv_getegid(void) {
 extern int tdv_real_sysctlbyname(const char *, void *, size_t *, void *, size_t)
     __asm("_sysctlbyname");
 
+// 其它 tweak(如 FakeTools 的 hooked_sysctl)会再次改写 _sysctl/_sysctlbyname 的
+// 符号绑定; 我们若继续按符号调用, 就会和对方的 hook 形成互相递归(真机见过
+// "excessive recursion" SIGSEGV). 在镜像加载时把真实函数地址存进自有变量,
+// 后续调用走变量, 不再经过可被改写的 GOT.
+static int (*gTDVRealSysctl)(int *, u_int, void *, size_t *, void *, size_t);
+static int (*gTDVRealSysctlByName)(const char *, void *, size_t *, void *, size_t);
+
+__attribute__((constructor)) static void tdv_capture_real_sysctl(void) {
+    gTDVRealSysctl = tdv_real_sysctl;
+    gTDVRealSysctlByName = tdv_real_sysctlbyname;
+}
+
 static int tdv_sysctlbyname(const char *name, void *oldp, size_t *oldlenp,
                             void *newp, size_t newlen) {
     if (name && oldp && oldlenp && *oldlenp > 0 && !newp) {
@@ -416,7 +428,9 @@ static int tdv_sysctlbyname(const char *name, void *oldp, size_t *oldlenp,
             return -1;
         }
     }
-    return tdv_real_sysctlbyname(name, oldp, oldlenp, newp, newlen);
+    int (*real)(const char *, void *, size_t *, void *, size_t) = gTDVRealSysctlByName;
+    if (!real) real = tdv_real_sysctlbyname;
+    return real(name, oldp, oldlenp, newp, newlen);
 }
 
 // 裸 MIB 通道: Reveil 的两条 PFlag 检查都读
@@ -430,7 +444,9 @@ extern int tdv_real_sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp
 
 static int tdv_sysctl_impl(int *name, u_int namelen, void *oldp, size_t *oldlenp,
                            void *newp, size_t newlen) {
-    int rc = tdv_real_sysctl(name, namelen, oldp, oldlenp, newp, newlen);
+    int (*real)(int *, u_int, void *, size_t *, void *, size_t) = gTDVRealSysctl;
+    if (!real) real = tdv_real_sysctl;
+    int rc = real(name, namelen, oldp, oldlenp, newp, newlen);
     if (rc != 0 || newp != NULL || !oldp || !oldlenp) return rc;
     if (!TDVSysctlSpoofEnabled() || !name || namelen != 4) return rc;
     if (name[0] != CTL_KERN || name[1] != KERN_PROC || name[2] != KERN_PROC_PID) return rc;

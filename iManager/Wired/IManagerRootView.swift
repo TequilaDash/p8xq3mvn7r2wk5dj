@@ -32,6 +32,11 @@ struct IManagerRootView: View {
                 } label: {
                     Label("exploit 日志", systemImage: "doc.text.magnifyingglass")
                 }
+                NavigationLink {
+                    IManagerConsoleLogView()
+                } label: {
+                    Label("崩溃日志", systemImage: "exclamationmark.triangle")
+                }
             } header: {
                 Text("诊断")
             }

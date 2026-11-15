@@ -17,6 +17,7 @@
 #include <stdlib.h>
 #include "../litehook/src/litehook.h"
 #import "Tweaks/Tweaks.h"
+#import "../iManager/HideShim/TDConsoleLog.h"
 #include <mach-o/ldsyms.h>
 
 extern void TDVRootInstallIfRequested(void);
@@ -43,25 +44,10 @@ NSString *TDHostHomeDocumentsDir(void) {
     return path ? [NSString stringWithUTF8String:path] : nil;
 }
 
-// 设备上 NSLog 不容易取到, 把启动关键状态写进宿主 Documents 里的小文件
-// (TDLaunchLog.txt), 用户可以通过文件 App 直接导出. 只追加一行, 不做轮转以外
-// 的处理; 超过 64KB 时从头截断, 避免长期运行无限增长.
+// 设备上 NSLog 不容易取到, 启动关键状态统一写进宿主 Documents/ConsoleLog.
 static void TDAppendLaunchLog(NSString *line) {
-    NSString *dir = TDHostHomeDocumentsDir();
-    if (!dir || line.length == 0) return;
-    NSString *path = [dir stringByAppendingPathComponent:@"TDLaunchLog.txt"];
-    const char *cPath = path.fileSystemRepresentation;
-    FILE *f = fopen(cPath, "a");
-    if (!f) return;
-    fseek(f, 0, SEEK_END);
-    long size = ftell(f);
-    if (size > 65536) {
-        fclose(f);
-        f = fopen(cPath, "w");
-        if (!f) return;
-    }
-    fprintf(f, "%s %s\n", NSDate.date.description.UTF8String, line.UTF8String);
-    fclose(f);
+    if (line.length == 0) return;
+    TDConsoleLog(@"%@", line);
 }
 
 extern char **environ;
@@ -870,6 +856,7 @@ int LiveContainerMain(int argc, char *argv[]) {
 
     }
     NSSetUncaughtExceptionHandler(&exceptionHandler);
+    TDConsoleLogInstallCrashHandlers();
     if (selectedApp) {
         [lcUserDefaults removeObjectForKey:@"selected"];
         [lcUserDefaults removeObjectForKey:@"selectedContainer"];
