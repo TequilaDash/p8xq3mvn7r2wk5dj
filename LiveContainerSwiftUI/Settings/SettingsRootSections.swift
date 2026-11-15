@@ -64,5 +64,22 @@ struct SettingsRootSections: View {
                 SettingsRow(page: .advanced)
             }
         }
+
+        Section {
+            NavigationLink {
+                IManagerRootView()
+            } label: {
+                HStack(spacing: 12) {
+                    Image("IManagerIcon")
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: 29, height: 29)
+                        .clipShape(RoundedRectangle(cornerRadius: 6.75, style: .continuous))
+                    Text("iManager")
+                }
+            }
+        } footer: {
+            Text("iManager 是内置功能集（诊断 / 隐藏状态 / 工具），与 zcontainer 同进程运行。")
+        }
     }
 }
