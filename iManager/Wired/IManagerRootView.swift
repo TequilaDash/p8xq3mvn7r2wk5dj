@@ -12,10 +12,10 @@ struct IManagerRootView: View {
     }()
 
     @State private var globalHide: Bool = {
-        let p = Self.hostDocumentsDirString() + "/TDGlobalHide"
+        let p = Self.hostDocumentsDirString + "/TDGlobalHide"
         return (try? String(contentsOfFile: p, encoding: .utf8)) == "1"
     }()
-    private var flagPath: String { Self.hostDocumentsDirString() + "/TDGlobalHide" }
+    private var flagPath: String { Self.hostDocumentsDirString + "/TDGlobalHide" }
     var body: some View {
         List {
             Section {
