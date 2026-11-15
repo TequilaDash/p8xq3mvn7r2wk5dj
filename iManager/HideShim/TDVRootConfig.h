@@ -93,12 +93,6 @@ bool TDVRootShouldSkipPath(const char *path);
 /// 这里是唯一的强制重新求值点.
 void TDVRootInstallIfRequested(void);
 
-/// 访客主可执行文件绝对路径 (LC 启动访客时登记; 隐藏关或未启动访客时返回 NULL).
-/// 用途: _NSGetExecutablePath 重定向 —— 检测器用它取"主可执行", 不重定向会拿到
-/// LC 自己的二进制, 从而把 LC 的 entitlements / 依赖树 / 文本哈希当成访客的.
-void TDVRootSetGuestExecutablePath(const char *path);
-const char *TDVRootGuestExecutablePath(void);
-
 /// mode=full: 覆盖 HOME/CFFIXED_USER_HOME 为 vroot 根;
 /// path/full: 把 vroot 的 bin 目录前置到 PATH.
 /// 必须由 LCBootstrap 在既有 HOME/CFFIXED_USER_HOME 覆盖之后调用.

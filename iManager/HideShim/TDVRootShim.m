@@ -269,33 +269,6 @@ static int tdv_getattrlist(const char *path, void *attrList, void *attrBuf,
                                 attrList, attrBuf, attrBufSize, options);
 }
 
-#pragma mark - 主可执行路径重定向 (_NSGetExecutablePath)
-
-// 检测器用 _NSGetExecutablePath 取"主可执行"再读它:
-//   · EntitlementsReader(executablePath)  -> 把读到的 entitlement 当访客的
-//   · MachOParse / findRuntimePaths / findLoadedDylibs 的兜底基准路径
-// LC 进程里不重定向就会拿到 LC 自己的二进制, 于是 LC 的 entitlement 集合、
-// 依赖树、rpath 全被当成访客的 -> 判成"权限/依赖被篡改".
-// 隐藏态下返回 LC 启动访客时登记的 guest executable (TDVRootGuestExecutablePath).
-// 未登记 (隐藏关 / 尚未启动访客) 原样透传, 宿主自身不受影响.
-extern int tdv_real_nsgetexecutablepath(char *buf, uint32_t *bufsize)
-    __asm("__NSGetExecutablePath");
-
-static int tdv_nsgetexecutablepath(char *buf, uint32_t *bufsize) {
-    const char *guest = TDVRootGuestExecutablePath();
-    if (!guest || !buf || !bufsize) {
-        return tdv_real_nsgetexecutablepath(buf, bufsize);
-    }
-    uint32_t need = (uint32_t)strlen(guest) + 1;
-    if (*bufsize < need) {
-        *bufsize = need;   // 与真实 API 一致: 回写所需长度并返回 -1
-        return -1;
-    }
-    memcpy(buf, guest, need);
-    *bufsize = need;
-    return 0;
-}
-
 #pragma mark - getmntinfo 追加 vroot 项
 
 static struct statfs *gTDVMntCache = NULL;
@@ -748,7 +721,6 @@ TDV_INTERPOSE(tdv_getgid, tdv_real_getgid);
 TDV_INTERPOSE(tdv_getegid, tdv_real_getegid);
 TDV_INTERPOSE(tdv_sysctlbyname, tdv_real_sysctlbyname);
 TDV_INTERPOSE(tdv_sysctl_impl, tdv_real_sysctl);
-TDV_INTERPOSE(tdv_nsgetexecutablepath, tdv_real_nsgetexecutablepath);
 TDV_INTERPOSE(tdv_sectask_copy_impl, tdv_real_sectask_copy);
 static CFDictionaryRef tdv_sectask_copy_values_impl(tdv_SecTaskRef task,
                                                     CFArrayRef entitlements,

@@ -20,7 +20,6 @@
 #include <mach-o/ldsyms.h>
 
 extern void TDVRootInstallIfRequested(void);
-extern void TDVRootSetGuestExecutablePath(const char *path);
 
 #include <sys/syslimits.h>
 #include <string.h>
@@ -531,12 +530,6 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
     NSLog(@"[TDGlobalHide] path=%@ value=%@ payload=%d guest=%d global=%d hide=%d pre-NUD", tdFlagPath,
           tdGlobalValue ?: @"<missing>", (int)tdPayloadGlobalHide, (int)tdPerAppHide,
           (int)tdGlobalHide, (int)tdHideLiveContainer);
-
-    // 隐藏态: 让 _NSGetExecutablePath 返回访客主可执行 (检测器用它读主可执行的
-    // entitlements / 依赖树 / 哈希; 不重定向会拿到 LC 自己的二进制).
-    if (tdHideLiveContainer && appExecPath) {
-        TDVRootSetGuestExecutablePath(appExecPath);
-    }
 
     // hook NSUserDefault before running libraries' initializers
     NUDGuestHooksInit();
