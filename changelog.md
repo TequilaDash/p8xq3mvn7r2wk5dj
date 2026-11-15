@@ -1,3 +1,6 @@
+20261116-003054 1.1.22 Update：
+1. 修复 TweakLoader 加载 CydiaSubstrate 失败：访客启动后 lcMainBundle 会被改写，旧代码因此去 <访客>/Documents/Frameworks 找库；现在从 TweakLoader 自身镜像路径反推 LC app，并保留旧路径作回退。
+
 20261116-001600 1.1.21 Update：
 1. 修复真机 SIGSEGV 递归崩溃：tweak（如 FakeTools 的 hooked_sysctl）会再次改写 _sysctl 绑定，我们改为在镜像加载时捕获真实 sysctl/sysctlbyname 地址，不再与对方 hook 互相递归。
 2. 新增 ConsoleLog：启动面包屑写入 Documents/ConsoleLog/console-YYYYMMDD.log；未捕获异常与 SIGABRT/SIGSEGV/SIGBUS/SIGILL/SIGFPE/SIGTRAP 写入 crash-*.log，含进程回溯。

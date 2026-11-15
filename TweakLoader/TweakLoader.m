@@ -1,6 +1,8 @@
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
 #include <dlfcn.h>
+#include <limits.h>
+#include <stdlib.h>
 #include <objc/runtime.h>
 #import "../LiveContainer/utils.h"
 
@@ -100,17 +102,37 @@ static void TweakLoaderConstructor() {
     }
 
     // Load CydiaSubstrate
-    const char *lcMainBundlePath;
-    if(NSUserDefaults.isLiveProcess) {
-        lcMainBundlePath = NSUserDefaults.lcMainBundle.bundlePath.stringByDeletingLastPathComponent.stringByDeletingLastPathComponent.fileSystemRepresentation;
-    } else {
-        lcMainBundlePath = NSUserDefaults.lcMainBundle.bundlePath.fileSystemRepresentation;
-    }
+    // NSUserDefaults.lcMainBundle 在访客启动后可能已被改写成访客 bundle
+    // (真机表现为去找 <guest>/Documents/Frameworks/CydiaSubstrate.framework).
+    // 从 TweakLoader 自身镜像路径反推 LC app, 与 bundle 覆盖无关.
     char substratePath[PATH_MAX];
-    snprintf(substratePath, sizeof(substratePath), "%s/Frameworks/CydiaSubstrate.framework/CydiaSubstrate", lcMainBundlePath);
+    substratePath[0] = '\0';
+    char selfPath[PATH_MAX];
+    Dl_info selfInfo;
+    if (dladdr((void *)&TweakLoaderConstructor, &selfInfo) && selfInfo.dli_fname &&
+        realpath(selfInfo.dli_fname, selfPath)) {
+        char *frameworks = strstr(selfPath, "/Frameworks/");
+        if (frameworks) {
+            *frameworks = '\0';
+            snprintf(substratePath, sizeof(substratePath),
+                     "%s/Frameworks/CydiaSubstrate.framework/CydiaSubstrate", selfPath);
+        }
+    }
+    if (substratePath[0] == '\0') {
+        // 回退: 旧路径推导 (仅当自定位失败)
+        const char *lcMainBundlePath;
+        if(NSUserDefaults.isLiveProcess) {
+            lcMainBundlePath = NSUserDefaults.lcMainBundle.bundlePath.stringByDeletingLastPathComponent.stringByDeletingLastPathComponent.fileSystemRepresentation;
+        } else {
+            lcMainBundlePath = NSUserDefaults.lcMainBundle.bundlePath.fileSystemRepresentation;
+        }
+        snprintf(substratePath, sizeof(substratePath),
+                 "%s/Frameworks/CydiaSubstrate.framework/CydiaSubstrate", lcMainBundlePath);
+    }
     dlopen(substratePath, RTLD_LAZY | RTLD_GLOBAL);
     const char *substrateError = dlerror();
     if (substrateError) {
+        NSLog(@"[TweakLoader] substrate load failed: %s (%s)", substratePath, substrateError);
         [errors addObject:@(substrateError)];
     }
 
