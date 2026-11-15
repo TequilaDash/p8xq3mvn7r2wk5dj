@@ -134,10 +134,11 @@ extern void TDSandboxLogAppend(const char *message);
 DecoratedAppSceneViewController *launcherView = [[DecoratedAppSceneViewController alloc] initWindowName:displayName bundleId:bundleId dataUUID:dataUUID rootVC:container];
         // Wire PID callback
         launcherView.pidAvailableHandler = completionHandler;
-        // 审计 §4.2: 全屏 scene 容器直接 frame=bounds; center+四向 flexible 会在
-        // rootVC 未 layout 时读到 (0,0) 且旋转时漂移.
-        launcherView.view.frame = container.view.bounds;
-        launcherView.view.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+        // M44 (0.3.888 回归修复): 不再 frame=bounds / 强制全屏 —— 交给上游
+        // DecoratedAppSceneViewController 自己的窗口布局 (windowed/maximized 两态).
+        // 诊断: 打印容器链, 验证层级与尺寸 (scene 白屏排查).
+        NSLog(@"[TD-Multitask] container=%@ bounds=%@ superviewVCchain-ok",
+              NSStringFromClass(container.class), NSStringFromCGRect(container.view.bounds));
     });
 }
 

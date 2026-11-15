@@ -43,8 +43,8 @@ settings:
     TD_HOST_BUNDLE_ID: com.tequila.dash
     PRODUCT_BUNDLE_IDENTIFIER: com.tequila.dash
     PRODUCT_NAME: TequilaDash
-    MARKETING_VERSION: "0.3.888"
-    CURRENT_PROJECT_VERSION: "1177"
+    MARKETING_VERSION: "0.3.889"
+    CURRENT_PROJECT_VERSION: "1178"
     # 注：这里**刻意不写** `SWIFT_VERSION` —— 实测顶层 `settings.base` 的它**不被 xcodegen 采纳**，
     # 真正生效的是下面 target 层那一份（当前 `"6.0"` = Swift 6 语言模式）。
     # 另注：**编译器版本 ≠ 语言模式** —— CI 用 Xcode 27 自带的 Swift 6.4 编译器，
@@ -478,8 +478,8 @@ targets:
         # 版本号三处同步（HARD-RULES 22）：主 App 的 settings.base 与 Resources/Info.plist 之外，
         # 扩展 target 是第三处 —— 原先这里停在 0.3.587/881（落后主 App 33 个版本），
         # 会让 .appex 的 CFBundleVersion 与主 App 不一致，iOS 安装/升级可拒或把扩展判过期。
-        MARKETING_VERSION: "0.3.888"
-        CURRENT_PROJECT_VERSION: "1177"
+        MARKETING_VERSION: "0.3.889"
+        CURRENT_PROJECT_VERSION: "1178"
         IPHONEOS_DEPLOYMENT_TARGET: "18.0"
         # 与主 target 同口径的 Swift 6 严格并发（详见主 target 的说明）.
         SWIFT_VERSION: "6.0"
@@ -536,8 +536,8 @@ targets:
         PRODUCT_NAME: LiveProcess
         # 版本号三处同步 (HARD-RULES 22): 与 Tunnel 同款纪律, 缺写则 .appex 的 CFBundleVersion 为空,
         # iOS 会因主 App 与扩展版本不一致拒装/判过期.
-        MARKETING_VERSION: "0.3.888"
-        CURRENT_PROJECT_VERSION: "1177"
+        MARKETING_VERSION: "0.3.889"
+        CURRENT_PROJECT_VERSION: "1178"
         IPHONEOS_DEPLOYMENT_TARGET: "18.0"
         SWIFT_VERSION: "6.0"
         SWIFT_STRICT_CONCURRENCY: complete
@@ -594,8 +594,8 @@ targets:
         DYLIB_CURRENT_VERSION: 1
         DYLIB_INSTALL_NAME_BASE: "@rpath"
         SKIP_INSTALL: "YES"
-        MARKETING_VERSION: "0.3.888"
-        CURRENT_PROJECT_VERSION: "1177"
+        MARKETING_VERSION: "0.3.889"
+        CURRENT_PROJECT_VERSION: "1178"
         IPHONEOS_DEPLOYMENT_TARGET: "18.0"
         CLANG_ENABLE_OBJC_ARC: "YES"
         CLANG_ENABLE_MODULES: "YES"
@@ -652,8 +652,8 @@ targets:
         # libvrootapi 的 LC_LOAD_DYLIB 按 @loader_path 解析我们 (两件同落 <jbroot>/usr/lib).
         DYLIB_INSTALL_NAME_BASE: "@loader_path"
         SKIP_INSTALL: "YES"
-        MARKETING_VERSION: "0.3.888"
-        CURRENT_PROJECT_VERSION: "1177"
+        MARKETING_VERSION: "0.3.889"
+        CURRENT_PROJECT_VERSION: "1178"
         IPHONEOS_DEPLOYMENT_TARGET: "18.0"
         # vroot_* 必须按名导出 (跳板 b _vroot_NAME 二级绑定); 同主 App 口径.
         GCC_SYMBOLS_PRIVATE_EXTERN: "NO"
@@ -687,8 +687,8 @@ targets:
         # @loader_path/.jbroot/usr/lib/libvrootapi.dylib), @rpath 即可.
         DYLIB_INSTALL_NAME_BASE: "@rpath"
         SKIP_INSTALL: "YES"
-        MARKETING_VERSION: "0.3.888"
-        CURRENT_PROJECT_VERSION: "1177"
+        MARKETING_VERSION: "0.3.889"
+        CURRENT_PROJECT_VERSION: "1178"
         IPHONEOS_DEPLOYMENT_TARGET: "18.0"
         GCC_SYMBOLS_PRIVATE_EXTERN: "NO"
         # 同 TDLibVroot: 纯 C 跳板, 关 modules (初始化器内 include 模式与显式模块扫描不兼容).
@@ -716,8 +716,8 @@ targets:
         DYLIB_CURRENT_VERSION: 1
         DYLIB_INSTALL_NAME_BASE: "@rpath"
         SKIP_INSTALL: "YES"
-        MARKETING_VERSION: "0.3.888"
-        CURRENT_PROJECT_VERSION: "1177"
+        MARKETING_VERSION: "0.3.889"
+        CURRENT_PROJECT_VERSION: "1178"
         IPHONEOS_DEPLOYMENT_TARGET: "15.0"
         # 顶层 settings 的 OTHER_LDFLAGS 含 $(DERIVED_FILE_DIR)/SAP/lib/libunicorn.a
         # (主 App 的 SAP 登录底座). 本 target 无 prepare.sap 脚本, 继承该键会在链接期
@@ -761,8 +761,8 @@ targets:
         
         SKIP_INSTALL: YES
         CODE_SIGN_ENTITLEMENTS: vendor/LiveContainer/ShareExtension/ShareExtension.entitlements
-        MARKETING_VERSION: "0.3.888"
-        CURRENT_PROJECT_VERSION: "1177"
+        MARKETING_VERSION: "0.3.889"
+        CURRENT_PROJECT_VERSION: "1178"
         IPHONEOS_DEPLOYMENT_TARGET: "16.0"
         SWIFT_VERSION: "5.0"
         SWIFT_OBJC_BRIDGING_HEADER: "$(SRCROOT)/vendor/LiveContainer/ShareExtension/ShareExtension-Bridging-Header.h"
@@ -823,8 +823,8 @@ targets:
         INFOPLIST_KEY_CFBundleDisplayName: LaunchAppExtension
         SKIP_INSTALL: YES
         CODE_SIGN_ENTITLEMENTS: vendor/LiveContainer/LaunchAppExtension/LaunchAppExtension.entitlements
-        MARKETING_VERSION: "0.3.888"
-        CURRENT_PROJECT_VERSION: "1177"
+        MARKETING_VERSION: "0.3.889"
+        CURRENT_PROJECT_VERSION: "1178"
         IPHONEOS_DEPLOYMENT_TARGET: "16.0"
         SWIFT_VERSION: "5.0"
         SWIFT_OBJC_BRIDGING_HEADER: "$(SRCROOT)/vendor/LiveContainer/LaunchAppExtension/LaunchAppExtension-Bridging-Header.h"
@@ -876,8 +876,8 @@ targets:
         PRODUCT_MODULE_NAME: LiveContainerSwiftUI
         PRODUCT_NAME: LiveContainerSwiftUI
         DEFINES_MODULE: "YES"
-        MARKETING_VERSION: "0.3.888"
-        CURRENT_PROJECT_VERSION: "1177"
+        MARKETING_VERSION: "0.3.889"
+        CURRENT_PROJECT_VERSION: "1178"
         IPHONEOS_DEPLOYMENT_TARGET: "18.0"
         # 上游用 SWIFT_VERSION 5.0 (pbxproj:1197/1240); 本仓主 target 是 6.0 complete,
         # framework 单独用 5.0 保持上游源码原样可编 (Swift 6 严格并发会炸上游 Swift 5 代码).

@@ -1,3 +1,17 @@
+## [0.3.889] - 2026-11-15
+
+### 多任务三回归修复（窗口结构彻底回上游）
+1. **其它界面无法触摸 / 界面不显示**：0.3.888 用 `UIWindow(normal+50)` 独占顶层
+   承载沙盒容器，截获全部触摸且盖住宿主 SwiftUI。改为**宿主主窗口 rootVC 替换**：
+   `show()` 记录并替换为 `TDLCUIHost.makeTabViewController()`，`hide()` 还原 ——
+   沙盒就是宿主本身的一个界面，不再有顶层拦截。
+2. **多任务被强制全屏**：`LCUtils` 不再 `frame=bounds`，恢复上游
+   `DecoratedAppSceneViewController` 的 windowed/maximized 两态布局。
+3. **多任务仍白屏**：windowHostingView 只在**主窗口内**挪进 root VC（而非
+   跨窗口 overlay 搬家），scene presenter 不再断开；`showAndGetHost` 同时
+   满足 UIKit 层级检查（superview 链 == rootVC），不再崩。
+4. `TDCloseSandboxContainer`（LC 原生返回键）observer 归位（`ensureObserverInstalled`）。
+
 ## [0.3.888] - 2026-11-14
 
 ### 全局隐藏模式 (设置 → 沙盒容器 → 实验性功能)
