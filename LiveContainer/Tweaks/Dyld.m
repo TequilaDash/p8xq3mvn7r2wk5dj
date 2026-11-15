@@ -90,6 +90,7 @@ static uint32_t gTDVRemap[2][TDV_HIDE_CAP];
 static uint32_t gTDVRemapCount[2];
 static _Atomic int gTDVRemapActive = 0;
 static bool gTDVRemapEnabled = false;
+static bool gTDVMapLogged = false;
 
 static bool tdv_is_hidden_path(const char *name) {
     if (!name || !name[0]) return false;
@@ -144,6 +145,16 @@ static void tdv_rebuild_image_remap(void) {
     }
     gTDVRemapCount[inactive] = n;
     atomic_store(&gTDVRemapActive, inactive);
+
+    // 首次拿到访客主可执行时把"访客能看到的镜像清单"打一遍: 检测器报"注入库"
+    // 时用它直接对号, 不用再猜是哪条路径没被裁掉.
+    if (!gTDVMapLogged && guest != UINT32_MAX) {
+        gTDVMapLogged = true;
+        for (uint32_t k = 0; k < n; k++) {
+            const char *name = orig_dyld_get_image_name(buf[k]);
+            NSLog(@"[TDImageMap] %u %s", k, name ? name : "?");
+        }
+    }
 }
 
 static inline bool tdv_map_image_index(uint32_t image_index, uint32_t *real_index) {
@@ -443,6 +454,16 @@ void DyldHookLoadableIntoProcess(void) {
 #endif
 
 void DyldHooksInit(bool hideLiveContainer, bool hookDlopen, uint32_t spoofSDKVersion) {
+    // 每次启动访客都重置裁剪状态: 同一个进程里可能先后以"隐藏开/关"启动不同访客,
+    // 而 litehook 的符号重绑不可逆. 不重置的话, 先开隐藏再关隐藏的那次启动仍会
+    // 走裁剪后的索引表 (index0 契约错位) -> 主可执行入口取错 -> App 被终止.
+    gTDVHiddenCount = 0;
+    gTDVRemapEnabled = false;
+    gTDVRemapCount[0] = 0;
+    gTDVRemapCount[1] = 0;
+    atomic_store(&gTDVRemapActive, 0);
+    gTDVMapLogged = false;
+
     // iterate through loaded images and find LiveContainer it self
     int imageCount = _dyld_image_count();
     for(int i = 0; i < imageCount; ++i) {

@@ -84,6 +84,12 @@ struct AppSceneViewSwiftUI: UIViewControllerRepresentable {
                 (vc.view.window?.windowScene?.statusBarManager as? LCStatusBarManager)?.nativeWindowViewController = vc
             }
             onAppInitialize(vc.pid, error)
+            // 扩展被 cancelRequestWithError / 启动失败时, 只有切到终止页才看得到原因;
+            // 否则 show 仍为 true, 表现为纯黑屏且无任何提示.
+            if error != nil {
+                NSLog("[LC][Multitask] app init failed: %@", error.localizedDescription)
+                onExit()
+            }
         }
         
         func appSceneVCWillActivateScene(_ vc: AppSceneViewController!) {

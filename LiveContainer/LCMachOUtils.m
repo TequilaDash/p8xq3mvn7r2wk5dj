@@ -66,6 +66,10 @@ static void insertDylibCommand(uint32_t cmd, const char *path, struct mach_heade
         bzero(dylib, cmdsize);
     } else {
         dylib = (struct dylib_command *)(sizeof(struct mach_header_64) + (void *)header+header->sizeofcmds);
+        // 新命令落在 __TEXT 头部的空洞里, 这块内存不是零页. 不清零的话
+        // strncpy 不写 NUL, dyld 会把空洞里的残留字节读进依赖名 ——
+        // 现场见到的 "@loader_path/../../Tweaks/TweakLoader.dylibC" 即此.
+        bzero(dylib, cmdsize);
     }
     dylib->cmd = cmd;
     dylib->cmdsize = cmdsize;
@@ -96,6 +100,8 @@ static void replaceDylinkerWithIDDylibCommand(struct dylinker_command* dylinkerC
 
 static void insertRPathCommand(const char *path, struct mach_header_64 *header) {
     struct rpath_command *rpath = (struct rpath_command *)(sizeof(struct mach_header_64) + (void *)header+header->sizeofcmds);
+    // 同 insertDylibCommand: 命令区在 __TEXT 头部空洞里, 先清零再写, 保证串以 NUL 结尾.
+    bzero(rpath, sizeof(struct rpath_command) + rnd32((uint32_t)strlen(path) + 1, 8));
     rpath->cmd = LC_RPATH;
     rpath->cmdsize = sizeof(struct rpath_command) + rnd32((uint32_t)strlen(path) + 1, 8);
     rpath->path.offset = sizeof(struct rpath_command);
