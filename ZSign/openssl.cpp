@@ -619,8 +619,10 @@ bool ZSignAsset::Init(
 
 	ZFile::ReadFile(strProvFile.c_str(), m_strProvData);
 	ZFile::ReadFile(strEntitleFile.c_str(), m_strEntitleData);
-	// v0.3.145：provision 改为可选（LC 配方）——无 provision 时 TeamID 从证书
-	// OU 直读（见下方证书加载后的 GetCertOU），不再强制要求 profile 文件
+	if (m_strProvData.empty()) {
+		ZLog::Error(">>> Can't find provision file!\n");
+		return false;
+	}
 
 	jvalue jvProv;
 	string strProvContent;
@@ -633,29 +635,11 @@ bool ZSignAsset::Init(
 		}
 	}
 
-	// TequilaDash fallback（v0.3.134）：开发证书场景下无 CMS 信封的裸 plist provision。
-	// TeamIdentifier/AppID 前缀由调用方（DeveloperCertStore）以真实 TeamID 写入。
 	if (m_strTeamId.empty()) {
-		jvalue jvRaw;
-		if (jvRaw.read_plist(m_strProvData)) {
-			string rawTeam = jvRaw["TeamIdentifier"][0].as_cstr();
-			if (rawTeam.empty() || rawTeam == "TEAMID") {
-				rawTeam = jvRaw["ApplicationIdentifierPrefix"][0].as_cstr();
-			}
-			if (rawTeam.empty() || rawTeam == "TEAMID") {
-				rawTeam = jvRaw["Entitlements"]["com.apple.developer.team-identifier"].as_cstr();
-			}
-			if (!rawTeam.empty() && rawTeam != "TEAMID") {
-				m_strTeamId = rawTeam;
-				if (m_strEntitleData.empty()) {
-					jvRaw["Entitlements"].style_write_plist(m_strEntitleData);
-				}
-			}
-		}
+		ZLog::Error(">>> Can't find TeamId!\n");
+		return false;
 	}
 
-	// v0.3.144：TeamId 允许暂空——证书加载后从 OU 直读（LC 配方），
-	// 避免为凑 TeamId 而传 provision（其 Entitlements 会嵌入 dylib 触发 AMFI 拒绝）
 	X509* x509Cert = NULL;
 	EVP_PKEY* evpPKey = NULL;
 	BIO* bioPKey = BIO_new_file(strPKeyFile.c_str(), "rb");
@@ -730,16 +714,6 @@ bool ZSignAsset::Init(
 
 	if (!GetCertSubjectCN(x509Cert, m_strSubjectCN)) {
 		ZLog::Error(">>> Can't find paired certificate subject common name!\n");
-		return false;
-	}
-
-	// TequilaDash（v0.3.144）：LC 配方——无 provision 时 TeamID 从证书 OU 直读
-	// （LiveContainer ZSign/openssl.cpp InitSimple 同款逻辑）
-	if (m_strTeamId.empty()) {
-		GetCertOU(x509Cert, m_strTeamId);
-	}
-	if (m_strTeamId.empty()) {
-		ZLog::Error(">>> Can't find TeamId!\n");
 		return false;
 	}
 

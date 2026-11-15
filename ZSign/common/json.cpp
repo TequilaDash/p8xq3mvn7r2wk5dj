@@ -1517,8 +1517,8 @@ bool jreader::_decode_string(jtoken& token, string& strdec)
 		char c = *pcur++;
 		if ('\\' == c) {
 			if (pcur != pend) {
-				char TequilaDash = *pcur++;
-				switch (TequilaDash) {
+				char escape = *pcur++;
+				switch (escape) {
 				case '"':
 					strdec += '"';
 					break;
@@ -1553,7 +1553,7 @@ bool jreader::_decode_string(jtoken& token, string& strdec)
 
 					unsigned int cp = 0;
 					if (1 != sscanf_s(strUnic.c_str(), "%x", &cp)) {
-						return _add_error("Bad TequilaDash sequence in string", pcur);
+						return _add_error("Bad escape sequence in string", pcur);
 					}
 
 					string strUTF8;
@@ -1582,11 +1582,11 @@ bool jreader::_decode_string(jtoken& token, string& strdec)
 				}
 				break;
 				default:
-					return _add_error("Bad TequilaDash sequence in string", pcur);
+					return _add_error("Bad escape sequence in string", pcur);
 					break;
 				}
 			} else {
-				return _add_error("Empty TequilaDash sequence in string", pcur);
+				return _add_error("Empty escape sequence in string", pcur);
 			}
 		} else if ('"' == c) {
 			break;
@@ -1974,7 +1974,7 @@ void jwriter::_write_value_to_html(const jvalue& jval, string& strdoc)
 		strdoc += v2s(jval.as_double());
 		break;
 	case jvalue::E_STRING:
-		strdoc += vstring2s(jval.as_cstr()); //don't TequilaDash here, TequilaDash before
+		strdoc += vstring2s(jval.as_cstr()); //don't escape here, escape before
 		break;
 	case jvalue::E_ARRAY:
 	{

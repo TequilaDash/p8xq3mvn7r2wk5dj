@@ -74,3 +74,6 @@ P1_工作产品区/
 !vendor/LiveContainer/litehook/Tests/**
 !vendor/LiveContainer/fishhook/fishhook.podspec
 !vendor/LiveContainer/.gitmodules
+
+# iManager Rust build outputs (never commit)
+/iManager/rust/**/target/
