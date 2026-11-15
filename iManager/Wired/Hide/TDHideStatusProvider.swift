@@ -26,7 +26,7 @@ enum TDHideStatusProvider {
             .init(id: "dyld", icon: "square.stack.3d.up.slash",
                   title: dyldTitle, state: dyldState),
             .init(id: "spoof", icon: "theatermasks",
-                  title: "伪值层", state: spoof ? .active : .off),
+                  title: "伪值层", state: spoofOn ? .active : .off),
             .init(id: "tweaks", icon: "folder.badge.questionmark",
                   title: "Tweaks 目录隐藏", state: .builtIn),
         ]
