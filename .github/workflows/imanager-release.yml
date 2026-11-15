@@ -69,13 +69,15 @@ jobs:
           TAG="${GITHUB_REF_NAME}"
           NOTES="$(mktemp)"
           if [ -f changelog.md ]; then cat changelog.md > "$NOTES"; else echo "$(TZ=Asia/Shanghai date '+%Y%m%d-%H%M%S') $TAG Update：" > "$NOTES"; fi
-          {
-            echo
-            echo "[编译环境]"
-            echo "Xcode: $(xcodebuild -version | tr '\n' ' ')"
-            echo "Build: $(sw_vers -buildVersion 2>/dev/null || true)"
-            echo "SDK: $(xcrun --sdk iphoneos --show-sdk-version)"
-          } >> "$NOTES"
+          if ! grep -q '\[编译环境\]' "$NOTES"; then
+            {
+              echo
+              echo "[编译环境]"
+              echo "Xcode: $(xcodebuild -version | tr '\n' ' ')"
+              echo "Build: $(sw_vers -buildVersion 2>/dev/null || true)"
+              echo "SDK: $(xcrun --sdk iphoneos --show-sdk-version)"
+            } >> "$NOTES"
+          fi
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "$scheme.ipa" --clobber
           else
