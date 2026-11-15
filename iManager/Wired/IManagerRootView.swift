@@ -1,18 +1,13 @@
-//
-//  IManagerRootView.swift
-//  iManager
-//
-//  iManager 入口页（zcontainer 设置 → iManager）。功能按模块分组，逐步接线。
-//
-
 import SwiftUI
 
 struct IManagerRootView: View {
-    private let groupDefaults = UserDefaults.standard
+    @AppStorage("TDGlobalSpoof") private var globalHide = false
 
     var body: some View {
         List {
-
+            Section {
+                Toggle("全局隐藏模式", isOn: $globalHide)
+            }
             Section {
                 NavigationLink {
                     TDHideStatusView()
