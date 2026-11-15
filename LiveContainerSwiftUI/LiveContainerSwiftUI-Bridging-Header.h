@@ -6,6 +6,13 @@
 //
 #ifndef LiveContainerSwiftUI_Bridging_Header_h_h
 #define LiveContainerSwiftUI_Bridging_Header_h_h
+#ifdef __cplusplus
+extern "C" {
+#endif
+const char *TDHostHomeDocumentsPath(void);
+#ifdef __cplusplus
+}
+#endif
 #include "LCAppInfo.h"
 #include "../LiveContainer/LCSharedUtils.h"
 #include "../LiveContainer/LCZeusCertificate.h"

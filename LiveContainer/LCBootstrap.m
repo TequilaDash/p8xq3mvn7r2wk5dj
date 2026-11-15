@@ -26,17 +26,21 @@ extern void TDVRootInstallIfRequested(void);
 
 // Host home captured before any guest can setenv("HOME"). Constructors of
 // linked frameworks run before main(), so this value is the host container.
-static char tdHostHomeBuf[PATH_MAX];
+static char tdHostDocumentsBuf[PATH_MAX];
 __attribute__((constructor)) static void tdCaptureHostHome(void) {
     const char *h = getenv("HOME");
     if (h && h[0] == '/') {
-        strlcpy(tdHostHomeBuf, h, sizeof(tdHostHomeBuf));
+        strlcpy(tdHostDocumentsBuf, h, sizeof(tdHostDocumentsBuf));
+        strlcat(tdHostDocumentsBuf, "/Documents", sizeof(tdHostDocumentsBuf));
     }
 }
+const char *TDHostHomeDocumentsPath(void) {
+    if (tdHostDocumentsBuf[0] == 0) tdCaptureHostHome();
+    return tdHostDocumentsBuf[0] ? tdHostDocumentsBuf : NULL;
+}
 NSString *TDHostHomeDocumentsDir(void) {
-    if (tdHostHomeBuf[0] == 0) tdCaptureHostHome();
-    NSString *home = [NSString stringWithUTF8String:tdHostHomeBuf];
-    return [home stringByAppendingPathComponent:@"Documents"];
+    const char *path = TDHostHomeDocumentsPath();
+    return path ? [NSString stringWithUTF8String:path] : nil;
 }
 
 extern char **environ;
@@ -514,17 +518,18 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
         method_setImplementation(class_getInstanceMethod(swiftNSProcessInfo, selector), class_getMethodImplementation(NSProcessInfo.class, selector));
     }
     
-    // M44-ordering fix: read TDGlobalSpoof BEFORE NUD defaults hook rewrites the
-    // standardUserDefaults domain to the guest's.
-    // File-based flag: NSUserDefaults is hooked by NUDGuestHooksInit for the
-    // whole process once a guest has run, and NSHomeDirectory() lies after the
-    // first guest (HOME was setenv'd to the guest container and never
-    // restored). Use the host home captured at process load instead.
-    NSString *tdFlagPath = [TDHostHomeDocumentsDir()
-        stringByAppendingPathComponent:@"TDGlobalHide"];
-    BOOL tdGlobalHide = [[NSString stringWithContentsOfFile:tdFlagPath encoding:NSUTF8StringEncoding error:nil] isEqualToString:@"1"];
-    BOOL tdHideLiveContainer = tdGlobalHide || [guestAppInfo[@"hideLiveContainer"] boolValue];
-    NSLog(@"[TDGlobalHide] guest=%d global=%d (pre-NUD)", (int)[guestAppInfo[@"hideLiveContainer"] boolValue], (int)tdGlobalHide);
+    // Read the host-container flag before guest defaults and HOME are installed.
+    NSString *tdHostDocuments = TDHostHomeDocumentsDir();
+    NSString *tdFlagPath = tdHostDocuments ? [tdHostDocuments stringByAppendingPathComponent:@"TDGlobalHide"] : nil;
+    NSString *tdGlobalValue = tdFlagPath ? [NSString stringWithContentsOfFile:tdFlagPath encoding:NSUTF8StringEncoding error:nil] : nil;
+    BOOL tdFileGlobalHide = [tdGlobalValue isEqualToString:@"1"];
+    BOOL tdPayloadGlobalHide = getenv("TD_GLOBAL_HIDE") && getenv("TD_GLOBAL_HIDE")[0] == '1';
+    BOOL tdGlobalHide = tdFileGlobalHide || tdPayloadGlobalHide;
+    BOOL tdPerAppHide = [guestAppInfo[@"hideLiveContainer"] boolValue];
+    BOOL tdHideLiveContainer = tdGlobalHide || tdPerAppHide;
+    NSLog(@"[TDGlobalHide] path=%@ value=%@ payload=%d guest=%d global=%d hide=%d pre-NUD", tdFlagPath,
+          tdGlobalValue ?: @"<missing>", (int)tdPayloadGlobalHide, (int)tdPerAppHide,
+          (int)tdGlobalHide, (int)tdHideLiveContainer);
 
     // hook NSUserDefault before running libraries' initializers
     NUDGuestHooksInit();
@@ -545,6 +550,8 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
     TDVRootInstallIfRequested();
 
     DyldHooksInit(tdHideLiveContainer, hookDlopen, [guestAppInfo[@"spoofSDKVersion"] unsignedIntValue]);
+    NSLog(@"[TDGlobalHide] hooks hide=%d sysctl=%s proc=%s", (int)tdHideLiveContainer,
+          getenv("TD_SYSCTL_SPOOF") ?: "0", getenv("TD_PROC_SPOOF") ?: "0");
     
     if([guestContainerInfo[@"spoofIdentifierForVendor"] boolValue]) {
         NSString* idForVendorStr = guestContainerInfo[@"spoofedIdentifierForVendor"];

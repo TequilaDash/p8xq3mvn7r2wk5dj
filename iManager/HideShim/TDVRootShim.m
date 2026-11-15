@@ -578,7 +578,7 @@ extern int tdv_real_posix_spawnp(pid_t *pid, const char *path,
 
 static const char *kTDGateKeys[] = {
     "TD_NET_BLOCK", "TD_VROOT", "TD_VROOT_MODE", "TD_DYLD_TRIM",
-    "TD_SYSCTL_SPOOF", "TD_SECTASK_SPOOF", "TD_CSOPS_SPOOF",
+    "TD_GLOBAL_HIDE", "TD_SYSCTL_SPOOF", "TD_SECTASK_SPOOF", "TD_CSOPS_SPOOF",
     "TD_CSOPS_KEEP_DEBUGGED", "TD_PROC_SPOOF",
 };
 

@@ -1,21 +1,21 @@
 import SwiftUI
 
 struct IManagerRootView: View {
-    // Captured at first access of this SwiftUI type: if any guest has run,
-    // HOME is polluted; but this static is initialized lazily on first UI use,
-    // which is BEFORE the user can launch a guest (settings are only reachable
-    // from the host UI). Acceptable.
-    static var hostDocumentsDirString: String = {
-        let h = getenv("HOME")
-        let home = (h != nil) ? String(cString: h!) : NSHomeDirectory()
-        return (home as NSString).appendingPathComponent("Documents")
-    }()
+    private static var hostDocumentsDir: String? {
+        guard let path = TDHostHomeDocumentsPath(), path[0] != 0 else { return nil }
+        return String(cString: path)
+    }
 
     @State private var globalHide: Bool = {
-        let p = Self.hostDocumentsDirString + "/TDGlobalHide"
-        return (try? String(contentsOfFile: p, encoding: .utf8)) == "1"
+        guard let documents = Self.hostDocumentsDir else { return false }
+        let path = documents + "/TDGlobalHide"
+        return (try? String(contentsOfFile: path, encoding: .utf8)) == "1"
     }()
-    private var flagPath: String { Self.hostDocumentsDirString + "/TDGlobalHide" }
+
+    private var flagPath: String? {
+        Self.hostDocumentsDir.map { $0 + "/TDGlobalHide" }
+    }
+
     var body: some View {
         List {
             Section {
@@ -37,10 +37,19 @@ struct IManagerRootView: View {
             }
         }
         .onChange(of: globalHide) { nv in
-            if nv {
-                try? "1".write(to: URL(fileURLWithPath: flagPath), atomically: true, encoding: .utf8)
-            } else {
-                try? FileManager.default.removeItem(atPath: flagPath)
+            guard let flagPath else {
+                NSLog("[TDGlobalHide] cannot resolve host Documents path")
+                return
+            }
+            do {
+                if nv {
+                    try "1".write(to: URL(fileURLWithPath: flagPath), atomically: true, encoding: .utf8)
+                } else {
+                    try FileManager.default.removeItem(atPath: flagPath)
+                }
+                NSLog("[TDGlobalHide] write=%d path=%@", nv, flagPath)
+            } catch {
+                NSLog("[TDGlobalHide] write=%d path=%@ error=%@", nv, flagPath, error.localizedDescription)
             }
         }
         .navigationTitle("iManager")

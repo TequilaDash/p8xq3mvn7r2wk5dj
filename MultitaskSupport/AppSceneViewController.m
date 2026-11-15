@@ -1,3 +1,5 @@
+extern const char *TDHostHomeDocumentsPath(void);
+
 //
 //  AppSceneView.m
 //  LiveContainer
@@ -56,12 +58,16 @@
     
     NSExtensionItem *item = [NSExtensionItem new];
     NSMutableArray* bookmarks = [NSMutableArray array];
+    const char *tdHostDocumentsPath = TDHostHomeDocumentsPath();
+    NSString *tdGlobalFlagPath = tdHostDocumentsPath ? [[NSString stringWithUTF8String:tdHostDocumentsPath] stringByAppendingPathComponent:@"TDGlobalHide"] : nil;
+    BOOL tdGlobalHide = tdGlobalFlagPath && [[NSString stringWithContentsOfFile:tdGlobalFlagPath encoding:NSUTF8StringEncoding error:nil] isEqualToString:@"1"];
     NSMutableDictionary *userInfo = @{
         @"hostUrlScheme": NSUserDefaults.lcAppUrlScheme,
         @"selected": _bundleId,
         @"selectedContainer": _dataUUID,
         @"bookmarks": bookmarks,
         @"lcHomePath": NSHomeDirectory(),
+        @"tdGlobalHide": @(tdGlobalHide),
     }.mutableCopy;
     
     NSString* launchAppUrlScheme = [NSUserDefaults.standardUserDefaults stringForKey:@"launchAppUrlScheme"];

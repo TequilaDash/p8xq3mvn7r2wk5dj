@@ -54,6 +54,12 @@ int LiveProcessMain(int argc, char *argv[]) {
     }
     
     NSLog(@"Retrieved app info: %@", appInfo);
+    // LiveProcess is a separate process; carry the host decision explicitly.
+    if ([appInfo[@"tdGlobalHide"] boolValue]) {
+        setenv("TD_GLOBAL_HIDE", "1", 1);
+    } else {
+        unsetenv("TD_GLOBAL_HIDE");
+    }
     // Set LiveContainer's home path
     setenv("LP_HOME_PATH", getenv("HOME"), 1);
     const char *overrideHomePath = [appInfo[@"lcHomePath"] fileSystemRepresentation];
