@@ -2,6 +2,8 @@
 1. 修复真机 SIGSEGV 递归崩溃：tweak（如 FakeTools 的 hooked_sysctl）会再次改写 _sysctl 绑定，我们改为在镜像加载时捕获真实 sysctl/sysctlbyname 地址，不再与对方 hook 互相递归。
 2. 新增 ConsoleLog：启动面包屑写入 Documents/ConsoleLog/console-YYYYMMDD.log；未捕获异常与 SIGABRT/SIGSEGV/SIGBUS/SIGILL/SIGFPE/SIGTRAP 写入 crash-*.log，含进程回溯。
 3. iManager 诊断新增“崩溃日志”页，可直接查看并分享 ConsoleLog 下的文件。
+4. 崩溃日志目录统一：访客进程写 LC_HOME_PATH/Documents/ConsoleLog，与 iManager 读取位置一致。
+5. 异常终止提示：访客没有留下正常退出标记而扩展中断时，弹出“应用异常终止”并指向崩溃日志；正常退出与手动关闭不再误报。
 
 20261116-000349 1.1.20 Update：
 1. 修复多任务误报：扩展中断与手动关闭不再弹“extension interrupted”，只有启动阶段失败才提示；访客 main 正常返回 (code 0) 视为正常退出，不再当错误。

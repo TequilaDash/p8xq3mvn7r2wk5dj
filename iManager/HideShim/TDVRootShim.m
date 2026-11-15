@@ -404,6 +404,8 @@ extern int tdv_real_sysctlbyname(const char *, void *, size_t *, void *, size_t)
 // 符号绑定; 我们若继续按符号调用, 就会和对方的 hook 形成互相递归(真机见过
 // "excessive recursion" SIGSEGV). 在镜像加载时把真实函数地址存进自有变量,
 // 后续调用走变量, 不再经过可被改写的 GOT.
+extern int tdv_real_sysctl(int *, u_int, void *, size_t *, void *, size_t) __asm("_sysctl");
+
 static int (*gTDVRealSysctl)(int *, u_int, void *, size_t *, void *, size_t);
 static int (*gTDVRealSysctlByName)(const char *, void *, size_t *, void *, size_t);
 

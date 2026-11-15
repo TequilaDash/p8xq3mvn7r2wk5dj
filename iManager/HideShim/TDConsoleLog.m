@@ -14,6 +14,17 @@
 
 extern const char *TDHostHomeDocumentsPath(void);
 
+// 访客崩溃发生在 LiveProcess 里, 它的 HOME 是扩展容器; 真正的 app Documents
+// 由 LC_HOME_PATH 传入. 两个进程必须写同一个目录, iManager 才看得到.
+static NSString *TDConsoleLogBaseDocuments(void) {
+    const char *home = getenv("LC_HOME_PATH");
+    if (home && home[0] == '/') {
+        return [NSString stringWithFormat:@"%s/Documents", home];
+    }
+    const char *docs = TDHostHomeDocumentsPath();
+    return (docs && docs[0]) ? @(docs) : nil;
+}
+
 static pthread_mutex_t gTDLogLock = PTHREAD_MUTEX_INITIALIZER;
 static NSUncaughtExceptionHandler *gTDPreviousExceptionHandler = NULL;
 
@@ -28,9 +39,9 @@ static NSString *TDLogTimestamp(void) {
 }
 
 NSString *TDConsoleLogDirectory(void) {
-    const char *docs = TDHostHomeDocumentsPath();
-    if (!docs || !docs[0]) return nil;
-    NSString *dir = [NSString stringWithFormat:@"%s/ConsoleLog", docs];
+    NSString *base = TDConsoleLogBaseDocuments();
+    if (!base) return nil;
+    NSString *dir = [base stringByAppendingPathComponent:@"ConsoleLog"];
     [[NSFileManager defaultManager] createDirectoryAtPath:dir
                               withIntermediateDirectories:YES
                                                attributes:nil
@@ -78,8 +89,15 @@ void TDConsoleLog(NSString *format, ...) {
 
 // 信号处理里只做异步信号安全的事: 直接 open/write, 不碰 NSString.
 static void TDWriteSignalCrash(int sig) {
-    const char *docs = TDHostHomeDocumentsPath();
-    if (!docs || !docs[0]) return;
+    char docs[PATH_MAX];
+    const char *lcHome = getenv("LC_HOME_PATH");
+    if (lcHome && lcHome[0] == '/') {
+        snprintf(docs, sizeof(docs), "%s/Documents", lcHome);
+    } else {
+        const char *captured = TDHostHomeDocumentsPath();
+        if (!captured || !captured[0]) return;
+        snprintf(docs, sizeof(docs), "%s", captured);
+    }
     char dir[PATH_MAX];
     snprintf(dir, sizeof(dir), "%s/ConsoleLog", docs);
     mkdir(dir, 0755);

@@ -272,8 +272,32 @@ static void *getAppEntryPoint(void *handle) {
     return (void *)header + entryoff;
 }
 
+// 访客正常退出标记: LiveProcess 在 pass 里写入, 宿主 App 在扩展中断时读取,
+// 用来区分"应用自己正常结束"与"被自身检测强制 abort".
+static NSString *TDGuestExitMarkerPath(void) {
+    const char *home = getenv("LC_HOME_PATH");
+    if (home && home[0] == '/') {
+        return [NSString stringWithFormat:@"%s/Documents/.td_guest_exit_ok", home];
+    }
+    NSString *docs = TDHostHomeDocumentsDir();
+    return docs ? [docs stringByAppendingPathComponent:@".td_guest_exit_ok"] : nil;
+}
+
+static void TDMarkGuestExitOK(void) {
+    NSString *path = TDGuestExitMarkerPath();
+    if (!path) return;
+    [[@"1" dataUsingEncoding:NSUTF8StringEncoding] writeToFile:path atomically:YES];
+}
+
+static void TDClearGuestExitMarker(void) {
+    NSString *path = TDGuestExitMarkerPath();
+    if (!path) return;
+    [[NSFileManager defaultManager] removeItemAtPath:path error:nil];
+}
+
 static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContainer, int argc, char *argv[]) {
     NSString *appError = nil;
+    TDClearGuestExitMarker();
     if([[lcUserDefaults objectForKey:@"LCWaitForDebugger"] boolValue]) {
         sleep(100);
     }
@@ -706,6 +730,7 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
     // code 0 是正常退出: 返回 nil, 不让上层把"访客自己退出"当成启动失败弹错误框.
     if (ret == 0) {
         NSLog(@"[LCBootstrap] guest main returned 0 (normal exit)");
+        TDMarkGuestExitOK();
         return nil;
     }
     return [NSString stringWithFormat:@"App returned from its main function with code %d.", ret];
