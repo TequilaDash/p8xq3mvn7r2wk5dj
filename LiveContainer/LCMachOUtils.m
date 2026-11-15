@@ -198,8 +198,15 @@ int LCPatchExecSlice(const char *path, struct mach_header_64 *header, bool doInj
 
     if (dylibLoaderCommand) {
         dylibLoaderCommand->cmd = doInject ? LC_LOAD_DYLIB : 0x114514;
-        strcpy((void *)dylibLoaderCommand + dylibLoaderCommand->dylib.name.offset, doInject ? tweakLoaderPath : libCppPath);
-    } else  {
+        const char *targetPath = doInject ? tweakLoaderPath : libCppPath;
+        size_t nameOffset = dylibLoaderCommand->dylib.name.offset;
+        size_t nameCapacity = dylibLoaderCommand->cmdsize > nameOffset ? dylibLoaderCommand->cmdsize - nameOffset : 0;
+        if (nameCapacity > 0) {
+            char *nameStorage = (char *)dylibLoaderCommand + nameOffset;
+            bzero(nameStorage, nameCapacity);
+            strncpy(nameStorage, targetPath, nameCapacity - 1);
+        }
+    } else {
         if (freeLoadCommandCountLeft >= tweakLoaderLoadDylibCmdSize) {
             freeLoadCommandCountLeft -= tweakLoaderLoadDylibCmdSize;
             insertDylibCommand(doInject ? LC_LOAD_DYLIB : 0x114514, doInject ? tweakLoaderPath : libCppPath, header);

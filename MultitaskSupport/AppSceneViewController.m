@@ -69,6 +69,15 @@ extern const char *TDHostHomeDocumentsPath(void);
         @"lcHomePath": NSHomeDirectory(),
         @"tdGlobalHide": @(tdGlobalHide),
     }.mutableCopy;
+    bool payloadIsSharedApp = false;
+    NSBundle *payloadBundle = [LCSharedUtils findBundleWithBundleId:bundleId isSharedAppOut:&payloadIsSharedApp];
+    NSString *payloadInfoPath = [payloadBundle.bundlePath stringByAppendingPathComponent:@"LCAppInfo.plist"];
+    NSDictionary *payloadAppInfo = [NSDictionary dictionaryWithContentsOfFile:payloadInfoPath];
+    for (NSString *key in @[@"sysctlSpoof", @"secTaskSpoof", @"csopsSpoof", @"procSpoof", @"csopsKeepDebugged"]) {
+        if ([payloadAppInfo[key] isKindOfClass:NSNumber.class]) {
+            userInfo[key] = payloadAppInfo[key];
+        }
+    }
     
     NSString* launchAppUrlScheme = [NSUserDefaults.standardUserDefaults stringForKey:@"launchAppUrlScheme"];
     [NSUserDefaults.lcUserDefaults removeObjectForKey:@"launchAppUrlScheme"];
@@ -104,6 +113,8 @@ extern const char *TDHostHomeDocumentsPath(void);
     }];
     [_extension setRequestInterruptionBlock:^(NSUUID *uuid) {
         [weakSelf appTerminationCleanUp];
+        NSError *error = [NSError errorWithDomain:@"LiveProcess" code:3 userInfo:@{NSLocalizedDescriptionKey: @"The app extension was interrupted or terminated before it reported a launch error."}];
+        [weakSelf.delegate appSceneVC:weakSelf didInitializeWithError:error];
     }];
     [_extension beginExtensionRequestWithInputItems:@[item] completion:^(NSUUID *identifier) {
         if(identifier) {
@@ -241,6 +252,8 @@ extern const char *TDHostHomeDocumentsPath(void);
     __weak typeof(self) weakSelf = self;
     [self.extension setRequestInterruptionBlock:^(NSUUID *uuid) {
         [weakSelf appTerminationCleanUp];
+        NSError *error = [NSError errorWithDomain:@"LiveProcess" code:3 userInfo:@{NSLocalizedDescriptionKey: @"The app extension was interrupted or terminated."}];
+        [weakSelf.delegate appSceneVC:weakSelf didInitializeWithError:error];
     }];
     self.contentView.layer.anchorPoint = CGPointMake(0, 0);
     self.contentView.layer.position = CGPointMake(0, 0);

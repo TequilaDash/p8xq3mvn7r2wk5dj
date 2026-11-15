@@ -84,11 +84,12 @@ struct AppSceneViewSwiftUI: UIViewControllerRepresentable {
                 (vc.view.window?.windowScene?.statusBarManager as? LCStatusBarManager)?.nativeWindowViewController = vc
             }
             onAppInitialize(vc.pid, error)
-            // 扩展被 cancelRequestWithError / 启动失败时, 只有切到终止页才看得到原因;
-            // 否则 show 仍为 true, 表现为纯黑屏且无任何提示.
+            // Keep the error in SwiftUI state before leaving the embedded scene.
             if error != nil {
                 NSLog("[LC][Multitask] app init failed: %@", error.localizedDescription)
-                onExit()
+                DispatchQueue.main.async {
+                    self.onExit()
+                }
             }
         }
         
@@ -184,7 +185,7 @@ struct MultitaskAppWindow: View {
                 .ignoresSafeArea(.all, edges: .all)
                 .navigationTitle(Text("\(appInfo.displayName) - \(String(pid))"))
                 
-            } else if skipTerminatedScreen && isVirtualWindowMode, appInfo != nil {
+            } else if skipTerminatedScreen && errorMessage == nil && isVirtualWindowMode, appInfo != nil {
                 Color.clear
                     .ignoresSafeArea(.all, edges: .all)
                     .onAppear {

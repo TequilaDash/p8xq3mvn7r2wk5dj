@@ -96,6 +96,14 @@ void *getGuestAppHeader(void) {
     return NULL;
 }
 
+uint32_t LCRealImageCount(void) {
+    return _dyld_image_count();
+}
+
+uint32_t LCGuestImageIndexForPath(const char *path) {
+    return UINT32_MAX;
+}
+
 void *getDSCAddr(void) {
     return NULL;
 }

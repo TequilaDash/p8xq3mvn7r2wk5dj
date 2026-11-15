@@ -54,13 +54,27 @@ int LiveProcessMain(int argc, char *argv[]) {
     }
     
     NSLog(@"Retrieved app info: %@", appInfo);
-    // LiveProcess is a separate process; carry the host decision explicitly.
-    if ([appInfo[@"tdGlobalHide"] boolValue]) {
+    // Carry per-app environment gates into the separate extension process.
+    BOOL tdGlobalHide = [appInfo[@"tdGlobalHide"] boolValue];
+    if (tdGlobalHide) {
         setenv("TD_GLOBAL_HIDE", "1", 1);
     } else {
         unsetenv("TD_GLOBAL_HIDE");
     }
-    // Set LiveContainer's home path
+    struct { __unsafe_unretained NSString *infoKey; const char *envKey; } gateMap[] = {
+        {@"sysctlSpoof", "TD_SYSCTL_SPOOF"},
+        {@"secTaskSpoof", "TD_SECTASK_SPOOF"},
+        {@"csopsSpoof", "TD_CSOPS_SPOOF"},
+        {@"procSpoof", "TD_PROC_SPOOF"},
+        {@"csopsKeepDebugged", "TD_CSOPS_KEEP_DEBUGGED"},
+    };
+    for (size_t i = 0; i < sizeof(gateMap) / sizeof(gateMap[0]); i++) {
+        BOOL enabled = tdGlobalHide || [appInfo[gateMap[i].infoKey] boolValue];
+        if (strcmp(gateMap[i].envKey, "TD_CSOPS_KEEP_DEBUGGED") == 0 && tdGlobalHide) {
+            enabled = NO;
+        }
+        setenv(gateMap[i].envKey, enabled ? "1" : "0", 1);
+    }
     setenv("LP_HOME_PATH", getenv("HOME"), 1);
     const char *overrideHomePath = [appInfo[@"lcHomePath"] fileSystemRepresentation];
     if(overrideHomePath) setenv("LC_HOME_PATH", overrideHomePath, 1);

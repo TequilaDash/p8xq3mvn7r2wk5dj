@@ -543,15 +543,25 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
     litehook_rebind_symbol(LITEHOOK_REBIND_GLOBAL, NSSetUncaughtExceptionHandler, hook_do_nothing, nil);
     
     BOOL hookDlopen = !isSharedBundle && LCSharedUtils.certificatePassword && isLiveProcess;
-    if(tdHideLiveContainer) {
-        setenv("TD_SYSCTL_SPOOF", "1", 1);
-        setenv("TD_PROC_SPOOF", "1", 1);
+    BOOL tdSysctlSpoof = tdGlobalHide || [guestAppInfo[@"sysctlSpoof"] boolValue];
+    BOOL tdSecTaskSpoof = tdGlobalHide || [guestAppInfo[@"secTaskSpoof"] boolValue];
+    BOOL tdCsopsSpoof = tdGlobalHide || [guestAppInfo[@"csopsSpoof"] boolValue];
+    BOOL tdProcSpoof = tdGlobalHide || [guestAppInfo[@"procSpoof"] boolValue];
+    // This process hosts multiple guests; every launch must replace the previous
+    // guest's gates instead of inheriting them from the resident process.
+    setenv("TD_SYSCTL_SPOOF", tdSysctlSpoof ? "1" : "0", 1);
+    setenv("TD_SECTASK_SPOOF", tdSecTaskSpoof ? "1" : "0", 1);
+    setenv("TD_CSOPS_SPOOF", tdCsopsSpoof ? "1" : "0", 1);
+    setenv("TD_PROC_SPOOF", tdProcSpoof ? "1" : "0", 1);
+    if (![guestAppInfo[@"csopsKeepDebugged"] boolValue] || tdGlobalHide) {
+        setenv("TD_CSOPS_KEEP_DEBUGGED", "0", 1);
+    } else {
+        setenv("TD_CSOPS_KEEP_DEBUGGED", "1", 1);
     }
     TDVRootInstallIfRequested();
-
+    NSLog(@"[TDGlobalHide] gates hide=%d sysctl=%d sectask=%d csops=%d proc=%d", (int)tdHideLiveContainer,
+          (int)tdSysctlSpoof, (int)tdSecTaskSpoof, (int)tdCsopsSpoof, (int)tdProcSpoof);
     DyldHooksInit(tdHideLiveContainer, hookDlopen, [guestAppInfo[@"spoofSDKVersion"] unsignedIntValue]);
-    NSLog(@"[TDGlobalHide] hooks hide=%d sysctl=%s proc=%s", (int)tdHideLiveContainer,
-          getenv("TD_SYSCTL_SPOOF") ?: "0", getenv("TD_PROC_SPOOF") ?: "0");
     
     if([guestContainerInfo[@"spoofIdentifierForVendor"] boolValue]) {
         NSString* idForVendorStr = guestContainerInfo[@"spoofedIdentifierForVendor"];
@@ -596,7 +606,9 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
     }
     
     // Preload executable to bypass RT_NOLOAD
-    appMainImageIndex = _dyld_image_count();
+    // 必须是真实镜像索引: 隐藏开启后 _dyld_image_count 已被重绑成可见数量,
+    // 用它记录 dlopen 前位置会让 appMainImageIndex 偏移, 访客入口取错后立即终止.
+    appMainImageIndex = LCRealImageCount();
     __block void *appHandle = 0;
     void (^dlopenBlock)(void) = ^{
         appHandle = dlopen_nolock(appExecPath, RTLD_LAZY|RTLD_GLOBAL|RTLD_FIRST);
@@ -623,6 +635,13 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
         *path = oldPath;
         return appError;
     }
+
+    // 现在访客确实在了镜像表里; 用路径比对拿到真实索引, 不再依赖"dlopen 前数量".
+    uint32_t resolvedGuestIndex = LCGuestImageIndexForPath(appExecPath);
+    if (resolvedGuestIndex != UINT32_MAX) {
+        appMainImageIndex = resolvedGuestIndex;
+    }
+    NSLog(@"[LCBootstrap] guest image index=%u total=%u", appMainImageIndex, LCRealImageCount());
     
     if([guestAppInfo[@"dontInjectTweakLoader"] boolValue] && ![guestAppInfo[@"dontLoadTweakLoader"] boolValue]) {
         tweakLoaderLoaded = true;

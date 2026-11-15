@@ -34,6 +34,7 @@ const char* lcMainBundlePath = NULL;
 
 // 前置声明: overwriteAppExecutableFileType / hook_dlsym 在本文件的更早位置使用.
 static uint32_t tdv_guest_image_index(void);
+static uint32_t tdv_guest_header_index(void);
 static void tdv_rebuild_image_remap(void);
 static void tdv_hide_image_if_needed(const struct mach_header *header);
 
@@ -63,7 +64,7 @@ static void ensureBreakpointExceptionHandler(void) {
 }
 
 static void overwriteAppExecutableFileType(void) {
-    uint32_t guestHeaderIndex = tdv_guest_image_index();
+    uint32_t guestHeaderIndex = tdv_guest_header_index();
     if (guestHeaderIndex == UINT32_MAX) guestHeaderIndex = appMainImageIndex;
     struct mach_header_64* appImageMachOHeader = (struct mach_header_64*) orig_dyld_get_image_header(guestHeaderIndex);
     kern_return_t kret = builtin_vm_protect(mach_task_self(), (vm_address_t)appImageMachOHeader, sizeof(appImageMachOHeader), false, PROT_READ | PROT_WRITE | VM_PROT_COPY);
@@ -116,17 +117,33 @@ static void tdv_mark_hidden(const struct mach_header *h) {
     gTDVHiddenHeaders[gTDVHiddenCount++] = h;
 }
 
-// 访客主可执行 = 第一个未被隐藏的 MH_EXECUTE.
-// 不依赖 appMainImageIndex: 该值在访客 dlopen 之前赋值, 隐藏态下由被重绑的
-// _dyld_image_count 算出, 语义不可靠.
+// 访客主可执行 = 第一个不是宿主/扩展自身的 MH_EXECUTE.
+// 隐藏关闭时宿主镜像不会被标记为 hidden, 不排除 lcImageIndex 就会把它当成访客:
+// getAppEntryPoint 会从宿主二进制读 LC_MAIN, 访客跳错入口后立即被终止.
+// 隐藏开启时访客已被 LCPatchExecSlice 改成 MH_DYLIB, 这里返回 UINT32_MAX,
+// 由调用方回退到 appMainImageIndex.
 static uint32_t tdv_guest_image_index(void) {
     uint32_t total = orig_dyld_image_count();
     for (uint32_t i = 0; i < total; i++) {
+        if (i == lcImageIndex) continue;
         const struct mach_header *h = orig_dyld_get_image_header(i);
         if (!h || tdv_header_is_hidden(h)) continue;
         if (h->filetype == MH_EXECUTE) return i;
     }
     return UINT32_MAX;
+}
+
+// 当前访客的主镜像索引.
+// dlopen 成功后 appMainImageIndex 已按路径解析成真实索引, 优先信任它:
+// 常驻进程里上一轮访客的镜像仍在表内, 靠"第一个非隐藏 MH_EXECUTE"扫描
+// 可能命中上一个访客. 只有它不是当前访客时才回退到扫描.
+static uint32_t tdv_guest_header_index(void) {
+    uint32_t total = orig_dyld_image_count();
+    if (appMainImageIndex < total) {
+        const struct mach_header *h = orig_dyld_get_image_header(appMainImageIndex);
+        if (h && !tdv_header_is_hidden(h)) return appMainImageIndex;
+    }
+    return tdv_guest_image_index();
 }
 
 static void tdv_rebuild_image_remap(void) {
@@ -168,23 +185,14 @@ static inline bool tdv_map_image_index(uint32_t image_index, uint32_t *real_inde
     return true;
 }
 
-// 把一条已加载镜像标记为隐藏, 并把它在内存里的路径字符串改成不可疑的名字
-// (dladdr 仍会用到 dli_fname; 枚举层则由映射表直接剔除).
+// 仅通过索引映射隐藏镜像，不改写 dyld 自己维护的 dli_fname。
+// 改写该字符串不可逆；常驻进程切换到关闭隐藏后，下一位访客仍会读到伪路径。
 static void tdv_hide_image_if_needed(const struct mach_header *header) {
+    if (!gTDVRemapEnabled) return;
     Dl_info info;
     if (!header || dladdr(header, &info) == 0 || !info.dli_fname) return;
     if (!tdv_is_hidden_path(info.dli_fname)) return;
     tdv_mark_hidden(header);
-    char fakePath[PATH_MAX];
-    snprintf(fakePath, sizeof(fakePath), "/usr/lib/%p.dylib", header);
-    kern_return_t ret = vm_protect(mach_task_self(), (vm_address_t)info.dli_fname, PATH_MAX, false, PROT_READ | PROT_WRITE);
-    if(ret != KERN_SUCCESS) {
-        os_thread_self_restrict_tpro_to_rw();
-    }
-    strcpy((char *)info.dli_fname, fakePath);
-    if(ret != KERN_SUCCESS) {
-        os_thread_self_restrict_tpro_to_ro();
-    }
 }
 
 void* hook_dlsym(void * __handle, const char * __symbol) {
@@ -194,7 +202,7 @@ void* hook_dlsym(void * __handle, const char * __symbol) {
                 overwriteAppExecutableFileType();
                 appExecutableFileTypeOverwritten = true;
             }
-            uint32_t guestHeaderIndex = tdv_guest_image_index();
+            uint32_t guestHeaderIndex = tdv_guest_header_index();
             if (guestHeaderIndex == UINT32_MAX) guestHeaderIndex = appMainImageIndex;
             return (void*)orig_dyld_get_image_header(guestHeaderIndex);
         }
@@ -463,6 +471,7 @@ void DyldHooksInit(bool hideLiveContainer, bool hookDlopen, uint32_t spoofSDKVer
     gTDVRemapCount[1] = 0;
     atomic_store(&gTDVRemapActive, 0);
     gTDVMapLogged = false;
+    lcImageIndex = UINT32_MAX;
 
     // iterate through loaded images and find LiveContainer it self
     int imageCount = _dyld_image_count();
@@ -475,13 +484,16 @@ void DyldHooksInit(bool hideLiveContainer, bool hookDlopen, uint32_t spoofSDKVer
     }
     
     // 复制成自有缓冲区: fileSystemRepresentation 的生命周期不归我们管, 但这条路径
-    // 之后要被镜像枚举/回调反复比较.
+    // 之后要被镜像枚举/回调反复比较. 常驻进程会多次启动访客, 先释放上一轮.
+    free((void *)lcMainBundlePath);
     if(NSUserDefaults.isLiveProcess) {
         lcMainBundlePath = strdup(NSUserDefaults.lcMainBundle.bundlePath.stringByDeletingLastPathComponent.stringByDeletingLastPathComponent.fileSystemRepresentation);
     } else {
         lcMainBundlePath = strdup(NSUserDefaults.lcMainBundle.bundlePath.fileSystemRepresentation);
     }
-    orig_dyld_get_image_header = _dyld_get_image_header;
+    // 不重新赋值 orig_dyld_get_image_header: 文件顶部的静态初始化已在加载时
+    // 捕获真实实现；上一次隐藏启动可能已把该符号重绑到 hook，这里再取一次会把
+    // orig 指回 hook 自身，递归调用直接爆栈（表现为访客被终止）。
     
     // hook dlsym to solve RTLD_MAIN_ONLY, hook other functions to hide LiveContainer itself
     litehook_rebind_symbol(LITEHOOK_REBIND_GLOBAL, dlsym, hook_dlsym, nil);
@@ -522,9 +534,39 @@ void DyldHooksInit(bool hideLiveContainer, bool hookDlopen, uint32_t spoofSDKVer
 }
 
 void* getGuestAppHeader(void) {
-    uint32_t guest = tdv_guest_image_index();
+    uint32_t guest = tdv_guest_header_index();
     if (guest == UINT32_MAX) guest = appMainImageIndex;
     return (void*)orig_dyld_get_image_header(guest);
+}
+
+// 真实镜像总数: 隐藏开启时 _dyld_image_count 已被重绑成"可见数量",
+// 不能再当作 dlopen 前的位置索引使用.
+uint32_t LCRealImageCount(void) {
+    return orig_dyld_image_count();
+}
+
+// 按路径定位访客主镜像的真实索引.
+// "dlopen 之前的数量"在常驻进程里不可靠: 隐藏态拿到的是可见数量, 同一进程
+// 反复启动访客时上一轮的镜像也还在表里. 直接比路径是唯一确定的做法.
+uint32_t LCGuestImageIndexForPath(const char *path) {
+    if (!path || !path[0]) return UINT32_MAX;
+    const char *guestName = strrchr(path, '/');
+    guestName = guestName ? guestName + 1 : path;
+    uint32_t total = orig_dyld_image_count();
+    for (uint32_t i = 0; i < total; i++) {
+        const char *name = orig_dyld_get_image_name(i);
+        if (!name) continue;
+        if (strcmp(name, path) == 0) return i;
+    }
+    // 同名可执行可能有多份（常驻进程里上一轮访客仍在表内），从后往前取最新加载的。
+    for (uint32_t i = total; i > 0; i--) {
+        const char *name = orig_dyld_get_image_name(i - 1);
+        if (!name) continue;
+        const char *base = strrchr(name, '/');
+        base = base ? base + 1 : name;
+        if (strcmp(base, guestName) == 0) return i - 1;
+    }
+    return UINT32_MAX;
 }
 
 #pragma mark - Fix black screen
