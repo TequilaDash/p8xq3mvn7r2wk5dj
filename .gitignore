@@ -1,79 +1,11 @@
+.theos/
+packages/
 .DS_Store
-*.ipa
-pairingFile.plist
-*.mobiledevicepairing
-idevice_log.txt
-_scratch/
-Payload/
-TequilaDash/Tunnel/libidevice_ffi.a
+*.xcscmblueprint
+*.xccheckout
+*.xcarchive
+xcuserdata
+Resources/Frameworks/OpenSSL.framework
 
-# Rust vendored crate: keep sources + Cargo.lock, ignore build artifacts
-rust/idevice-ffi/target/
-
-# Vendored upstream: keep Sources + LICENSE, not their test/CI trees
-vendor/**/Tests/
-vendor/**/*.xcodeproj/
-vendor/**/BenchmarksResults/
-vendor/**/azure-pipelines.yml
-vendor/**/.jazzy.yaml
-vendor/**/*.podspec
-vendor/**/Cartfile
-vendor/**/.gitmodules
-vendor/BitByteData/benchmarks.py
-vendor/BitByteData/2-0-Plans.md
-vendor/SWCompression/utils.py
-
-# CI temp download dir
-_tmp_ci/
-
-# 本地交付物（changelog/IPA/脚本）不入库，避免仓库被 112MB 历史 IPA 撑大（审计 Q7）
-_build/
-*/_build/
-
-# 本地临时诊断日志（一律放 _build/ci_logs，禁止进 git）
-_*.log
-
-# Python
-__pycache__/
-*.pyc
-
-# 队友/我的 scratch 输出（曾多次被 git add -A 误入库）
-# gh CLI 状态（gh 在仓库 cwd 下会写 .local/state/gh/device-id，v0.3.658 误入库一次）
-/.local/
-
-/_git*.txt
-/_tmp_*.txt
-/gs2.txt
-/chk.txt
-
-# Apple 二进制与补丁产物：绝不进公开仓库（v0.3.454 修正）
-_fw_out/
-*.orig
-
-# 模块原生 UI 源码是**生成目录**（由 Resources/Scripts/sync_bundled_modules.py
-# 从 module-esc 仓库拷来）—— 不重复入库，只保留说明文件
-TequilaDash/Modules/*
-!TequilaDash/Modules/README.md
-/.tmp_*/
-/scratch/
-02_审计与报告/
-05_临时工作区/
-03_开发与实施/
-P0_工作产物标准区/
-P1_工作产品区/
-06_审计日志/
-01_人格与指令/
-
-# LiveContainer 完整镜像例外 (v0.3.798): vendor/LiveContainer 是逐文件 SHA256 校验的
-# 上游镜像, 上面的 vendor/** 排除规则对它过宽 —— xcodeproj/.gitmodules/podspec/Tests
-# 都是"完整"的一部分, 缺了 lc_mirror_guard 会 FAIL. 否定规则必须在肯定规则之后.
-!vendor/LiveContainer/
-!vendor/LiveContainer/LiveContainer.xcodeproj/
-!vendor/LiveContainer/LiveContainer.xcodeproj/**
-!vendor/LiveContainer/litehook/Tests/
-!vendor/LiveContainer/litehook/Tests/**
-!vendor/LiveContainer/fishhook/fishhook.podspec
-!vendor/LiveContainer/.gitmodules
-
-# iManager Rust build outputs (never commit)
-/iManager/rust/**/target/
+# Linux build (Scripts/zc)
+/build/

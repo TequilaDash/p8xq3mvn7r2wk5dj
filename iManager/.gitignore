@@ -1,0 +1,5 @@
+# iManager build outputs
+/rust/**/target/
+# Large bundled payloads and caches never belong in git
+/Resources/I4Mobile/*.ipa
+**/__pycache__/
