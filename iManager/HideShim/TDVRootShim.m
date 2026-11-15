@@ -485,6 +485,158 @@ static int tdv_csops_audittoken_impl(void *token, unsigned int ops, void *userad
     return tdv_csops_apply(ops, useraddr, usersize, rc);
 }
 
+#pragma mark - proc 族伪值 (TD_PROC_SPOOF)
+
+#include <mach/mach.h>
+#include <spawn.h>
+// 私有 bootstrap_look_up2 (launchd bootstrap 子系统): iOS SDK 无
+// servers/bootstrap.h, 常量与类型手写 (broadpatch decomp 交叉验证).
+#ifndef BOOTSTRAP_UNKNOWN_SERVICE
+#define BOOTSTRAP_UNKNOWN_SERVICE 4451
+#endif
+typedef char tdv_name_t[128];
+
+// Reveil "Suspicious PFlag value" 走 kern.proc PFLAGS 通道; proc_pidpath 对
+// 非自身 pid 的查询暴露宿主进程路径. 拦截面:
+//   · proc_listallpids: 只保留自身 (宿主/其它进程全隐藏, 自身 kill/wait 不破坏)
+//   · proc_pidpath: pid==self 透传 (访客 app 真实路径, 无泄漏); pid!=self → ENOENT
+//   · proc_name: 同 pidpath 语义
+// 门控与过滤在 TDVRootConfig (TDVProcSpoofEnabled / TDVProcFilterPids).
+// kern.proc 裸 MIB 通道 (sysctl(3)) 不拦 —— Reveil 的 PFlag 检测走 proc_listallpids
+// + proc_pidinfo 组合, 裸 MIB 需 fishhook (第三批 task_info 同批).
+extern int tdv_real_proc_listallpids(void *buffer, int buffersize)
+    __asm("_proc_listallpids");
+extern int tdv_real_proc_pidpath(int pid, void *buffer, uint32_t buffersize)
+    __asm("_proc_pidpath");
+extern int tdv_real_proc_name(int pid, void *buffer, uint32_t buffersize)
+    __asm("_proc_name");
+
+static int tdv_proc_listallpids_impl(void *buffer, int buffersize) {
+    int n = tdv_real_proc_listallpids(buffer, buffersize);
+    if (n <= 0 || !buffer) return n;
+    return TDVProcFilterPids((pid_t *)buffer, n);
+}
+
+static int tdv_proc_pidpath_impl(int pid, void *buffer, uint32_t buffersize) {
+    if (TDVProcSpoofEnabled() && pid != getpid()) {
+        return 0;  // ENOENT: 非自身进程不可见
+    }
+    return tdv_real_proc_pidpath(pid, buffer, buffersize);
+}
+
+static int tdv_proc_name_impl(int pid, void *buffer, uint32_t buffersize) {
+    if (TDVProcSpoofEnabled() && pid != getpid()) {
+        return 0;
+    }
+    return tdv_real_proc_name(pid, buffer, buffersize);
+}
+
+#pragma mark - bootstrap 服务名探测 (TD_PROC_SPOOF 同门控)
+
+// 检测器探测 XPC 服务名 (bootstrap_look_up) 判断宿主身份: 命中宿主/注入框架
+// 前缀的服务名返回 unknown_service (与真实不存在的服务同形). 其它服务名透传.
+extern kern_return_t tdv_real_bootstrap_look_up(mach_port_t bp, tdv_name_t service_name,
+                                                mach_port_t *sp, uint64_t flags, uint64_t *version)
+    __asm("_bootstrap_look_up2");
+
+static kern_return_t tdv_bootstrap_look_up2_impl(mach_port_t bp, tdv_name_t service_name,
+                                                 mach_port_t *sp, uint64_t flags, uint64_t *version) {
+    if (TDVProcSpoofEnabled() && service_name) {
+        static const char *kServicePrefixes[] = {
+            "org.tequila.", "td.", "org.emexlabs.",
+            "com.apple.private.xpc.",
+        };
+        for (size_t i = 0; i < sizeof(kServicePrefixes) / sizeof(kServicePrefixes[0]); i++) {
+            if (strncmp(service_name, kServicePrefixes[i], strlen(kServicePrefixes[i])) == 0) {
+                return BOOTSTRAP_UNKNOWN_SERVICE;
+            }
+        }
+    }
+    return tdv_real_bootstrap_look_up(bp, service_name, sp, flags, version);
+}
+
+
+
+
+#pragma mark - posix_spawn env 重放 (TD_PROC_SPOOF 同门控)
+
+// 访客 spawn 出来的子进程不会继承我们的门控 env (scrub 在访客自己进程内做,
+// 只清不播). 若访客再 spawn 工具进程 (tar/sh), 子进程里 sysctl/proc 查询不带
+// 门控 = 隐藏面出现旁路. 策略: interpose posix_spawn/spawnp, spawn 前把当前
+// 进程仍存活的 TD_* 门控 env 复制进 child env (attr 的 envp 参数追加).
+// 门控键清单与 LCBootstrap TDScrubGuestEnv 保持同步.
+extern int tdv_real_posix_spawn(pid_t *pid, const char *path,
+                                const posix_spawn_file_actions_t *fa,
+                                const posix_spawnattr_t *attr,
+                                char *const argv[], char *const envp[])
+    __asm("_posix_spawn");
+extern int tdv_real_posix_spawnp(pid_t *pid, const char *path,
+                                 const posix_spawn_file_actions_t *fa,
+                                 const posix_spawnattr_t *attr,
+                                 char *const argv[], char *const envp[])
+    __asm("_posix_spawnp");
+
+static const char *kTDGateKeys[] = {
+    "TD_NET_BLOCK", "TD_VROOT", "TD_VROOT_MODE", "TD_DYLD_TRIM",
+    "TD_SYSCTL_SPOOF", "TD_SECTASK_SPOOF", "TD_CSOPS_SPOOF",
+    "TD_CSOPS_KEEP_DEBUGGED", "TD_PROC_SPOOF",
+};
+
+static char **tdv_build_gated_envp(char *const envp[]) {
+    // 收集当前仍设置的 TD_* 门控 → "K=V" 字符串
+    char *gated[sizeof(kTDGateKeys) / sizeof(kTDGateKeys[0])];
+    int gatedN = 0;
+    for (size_t i = 0; i < sizeof(kTDGateKeys) / sizeof(kTDGateKeys[0]); i++) {
+        const char *v = getenv(kTDGateKeys[i]);
+        if (!v) continue;
+        size_t need = strlen(kTDGateKeys[i]) + strlen(v) + 2;
+        char *kv = malloc(need);
+        if (!kv) continue;
+        snprintf(kv, need, "%s=%s", kTDGateKeys[i], v);
+        gated[gatedN++] = kv;
+    }
+    if (gatedN == 0) return NULL;  // 无门控 env, 不改 envp
+
+    // 数原 envp 长度
+    int baseN = 0;
+    while (envp && envp[baseN]) baseN++;
+    char **out = malloc((baseN + gatedN + 1) * sizeof(char *));
+    if (!out) { for (int i = 0; i < gatedN; i++) free(gated[i]); return NULL; }
+    int w = 0;
+    for (int i = 0; i < baseN; i++) out[w++] = envp[i];
+    for (int i = 0; i < gatedN; i++) out[w++] = gated[i];  // 门控键追加在后, 覆盖同名项
+    out[w] = NULL;
+    return out;
+}
+
+static int tdv_spawn_apply(char *const envp[], char ***outEnvp) {
+    if (!TDVProcSpoofEnabled()) return 0;
+    *outEnvp = tdv_build_gated_envp(envp);
+    return (*outEnvp != NULL) ? 1 : 0;
+}
+
+static int tdv_posix_spawn_impl(pid_t *pid, const char *path,
+                                const posix_spawn_file_actions_t *fa,
+                                const posix_spawnattr_t *attr,
+                                char *const argv[], char *const envp[]) {
+    char **newEnvp = NULL;
+    int built = tdv_spawn_apply(envp, &newEnvp);
+    int rc = tdv_real_posix_spawn(pid, path, fa, attr, argv, built ? newEnvp : envp);
+    if (built) { for (char **e = newEnvp; *e; e++) free(*e); free(newEnvp); }
+    return rc;
+}
+
+static int tdv_posix_spawnp_impl(pid_t *pid, const char *path,
+                                 const posix_spawn_file_actions_t *fa,
+                                 const posix_spawnattr_t *attr,
+                                 char *const argv[], char *const envp[]) {
+    char **newEnvp = NULL;
+    int built = tdv_spawn_apply(envp, &newEnvp);
+    int rc = tdv_real_posix_spawnp(pid, path, fa, attr, argv, built ? newEnvp : envp);
+    if (built) { for (char **e = newEnvp; *e; e++) free(*e); free(newEnvp); }
+    return rc;
+}
+
 #pragma mark - interpose 表
 
 // dyld 用 replacee 的符号名做替换; replacement 指向本文件的实现.
