@@ -1,4 +1,19 @@
 extern void TDVRootInstallIfRequested(void);
+
+// Host home captured before any guest can setenv("HOME"). Constructors of
+// linked frameworks run before main(), so this value is the host container.
+static char tdHostHomeBuf[PATH_MAX];
+__attribute__((constructor)) static void tdCaptureHostHome(void) {
+    const char *h = getenv("HOME");
+    if (h && h[0] == '/') {
+        strlcpy(tdHostHomeBuf, h, sizeof(tdHostHomeBuf));
+    }
+}
+NSString *TDHostHomeDocumentsDir(void) {
+    if (tdHostHomeBuf[0] == 0) tdCaptureHostHome();
+    NSString *home = [NSString stringWithUTF8String:tdHostHomeBuf];
+    return [home stringByAppendingPathComponent:@"Documents"];
+}
 #import "FoundationPrivate.h"
 #import "LCMachOUtils.h"
 #import "LCSharedUtils.h"
@@ -498,13 +513,11 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
     // M44-ordering fix: read TDGlobalSpoof BEFORE NUD defaults hook rewrites the
     // standardUserDefaults domain to the guest's.
     // File-based flag: NSUserDefaults is hooked by NUDGuestHooksInit for the
-    // whole process once a guest has run, so any later read (even pre-NUD in
-    // this launch) can be served from the guest domain. A plain file in the
-    // HOST container is immune to that.
-    // NSHomeDirectory() lies after the first guest (HOME was setenv'd to the
-    // guest container and never restored). Use the host .app bundle path.
-    NSString *tdFlagPath = [NSBundle.mainBundle.bundlePath
-        stringByAppendingPathComponent:@"Documents/TDGlobalHide"];
+    // whole process once a guest has run, and NSHomeDirectory() lies after the
+    // first guest (HOME was setenv'd to the guest container and never
+    // restored). Use the host home captured at process load instead.
+    NSString *tdFlagPath = [TDHostHomeDocumentsDir()
+        stringByAppendingPathComponent:@"TDGlobalHide"];
     BOOL tdGlobalHide = [[NSString stringWithContentsOfFile:tdFlagPath encoding:NSUTF8StringEncoding error:nil] isEqualToString:@"1"];
     BOOL tdHideLiveContainer = tdGlobalHide || [guestAppInfo[@"hideLiveContainer"] boolValue];
     NSLog(@"[TDGlobalHide] guest=%d global=%d (pre-NUD)", (int)[guestAppInfo[@"hideLiveContainer"] boolValue], (int)tdGlobalHide);

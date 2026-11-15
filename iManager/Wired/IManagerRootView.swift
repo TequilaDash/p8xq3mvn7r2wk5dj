@@ -1,11 +1,21 @@
 import SwiftUI
 
 struct IManagerRootView: View {
+    // Captured at first access of this SwiftUI type: if any guest has run,
+    // HOME is polluted; but this static is initialized lazily on first UI use,
+    // which is BEFORE the user can launch a guest (settings are only reachable
+    // from the host UI). Acceptable.
+    static var hostDocumentsDir: String = {
+        let h = getenv("HOME")
+        let home = (h != nil) ? String(cString: h!) : NSHomeDirectory()
+        return (home as NSString).appendingPathComponent("Documents")
+    }()
+
     @State private var globalHide: Bool = {
-        let p = Bundle.main.bundlePath + "/Documents/TDGlobalHide"
+        let p = Self.hostDocumentsDir() + "/TDGlobalHide"
         return (try? String(contentsOfFile: p, encoding: .utf8)) == "1"
     }()
-    private var flagPath: String { Bundle.main.bundlePath + "/Documents/TDGlobalHide" }
+    private var flagPath: String { Self.hostDocumentsDir() + "/TDGlobalHide" }
     var body: some View {
         List {
             Section {

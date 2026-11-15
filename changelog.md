@@ -1,5 +1,6 @@
-20261115-191936 1.1.11 Update：
-1. 全局隐藏标记路径错误修复：NSHomeDirectory() 在第一个访客启动后会被 setenv 到访客容器且不再恢复，导致 iManager 写入和 LCBootstrap 读取都落在错误容器。改为使用宿主 .app bundle 路径（恒定）。
+20261115-193634 1.1.12 Update：
+1. 全局隐藏标记使用“进程加载时捕获的宿主 HOME”（constructor 捕获），不再受访客 setenv("HOME") 污染。
+2. iManager 页/隐藏状态页改用同一捕获目录，写与读一致。
 
 [编译环境]
 构建时自动填充
