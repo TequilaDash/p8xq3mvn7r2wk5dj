@@ -14,6 +14,7 @@ NS_ASSUME_NONNULL_BEGIN
 
 // 侧边下滑 (实验性): 向下拖动超过阈值并松手后调用; 取消时快照回弹, 按键留在原位.
 @property (nonatomic) BOOL edgeSwipeEnabled;
+@property (nonatomic, copy, nullable) void (^edgeHandler)(void);
 // 侧边下滑全局应用但没有开启辅助触控时，只保留边缘手势，不显示按键。
 @property (nonatomic) BOOL buttonHidden;
 
