@@ -193,25 +193,32 @@ static NSString *LCHomeButtonSetting(NSString *key) {
 }
 
 - (void)goBackToZContainer {
+    if (self.isLeaving) return;
+    // 多任务分支不依赖 LCSharedUtils: TweakLoader 没有链接 LiveContainerShared,
+    // 以前先做 respondsToSelector 判断会直接 return, 导致按键点了没反应.
+    if (NSUserDefaults.isLiveProcess) {
+        self.isLeaving = YES;
+        __weak LCHomeButtonController *weakSelf = self;
+        [self.buttonController fadeOutWithCompletion:^{
+            CFNotificationCenterRef center = CFNotificationCenterGetDarwinNotifyCenter();
+            CFStringRef name = CFSTR("com.kdt.livecontainer.minimizeAll");
+            CFNotificationCenterPostNotification(center, name, NULL, NULL, true);
+            // 宿主可能还在后台: 前台后补发一次, 避免通知被丢掉导致窗口黑屏.
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.8 * NSEC_PER_SEC)),
+                           dispatch_get_main_queue(), ^{
+                CFNotificationCenterPostNotification(center, name, NULL, NULL, true);
+            });
+            [weakSelf openHostKeepingExtension];
+        }];
+        return;
+    }
     Class sharedUtils = NSClassFromString(@"LCSharedUtils");
-    if (self.isLeaving || ![sharedUtils respondsToSelector:@selector(launchToGuestAppWithClassicMode:)]) {
+    if (![sharedUtils respondsToSelector:@selector(launchToGuestAppWithClassicMode:)]) {
         return;
     }
     // 多任务 (LiveProcess) 里按主屏只把宿主 App 拉到前台, 不清 selected、不调用
     // departure.leave: 那会结束扩展进程, 让其它多任务应用一起被杀. 期望是所有
     // 多任务窗口保持存活, 只是最小化到 zContainer 后面.
-    if (NSUserDefaults.isLiveProcess) {
-        self.isLeaving = YES;
-        __weak LCHomeButtonController *weakSelf = self;
-        [self.buttonController fadeOutWithCompletion:^{
-            // 让宿主把所有多任务窗口最小化 (保持进程存活), 再把 zContainer 拉到前台.
-            CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),
-                                                 CFSTR("com.kdt.livecontainer.minimizeAll"),
-                                                 NULL, NULL, true);
-            [weakSelf openHostKeepingExtension];
-        }];
-        return;
-    }
     self.isLeaving = YES;
     __weak LCHomeButtonController *weakSelf = self;
     [self.buttonController fadeOutWithCompletion:^{

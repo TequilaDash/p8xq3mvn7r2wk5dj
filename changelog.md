@@ -1,3 +1,8 @@
+20261116-162656 1.1.32 Update：
+1. 修复多任务主屏按键完全失效：旧代码先判断 LCSharedUtils 是否存在，TweakLoader 未链接该类时直接 return；多任务分支现在先执行，不再被这个判断拦住。
+2. 修复崩溃捕获在扩展内未安装：LiveProcessMain 一进入就安装文件记录器，任何访客代码导致退出前都有机会写入 ConsoleLog；崩溃记录不弹窗。
+3. 多任务最小化通知在宿主前台后补发一次，避免宿主在后台时丢失通知导致窗口黑屏。
+
 20261116-160714 1.1.31 Update：
 1. 侧边下滑改为交互式过渡：整屏快照跟随手指下移淡出，松手未过阈值会回弹；快照取应用窗口，不再把辅助触控一起带走。
 2. 崩溃记录恢复为“只写 ConsoleLog、不弹窗”：未捕获异常与 SIGABRT/SIGSEGV/SIGBUS/SIGILL/SIGFPE/SIGTRAP/SIGTERM/SIGINT/SIGHUP；不再有应用终止弹窗。

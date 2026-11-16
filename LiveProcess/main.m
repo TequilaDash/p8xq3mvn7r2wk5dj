@@ -12,6 +12,7 @@
 #import "../LiveContainer/Tweaks/Tweaks.h"
 
 extern void TDConsoleLog(NSString *format, ...);
+extern void TDConsoleLogInstallCrashHandlers(void);
 
 @interface LiveProcessHandler : NSObject<NSExtensionRequestHandling>
 @end
@@ -38,6 +39,9 @@ static NSDictionary *retrievedAppInfo;
 extern int LiveContainerMain(int argc, char *argv[]);
 static char **_envp, **_apple = NULL;
 int LiveProcessMain(int argc, char *argv[]) {
+    // Install crash/file logging before any guest code can kill the process.
+    TDConsoleLogInstallCrashHandlers();
+    TDConsoleLog(@"[LiveProcess] main entered");
     // Let NSExtensionContext initialize, once it's done it will call CFRunLoopStop
     CFRunLoopRun();
     // Ensure app info is delivered

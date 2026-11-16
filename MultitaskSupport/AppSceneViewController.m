@@ -466,6 +466,7 @@ static void LCMinimizeControllerTree(UIViewController *controller) {
 static void LCMinimizeAllMultitaskWindows(CFNotificationCenterRef center, void *observer,
                                           CFStringRef name, const void *object,
                                           CFDictionaryRef userInfo) {
+    NSLog(@"[TDHome] minimizeAll notification received");
     dispatch_async(dispatch_get_main_queue(), ^{
         for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
             if (![scene isKindOfClass:UIWindowScene.class]) continue;
