@@ -511,16 +511,10 @@ void DyldHooksInit(bool hideLiveContainer, bool hookDlopen, uint32_t spoofSDKVer
     
     // hook dlsym to solve RTLD_MAIN_ONLY, hook other functions to hide LiveContainer itself
     litehook_rebind_symbol(LITEHOOK_REBIND_GLOBAL, dlsym, hook_dlsym, nil);
-    // 同进程访客: 注入面 (TweakLoader / Documents/Tweaks) 始终裁剪, 隐藏开关只决定
-    // LC 自身镜像是否可见. 多任务扩展 (LiveProcess) 通常为兼容 ESign 保持旧行为;
-    // Reveil 例外: 它枚举已加载镜像并对注入库自检, 关闭隐藏后仍必须裁掉注入面.
+    // 所有进程统一裁剪注入面 (TweakLoader / Documents/Tweaks)；隐藏开关只决定
+    // LiveContainer 自身镜像是否可见。规则对任何访客一致，不做应用名判断。
     gTDVHideLCImages = hideLiveContainer;
-    NSString *guestBundleID = NSUserDefaults.lcMainBundle.bundleIdentifier;
-    BOOL trimForReveil = NSUserDefaults.isLiveProcess &&
-        ([guestBundleID isEqualToString:@"com.reveil.app"] ||
-         [guestBundleID isEqualToString:@"com.82flex.reveil"]);
-    BOOL trimAlways = !NSUserDefaults.isLiveProcess;
-    gTDVRemapEnabled = hideLiveContainer || trimAlways || trimForReveil;
+    gTDVRemapEnabled = true;
     if (gTDVRemapEnabled) {
         uint32_t initialCount = orig_dyld_image_count();
         for (uint32_t i = 0; i < initialCount; i++) {
