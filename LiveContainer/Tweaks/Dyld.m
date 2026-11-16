@@ -131,11 +131,14 @@ static void tdv_mark_hidden(const struct mach_header *h) {
 // 由调用方回退到 appMainImageIndex.
 static uint32_t tdv_guest_image_index(void) {
     uint32_t total = orig_dyld_image_count();
-    for (uint32_t i = 0; i < total; i++) {
-        if (i == lcImageIndex) continue;
-        const struct mach_header *h = orig_dyld_get_image_header(i);
+    // The host process keeps previously launched guests mapped. Until the new
+    // executable path has been resolved, its newest MH_EXECUTE is the current guest.
+    for (uint32_t i = total; i > 0; i--) {
+        uint32_t index = i - 1;
+        if (index == lcImageIndex) continue;
+        const struct mach_header *h = orig_dyld_get_image_header(index);
         if (!h || tdv_header_is_hidden(h)) continue;
-        if (h->filetype == MH_EXECUTE) return i;
+        if (h->filetype == MH_EXECUTE) return index;
     }
     return UINT32_MAX;
 }

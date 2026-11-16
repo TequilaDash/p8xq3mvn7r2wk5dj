@@ -145,13 +145,8 @@ static NSString *LCHomeButtonSetting(NSString *key) {
     }
 }
 
-// Opens zContainer again with no app chosen, after covering the app in black
-// and telling it that it is going to the background, as pressing Home would,
-// so it can save. zContainer's launch ends this process as soon as iOS has
-// zContainer open; if it's still here a few seconds later, opening didn't
-// work, so the app comes back to the foreground.
-// 扩展进程里打开宿主, 但不像 launchToGuestAppWithClassicMode 那样在完成后
-// raise(SIGKILL) —— 那会把扩展和所有多任务应用一起结束.
+// LiveProcess 必须保留访客画面和进程，由宿主现有 Dock 动画收纳窗口。
+// 普通全屏访客仍通过 launchToGuestAppWithClassicMode 返回并结束进程。
 - (void)openHostKeepingExtension {
     NSString *bundleID = NSUserDefaults.lcMainBundle.bundleIdentifier ?: NSBundle.mainBundle.bundleIdentifier;
     NSString *suffix = @".LiveProcess";
@@ -198,27 +193,23 @@ static NSString *LCHomeButtonSetting(NSString *key) {
     // 以前先做 respondsToSelector 判断会直接 return, 导致按键点了没反应.
     if (NSUserDefaults.isLiveProcess) {
         self.isLeaving = YES;
+        CFNotificationCenterRef center = CFNotificationCenterGetDarwinNotifyCenter();
+        CFStringRef name = CFSTR("com.kdt.livecontainer.minimizeAll");
+        CFNotificationCenterPostNotification(center, name, NULL, NULL, true);
+        [self openHostKeepingExtension];
         __weak LCHomeButtonController *weakSelf = self;
-        [self.buttonController fadeOutWithCompletion:^{
-            CFNotificationCenterRef center = CFNotificationCenterGetDarwinNotifyCenter();
-            CFStringRef name = CFSTR("com.kdt.livecontainer.minimizeAll");
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.8 * NSEC_PER_SEC)),
+                       dispatch_get_main_queue(), ^{
             CFNotificationCenterPostNotification(center, name, NULL, NULL, true);
-            // 宿主可能还在后台: 前台后补发一次, 避免通知被丢掉导致窗口黑屏.
-            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.8 * NSEC_PER_SEC)),
-                           dispatch_get_main_queue(), ^{
-                CFNotificationCenterPostNotification(center, name, NULL, NULL, true);
-            });
-            [weakSelf openHostKeepingExtension];
-        }];
+            weakSelf.isLeaving = NO;
+        });
         return;
     }
     Class sharedUtils = NSClassFromString(@"LCSharedUtils");
     if (![sharedUtils respondsToSelector:@selector(launchToGuestAppWithClassicMode:)]) {
         return;
     }
-    // 多任务 (LiveProcess) 里按主屏只把宿主 App 拉到前台, 不清 selected、不调用
-    // departure.leave: 那会结束扩展进程, 让其它多任务应用一起被杀. 期望是所有
-    // 多任务窗口保持存活, 只是最小化到 zContainer 后面.
+    // 普通全屏访客退出时清理选择并通知应用保存，然后打开宿主。
     self.isLeaving = YES;
     __weak LCHomeButtonController *weakSelf = self;
     [self.buttonController fadeOutWithCompletion:^{

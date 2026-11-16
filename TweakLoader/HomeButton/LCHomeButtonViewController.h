@@ -6,13 +6,13 @@ NS_ASSUME_NONNULL_BEGIN
 // an edge of the screen, lets it be dragged or flung to another place like
 // AssistiveTouch, dims it after a few seconds without a touch, and leaves
 // rotation, the status bar, the Home indicator and the screen edge gestures to
-// the app underneath.
+// the app underneath. Optional downward edge swipes use this same window.
 @interface LCHomeButtonViewController : UIViewController
 
 // Called when the button is pressed.
 @property (nonatomic, copy, nullable) void (^pressHandler)(void);
 
-// 侧边下滑 (实验性): 屏幕左右边缘向下拖动时调用, 与单击主屏按键同一动作.
+// 侧边下滑 (实验性): 向下拖动超过阈值并松手后调用; 取消时快照回弹, 按键留在原位.
 @property (nonatomic) BOOL edgeSwipeEnabled;
 @property (nonatomic, copy, nullable) void (^edgeHandler)(void);
 

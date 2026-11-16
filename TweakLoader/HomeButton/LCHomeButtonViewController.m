@@ -12,7 +12,7 @@ static const CGFloat LCHomeButtonDimmedAlpha = 0.4;
 // How far a flung button carries on, in seconds of its speed when let go.
 static const CGFloat LCHomeButtonFlingCarry = 0.12;
 
-@interface LCHomeButtonViewController ()
+@interface LCHomeButtonViewController () <UIGestureRecognizerDelegate>
 @property (nonatomic) LCHomeButtonView *button;
 // Where the button was moved to, or nil while it rests in its first place,
 // which follows an iPad as it's turned.
@@ -26,6 +26,8 @@ static const CGFloat LCHomeButtonFlingCarry = 0.12;
 @property (nonatomic) NSUInteger dimmingGeneration;
 // 侧边下滑时跟随手指的整屏快照.
 @property (nonatomic, nullable) UIView *edgeSnapshot;
+@property (nonatomic, weak, nullable) UIPanGestureRecognizer *edgeGesture;
+- (nullable UIWindow *)appWindow;
 @end
 
 @implementation LCHomeButtonViewController
@@ -60,54 +62,84 @@ static const CGFloat LCHomeButtonFlingCarry = 0.12;
         handle.backgroundColor = UIColor.clearColor;
         handle.tag = edge.integerValue;
         UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(edgePanned:)];
+        pan.delegate = self;
         [handle addGestureRecognizer:pan];
-        [self.view addSubview:handle];
+        [self.view insertSubview:handle belowSubview:self.button];
     }
 }
 
-- (void)edgePanned:(UIPanGestureRecognizer *)gesture {
-    UIWindow *appWindow = UIApplication.sharedApplication.keyWindow;
-    if (!appWindow) return;
-    CGPoint translation = [gesture translationInView:self.view];
-    CGPoint velocity = [gesture velocityInView:self.view];
-    CGFloat travel = MAX(0, translation.y);
-    if (gesture.state == UIGestureRecognizerStateBegan && fabs(translation.x) > fabs(translation.y)) return;
+- (BOOL)gestureRecognizerShouldBegin:(UIGestureRecognizer *)gesture {
+    CGPoint velocity = [(UIPanGestureRecognizer *)gesture velocityInView:self.view];
+    return self.edgeSwipeEnabled && !self.edgeSnapshot && !self.cover && !self.isDragging &&
+        velocity.y > 0 && velocity.y > fabs(velocity.x);
+}
 
-    if (!self.edgeSnapshot && travel > 4) {
+- (void)edgePanned:(UIPanGestureRecognizer *)gesture {
+    if (gesture.state == UIGestureRecognizerStateBegan) {
+        if (self.edgeSnapshot) return;
+        UIWindow *appWindow = self.appWindow;
+        if (!appWindow) return;
         UIView *snapshot = [appWindow snapshotViewAfterScreenUpdates:NO];
         if (!snapshot) return;
-        snapshot.frame = self.view.window.bounds;
+        snapshot.frame = [appWindow convertRect:appWindow.bounds toView:self.view];
         snapshot.userInteractionEnabled = NO;
-        [self.view.window addSubview:snapshot];
+        // The button and both touch strips stay above the app's picture.
+        [self.view insertSubview:snapshot atIndex:0];
         self.edgeSnapshot = snapshot;
+        self.edgeGesture = gesture;
     }
-    UIView *snapshot = self.edgeSnapshot;
-    if (snapshot) {
-        snapshot.transform = CGAffineTransformMakeTranslation(0, travel);
-        snapshot.alpha = 1 - MIN(0.35, travel / MAX(1, self.view.bounds.size.height));
-    }
-    if (gesture.state != UIGestureRecognizerStateEnded) return;
+    if (gesture != self.edgeGesture) return;
 
-    BOOL dismiss = travel > 80 && velocity.y > 0 && fabs(translation.y) >= fabs(translation.x);
-    __weak LCHomeButtonViewController *weakSelf = self;
-    if (!dismiss) {
-        [UIView animateWithDuration:0.25 animations:^{
-            snapshot.transform = CGAffineTransformIdentity;
-            snapshot.alpha = 1;
-        } completion:^(BOOL finished) {
-            [snapshot removeFromSuperview];
-        }];
-        self.edgeSnapshot = nil;
+    if (gesture.state == UIGestureRecognizerStateCancelled || gesture.state == UIGestureRecognizerStateFailed) {
+        [self finishEdgeSwipe:NO animated:YES];
         return;
     }
-    [UIView animateWithDuration:0.3 delay:0 options:UIViewAnimationOptionCurveEaseIn animations:^{
-        snapshot.transform = CGAffineTransformMakeTranslation(0, self.view.bounds.size.height * 0.3);
-        snapshot.alpha = 0;
+    if (gesture.state != UIGestureRecognizerStateBegan && gesture.state != UIGestureRecognizerStateChanged &&
+        gesture.state != UIGestureRecognizerStateEnded) return;
+
+    CGPoint translation = [gesture translationInView:self.view];
+    CGFloat travel = MAX(0, translation.y);
+    self.edgeSnapshot.transform = CGAffineTransformMakeTranslation(0, travel);
+    self.edgeSnapshot.alpha = 1 - MIN(0.35, travel / MAX(1, self.view.bounds.size.height));
+    if (gesture.state == UIGestureRecognizerStateEnded) {
+        CGPoint velocity = [gesture velocityInView:self.view];
+        BOOL dismiss = travel > 80 && velocity.y > 0 && translation.y >= fabs(translation.x);
+        [self finishEdgeSwipe:dismiss animated:YES];
+    }
+}
+
+- (void)finishEdgeSwipe:(BOOL)dismiss animated:(BOOL)animated {
+    UIView *snapshot = self.edgeSnapshot;
+    self.edgeGesture = nil;
+    if (!snapshot) return;
+    if (!animated) {
+        // Clear ownership first, so an interrupted completion cannot leave the app.
+        self.edgeSnapshot = nil;
+        [snapshot.layer removeAllAnimations];
+        [snapshot removeFromSuperview];
+        return;
+    }
+    CGFloat travel = MAX(snapshot.transform.ty, self.view.bounds.size.height * 0.3);
+    __weak LCHomeButtonViewController *weakSelf = self;
+    [UIView animateWithDuration:dismiss ? 0.3 : 0.25
+                          delay:0
+                        options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction |
+                                (dismiss ? UIViewAnimationOptionCurveEaseIn : UIViewAnimationOptionCurveEaseOut)
+                     animations:^{
+        snapshot.transform = dismiss ? CGAffineTransformMakeTranslation(0, travel) : CGAffineTransformIdentity;
+        snapshot.alpha = dismiss ? 0 : 1;
     } completion:^(BOOL finished) {
         [snapshot removeFromSuperview];
-        weakSelf.edgeSnapshot = nil;
-        if (weakSelf.edgeHandler) weakSelf.edgeHandler();
+        LCHomeButtonViewController *controller = weakSelf;
+        if (controller.edgeSnapshot != snapshot) return;
+        controller.edgeSnapshot = nil;
+        if (dismiss && finished && controller.edgeHandler) controller.edgeHandler();
     }];
+}
+
+- (void)viewWillDisappear:(BOOL)animated {
+    [self finishEdgeSwipe:NO animated:NO];
+    [super viewWillDisappear:animated];
 }
 
 - (void)viewDidAppear:(BOOL)animated {
@@ -134,6 +166,7 @@ static const CGFloat LCHomeButtonFlingCarry = 0.12;
 // out again on its own, but the first place moves to the other side.
 - (void)viewWillTransitionToSize:(CGSize)size withTransitionCoordinator:(id<UIViewControllerTransitionCoordinator>)coordinator {
     [super viewWillTransitionToSize:size withTransitionCoordinator:coordinator];
+    [self finishEdgeSwipe:NO animated:NO];
     [coordinator animateAlongsideTransition:^(id<UIViewControllerTransitionCoordinatorContext> context) {
         [self.view setNeedsLayout];
         [self.view layoutIfNeeded];
@@ -268,6 +301,7 @@ static const CGFloat LCHomeButtonFlingCarry = 0.12;
 #pragma mark Going back to zContainer
 
 - (void)fadeOutWithCompletion:(void (^)(void))completion {
+    [self finishEdgeSwipe:NO animated:NO];
     [self.cover removeFromSuperview];
     UIView *cover = [[UIView alloc] initWithFrame:self.view.bounds];
     cover.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
@@ -295,14 +329,13 @@ static const CGFloat LCHomeButtonFlingCarry = 0.12;
 
 #pragma mark Leaving the screen to the app
 
-// The view controller of the app's main window that UIKit asks about the
-// screen: the key window's (or else the first ordinary window's) root view
-// controller, or the one it presents over everything.
-- (nullable UIViewController *)appViewController {
+// Choose a visible app window in this button's scene, never the button window
+// or a key window belonging to a different scene.
+- (nullable UIWindow *)appWindow {
     UIWindow *ownWindow = self.viewIfLoaded.window;
     UIWindow *appWindow = nil;
     for (UIWindow *window in ownWindow.windowScene.windows) {
-        if (window == ownWindow || window.hidden || !window.rootViewController) {
+        if (window == ownWindow || window.hidden || window.alpha <= 0 || !window.rootViewController || CGRectIsEmpty(window.bounds) || window.windowLevel > UIWindowLevelNormal) {
             continue;
         }
         if (window.isKeyWindow) {
@@ -313,7 +346,12 @@ static const CGFloat LCHomeButtonFlingCarry = 0.12;
             appWindow = window;
         }
     }
-    UIViewController *controller = appWindow.rootViewController;
+    return appWindow;
+}
+
+// The app's root controller, or the one it presents over everything.
+- (nullable UIViewController *)appViewController {
+    UIViewController *controller = self.appWindow.rootViewController;
     while (controller.presentedViewController && !controller.presentedViewController.isBeingDismissed) {
         controller = controller.presentedViewController;
     }
@@ -323,17 +361,9 @@ static const CGFloat LCHomeButtonFlingCarry = 0.12;
 // The view controller that decides the app's orientations, which UIKit finds
 // with a private method of the root view controller when it has it.
 - (nullable UIViewController *)appOrientationViewController {
-    UIWindow *ownWindow = self.viewIfLoaded.window;
-    UIViewController *controller = nil;
-    for (UIWindow *window in ownWindow.windowScene.windows) {
-        if (window != ownWindow && !window.hidden && window.isKeyWindow) {
-            controller = window.rootViewController;
-            break;
-        }
-    }
-    if (!controller) {
-        return self.appViewController;
-    }
+    UIWindow *appWindow = self.appWindow;
+    UIViewController *controller = appWindow.rootViewController;
+    if (!controller) return self.appViewController;
     SEL decider = NSSelectorFromString(@"_viewControllerForSupportedInterfaceOrientations");
     if ([controller respondsToSelector:decider]) {
         id found = ((id (*)(id, SEL))objc_msgSend)(controller, decider);

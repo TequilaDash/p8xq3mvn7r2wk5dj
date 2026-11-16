@@ -5,6 +5,7 @@
 #include <limits.h>
 #include <pthread.h>
 #include <signal.h>
+#include <stdlib.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
@@ -182,8 +183,11 @@ void TDConsoleLogInstallCrashHandlers(void) {
     static BOOL installed = NO;
     if (installed) return;
     installed = YES;
+    // 异常仍写 ConsoleLog；信号捕获仅由实验性开关启用，避免默认改变信号状态。
     gTDPreviousExceptionHandler = NSGetUncaughtExceptionHandler();
     NSSetUncaughtExceptionHandler(&TDExceptionHandler);
+    const char *signalsEnabled = getenv("TD_CONSOLE_SIGNALS");
+    if (!signalsEnabled || signalsEnabled[0] != '1') return;
     const int signals[] = {SIGABRT, SIGSEGV, SIGBUS, SIGILL, SIGFPE, SIGTRAP, SIGTERM, SIGINT, SIGHUP};
     struct sigaction action;
     memset(&action, 0, sizeof(action));
