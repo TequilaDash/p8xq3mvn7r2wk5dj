@@ -9,6 +9,7 @@
 #import <UIKit/UIKit.h>
 #import <mach-o/dyld.h>
 #import "../LiveContainer/utils.h"
+#import <objc/message.h>
 #import "../LiveContainer/Tweaks/Tweaks.h"
 
 extern void TDConsoleLog(NSString *format, ...);
@@ -39,6 +40,16 @@ static NSDictionary *retrievedAppInfo;
 extern int LiveContainerMain(int argc, char *argv[]);
 static char **_envp, **_apple = NULL;
 int LiveProcessMain(int argc, char *argv[]) {
+    // LCBootstrap 稍后也会写这个环境变量; 这里先写是为了让最早的信号安装
+    // 就能看到开关, 避免开关开启后第一个崩溃窗口没有采集器.
+    Class sharedUtils = NSClassFromString(@"LCSharedUtils");
+    NSString *groupID = nil;
+    if ([sharedUtils respondsToSelector:@selector(appGroupID)]) {
+        groupID = ((NSString *(*)(id, SEL))objc_msgSend)(sharedUtils, @selector(appGroupID));
+    }
+    NSUserDefaults *sharedDefaults = groupID ? [[NSUserDefaults alloc] initWithSuiteName:groupID] : nil;
+    BOOL signalsEnabled = [sharedDefaults objectForKey:@"TDConsoleSignals"] ? [sharedDefaults boolForKey:@"TDConsoleSignals"] : NO;
+    setenv("TD_CONSOLE_SIGNALS", signalsEnabled ? "1" : "0", 1);
     // Install crash/file logging before any guest code can kill the process.
     TDConsoleLogInstallCrashHandlers();
     TDConsoleLog(@"[LiveProcess] main entered");

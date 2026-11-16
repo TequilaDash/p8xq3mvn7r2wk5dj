@@ -487,6 +487,15 @@ void DyldHooksInit(bool hideLiveContainer, bool hookDlopen, uint32_t spoofSDKVer
     gTDVMapLogged = false;
     lcImageIndex = UINT32_MAX;
 
+    // iterate through loaded images and find LiveContainer it self
+    int imageCount = _dyld_image_count();
+    for(int i = 0; i < imageCount; ++i) {
+        const struct mach_header* currentImageHeader = _dyld_get_image_header(i);
+        if(currentImageHeader->filetype == MH_EXECUTE) {
+            lcImageIndex = i;
+            break;
+        }
+    }
     
     // 复制成自有缓冲区: fileSystemRepresentation 的生命周期不归我们管, 但这条路径
     // 之后要被镜像枚举/回调反复比较. 常驻进程会多次启动访客, 先释放上一轮.
@@ -496,23 +505,6 @@ void DyldHooksInit(bool hideLiveContainer, bool hookDlopen, uint32_t spoofSDKVer
     } else {
         lcMainBundlePath = strdup(NSUserDefaults.lcMainBundle.bundlePath.fileSystemRepresentation);
     }
-    // LiveProcess 常驻复用同一进程；上一位访客可能已经重绑定了 dyld
-    // 枚举 API。初始化下一位访客时只走加载时捕获的真实函数，并按宿主
-    // bundle 路径定位 lcImageIndex，不能依赖镜像加载顺序。
-    uint32_t imageCount = orig_dyld_image_count();
-    if (lcMainBundlePath && lcMainBundlePath[0]) {
-        size_t bundlePathLength = strlen(lcMainBundlePath);
-        for (uint32_t i = 0; i < imageCount; ++i) {
-            const struct mach_header *currentImageHeader = orig_dyld_get_image_header(i);
-            const char *currentImageName = orig_dyld_get_image_name(i);
-            if (!currentImageHeader || currentImageHeader->filetype != MH_EXECUTE || !currentImageName) continue;
-            if (strncmp(currentImageName, lcMainBundlePath, bundlePathLength) == 0 &&
-                currentImageName[bundlePathLength] == '/') {
-                lcImageIndex = i;
-                break;
-            }
-        }
-    }
     // 不重新赋值 orig_dyld_get_image_header: 文件顶部的静态初始化已在加载时
     // 捕获真实实现；上一次隐藏启动可能已把该符号重绑到 hook，这里再取一次会把
     // orig 指回 hook 自身，递归调用直接爆栈（表现为访客被终止）。
@@ -520,11 +512,15 @@ void DyldHooksInit(bool hideLiveContainer, bool hookDlopen, uint32_t spoofSDKVer
     // hook dlsym to solve RTLD_MAIN_ONLY, hook other functions to hide LiveContainer itself
     litehook_rebind_symbol(LITEHOOK_REBIND_GLOBAL, dlsym, hook_dlsym, nil);
     // 同进程访客: 注入面 (TweakLoader / Documents/Tweaks) 始终裁剪, 隐藏开关只决定
-    // LC 自身镜像是否可见. 多任务扩展 (LiveProcess) 保持旧行为: 只有隐藏开启才裁剪,
-    // 因为 ESign 一类应用在扩展里枚举镜像, 常开裁剪会让它在启动阶段退出.
+    // LC 自身镜像是否可见. 多任务扩展 (LiveProcess) 通常为兼容 ESign 保持旧行为;
+    // Reveil 例外: 它枚举已加载镜像并对注入库自检, 关闭隐藏后仍必须裁掉注入面.
     gTDVHideLCImages = hideLiveContainer;
+    NSString *guestBundleID = NSUserDefaults.lcMainBundle.bundleIdentifier;
+    BOOL trimForReveil = NSUserDefaults.isLiveProcess &&
+        ([guestBundleID isEqualToString:@"com.reveil.app"] ||
+         [guestBundleID isEqualToString:@"com.82flex.reveil"]);
     BOOL trimAlways = !NSUserDefaults.isLiveProcess;
-    gTDVRemapEnabled = hideLiveContainer || trimAlways;
+    gTDVRemapEnabled = hideLiveContainer || trimAlways || trimForReveil;
     if (gTDVRemapEnabled) {
         uint32_t initialCount = orig_dyld_image_count();
         for (uint32_t i = 0; i < initialCount; i++) {

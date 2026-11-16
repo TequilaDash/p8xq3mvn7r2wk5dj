@@ -56,23 +56,35 @@ static NSString *TDLogTimestamp(void) {
 
 NSString *TDConsoleLogDirectory(void) {
     static NSString *resolved = nil;
-    static dispatch_once_t once;
-    dispatch_once(&once, ^{
-        NSMutableArray<NSString *> *dirs = [NSMutableArray array];
-        const char *override = getenv("TD_CONSOLE_LOG_DIR");
-        if (override && override[0] == '/') {
-            [dirs addObject:@(override)];
+    static NSString *resolvedOverride = nil;
+    static NSString *resolvedFallback = nil;
+    static BOOL fallbackResolved = NO;
+    const char *override = getenv("TD_CONSOLE_LOG_DIR");
+    NSString *overridePath = (override && override[0] == '/') ? @(override) : nil;
+    pthread_mutex_lock(&gTDLogLock);
+    if (overridePath) {
+        if (!resolvedOverride || ![resolvedOverride isEqualToString:overridePath]) {
+            resolvedOverride = overridePath;
+            resolved = nil;
         }
-        NSString *base = TDConsoleLogBaseDocuments();
-        if (base) [dirs addObject:[base stringByAppendingPathComponent:@"ConsoleLog"]];
-        for (NSString *dir in dirs) {
-            if (TDConsoleLogDirWritable(dir)) {
-                resolved = dir;
-                break;
+        if (!resolved && TDConsoleLogDirWritable(overridePath)) {
+            resolved = overridePath;
+        }
+    }
+    if (!resolved) {
+        if (!fallbackResolved) {
+            NSString *base = TDConsoleLogBaseDocuments();
+            NSString *fallback = base ? [base stringByAppendingPathComponent:@"ConsoleLog"] : nil;
+            if (fallback && TDConsoleLogDirWritable(fallback)) {
+                resolvedFallback = fallback;
             }
+            fallbackResolved = YES;
         }
-    });
-    return resolved;
+        resolved = resolvedFallback;
+    }
+    NSString *result = resolved;
+    pthread_mutex_unlock(&gTDLogLock);
+    return result;
 }
 
 void TDConsoleLog(NSString *format, ...) {
@@ -181,7 +193,7 @@ static void TDExceptionHandler(NSException *exception) {
 
 void TDConsoleLogInstallCrashHandlers(void) {
     static BOOL exceptionInstalled = NO;
-    static BOOL signalsInstalled = NO;
+    static BOOL signalsSaved = NO;
     static const int signals[] = {SIGABRT, SIGSEGV, SIGBUS, SIGILL, SIGFPE, SIGTRAP, SIGTERM, SIGINT, SIGHUP};
     static struct sigaction previousActions[sizeof(signals) / sizeof(signals[0])];
     if (!exceptionInstalled) {
@@ -191,20 +203,24 @@ void TDConsoleLogInstallCrashHandlers(void) {
     }
     const char *signalsEnabled = getenv("TD_CONSOLE_SIGNALS");
     BOOL shouldInstallSignals = signalsEnabled && signalsEnabled[0] == '1';
-    if (shouldInstallSignals == signalsInstalled) return;
     if (shouldInstallSignals) {
+        if (!signalsSaved) {
+            for (size_t i = 0; i < sizeof(signals) / sizeof(signals[0]); i++) {
+                sigaction(signals[i], NULL, &previousActions[i]);
+            }
+            signalsSaved = YES;
+        }
         struct sigaction action;
         memset(&action, 0, sizeof(action));
         action.sa_handler = TDSignalHandler;
         sigemptyset(&action.sa_mask);
-        action.sa_flags = SA_RESETHAND | SA_NODEFER;
+        action.sa_flags = SA_NODEFER;
         for (size_t i = 0; i < sizeof(signals) / sizeof(signals[0]); i++) {
-            sigaction(signals[i], &action, &previousActions[i]);
+            sigaction(signals[i], &action, NULL);
         }
-    } else {
+    } else if (signalsSaved) {
         for (size_t i = 0; i < sizeof(signals) / sizeof(signals[0]); i++) {
             sigaction(signals[i], &previousActions[i], NULL);
         }
     }
-    signalsInstalled = shouldInstallSignals;
 }
