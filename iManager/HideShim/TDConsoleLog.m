@@ -1,10 +1,8 @@
 #import "TDConsoleLog.h"
 
-#include <execinfo.h>
 #include <fcntl.h>
 #include <limits.h>
 #include <pthread.h>
-#include <signal.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
@@ -41,7 +39,6 @@ static NSString *TDConsoleLogBaseDocuments(void) {
 }
 
 static pthread_mutex_t gTDLogLock = PTHREAD_MUTEX_INITIALIZER;
-static NSUncaughtExceptionHandler *gTDPreviousExceptionHandler = NULL;
 
 static NSString *TDLogTimestamp(void) {
     struct timeval tv;
@@ -112,93 +109,3 @@ void TDConsoleLog(NSString *format, ...) {
     pthread_mutex_unlock(&gTDLogLock);
 }
 
-// 信号处理里只做异步信号安全的事: 直接 open/write, 不碰 NSString.
-static void TDWriteSignalCrash(int sig) {
-    char dir[PATH_MAX];
-    const char *override = getenv("TD_CONSOLE_LOG_DIR");
-    if (override && override[0] == '/') {
-        snprintf(dir, sizeof(dir), "%s", override);
-    } else {
-        char docs[PATH_MAX];
-        const char *lcHome = getenv("LC_HOME_PATH");
-        if (lcHome && lcHome[0] == '/') {
-            snprintf(docs, sizeof(docs), "%s/Documents", lcHome);
-        } else {
-            const char *captured = TDHostHomeDocumentsPath();
-            if (!captured || !captured[0]) return;
-            snprintf(docs, sizeof(docs), "%s", captured);
-        }
-        snprintf(dir, sizeof(dir), "%s/ConsoleLog", docs);
-    }
-    mkdir(dir, 0755);
-
-    struct timeval tv;
-    gettimeofday(&tv, NULL);
-    struct tm tm;
-    localtime_r(&tv.tv_sec, &tm);
-    char path[PATH_MAX];
-    snprintf(path, sizeof(path), "%s/crash-%04d%02d%02d-%02d%02d%02d-sig%d.log",
-             dir, tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
-             tm.tm_hour, tm.tm_min, tm.tm_sec, sig);
-    int fd = open(path, O_CREAT | O_WRONLY | O_TRUNC, 0644);
-    if (fd < 0) return;
-
-    char header[160];
-    int n = snprintf(header, sizeof(header), "signal=%d pid=%d\n", sig, (int)getpid());
-    if (n > 0) write(fd, header, (size_t)n);
-    void *frames[128];
-    int count = backtrace(frames, 128);
-    backtrace_symbols_fd(frames, count, fd);
-    close(fd);
-}
-
-static void TDSignalHandler(int sig) {
-    TDWriteSignalCrash(sig);
-    signal(sig, SIG_DFL);
-    raise(sig);
-}
-
-static void TDExceptionHandler(NSException *exception) {
-    NSString *dir = TDConsoleLogDirectory();
-    if (dir) {
-        NSString *name = [NSString stringWithFormat:@"crash-%@.log",
-                          [[TDLogTimestamp() stringByReplacingOccurrencesOfString:@" " withString:@"-"]
-                           stringByReplacingOccurrencesOfString:@":" withString:@""]];
-        NSArray<NSString *> *symbols = exception.callStackSymbols ?: @[];
-        NSString *body = [NSString stringWithFormat:@"exception: %@\nreason: %@\n\n%@\n",
-                          exception.name ?: @"(nil)",
-                          exception.reason ?: @"(nil)",
-                          [symbols componentsJoinedByString:@"\n"]];
-        [[body dataUsingEncoding:NSUTF8StringEncoding]
-            writeToFile:[dir stringByAppendingPathComponent:name] atomically:YES];
-    }
-    NSUncaughtExceptionHandler *previous = gTDPreviousExceptionHandler;
-    if (previous && previous != TDExceptionHandler) {
-        previous(exception);
-    }
-}
-
-void TDConsoleLogInstallCrashHandlers(void) {
-    static BOOL installed = NO;
-    if (installed) return;
-    installed = YES;
-
-    gTDPreviousExceptionHandler = NSGetUncaughtExceptionHandler();
-    NSSetUncaughtExceptionHandler(&TDExceptionHandler);
-
-    // 安装信号处理器会让 Reveil 这类检测器多出一条"可疑信号处理器".
-    // 默认只保留 NSException 通道; 需要信号回溯时在 iManager 实验性里打开.
-    const char *signalsEnabled = getenv("TD_CONSOLE_SIGNALS");
-    if (!signalsEnabled || signalsEnabled[0] != '1') {
-        return;
-    }
-    const int signals[] = {SIGABRT, SIGSEGV, SIGBUS, SIGILL, SIGFPE, SIGTRAP, SIGTERM, SIGINT, SIGHUP};
-    struct sigaction action;
-    memset(&action, 0, sizeof(action));
-    action.sa_handler = TDSignalHandler;
-    sigemptyset(&action.sa_mask);
-    action.sa_flags = SA_RESETHAND | SA_NODEFER;
-    for (size_t i = 0; i < sizeof(signals) / sizeof(signals[0]); i++) {
-        sigaction(signals[i], &action, NULL);
-    }
-}

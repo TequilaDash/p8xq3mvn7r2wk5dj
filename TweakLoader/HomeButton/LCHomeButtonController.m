@@ -150,16 +150,40 @@ static NSString *LCHomeButtonSetting(NSString *key) {
 // so it can save. zContainer's launch ends this process as soon as iOS has
 // zContainer open; if it's still here a few seconds later, opening didn't
 // work, so the app comes back to the foreground.
+// 扩展进程里打开宿主, 但不像 launchToGuestAppWithClassicMode 那样在完成后
+// raise(SIGKILL) —— 那会把扩展和所有多任务应用一起结束.
+- (void)openHostKeepingExtension {
+    NSString *bundleID = NSUserDefaults.lcMainBundle.bundleIdentifier ?: NSBundle.mainBundle.bundleIdentifier;
+    NSString *suffix = @".LiveProcess";
+    if ([bundleID hasSuffix:suffix]) {
+        bundleID = [bundleID substringToIndex:bundleID.length - suffix.length];
+    }
+    Class workspaceClass = NSClassFromString(@"LSApplicationWorkspace");
+    id workspace = workspaceClass ? ((id (*)(id, SEL))objc_msgSend)(workspaceClass, @selector(defaultWorkspace)) : nil;
+    SEL openSel = NSSelectorFromString(@"openApplicationWithBundleIdentifier:configuration:completionHandler:");
+    if (workspace && [workspace respondsToSelector:openSel]) {
+        void (^done)(BOOL, NSError *) = ^(BOOL success, NSError *error) {
+            NSLog(@"[LC] home button reopened zContainer: success=%d error=%@", success, error);
+        };
+        ((void (*)(id, SEL, NSString *, id, id))objc_msgSend)(workspace, openSel, bundleID, nil, done);
+        return;
+    }
+    // 回退: 用宿主 URL scheme 交给系统打开.
+    NSURL *url = [NSURL URLWithString:@"zcontainer://"];
+    UIApplication *application = [NSClassFromString(@"UIApplication") sharedApplication];
+    [application openURL:url options:@{} completionHandler:nil];
+}
+
 - (void)handlePress {
     BOOL always = [LCHomeButtonSetting(@"TDAssistiveTouchMode") isEqualToString:@"always"];
     // 全局显示模式下, 普通全屏启动的应用单击后先确认是否退出.
     if (always && !NSUserDefaults.isLiveProcess) {
-        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"退出当前应用？"
-                                                                       message:nil
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"退出应用"
+                                                                       message:@"退出当前应用并返回 zContainer 主界面？"
                                                                 preferredStyle:UIAlertControllerStyleAlert];
         [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
         __weak LCHomeButtonController *weakSelf = self;
-        [alert addAction:[UIAlertAction actionWithTitle:@"确认" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *action) {
+        [alert addAction:[UIAlertAction actionWithTitle:@"退出" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *action) {
             [weakSelf goBackToZContainer];
         }]];
         [self.buttonController presentViewController:alert animated:YES completion:nil];
@@ -184,7 +208,7 @@ static NSString *LCHomeButtonSetting(NSString *key) {
             CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),
                                                  CFSTR("com.kdt.livecontainer.minimizeAll"),
                                                  NULL, NULL, true);
-            [weakSelf openZContainerWith:sharedUtils];
+            [weakSelf openHostKeepingExtension];
         }];
         return;
     }

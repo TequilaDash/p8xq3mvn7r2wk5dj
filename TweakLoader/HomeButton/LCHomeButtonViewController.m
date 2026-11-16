@@ -71,7 +71,23 @@ static const CGFloat LCHomeButtonFlingCarry = 0.12;
     if (translation.y < 80 || velocity.y <= 0 || fabs(translation.y) < fabs(translation.x) * 1.5) {
         return;
     }
-    if (self.edgeHandler) self.edgeHandler();
+    UIWindow *window = self.view.window;
+    UIView *snapshot = [window snapshotViewAfterScreenUpdates:NO];
+    if (!snapshot) {
+        if (self.edgeHandler) self.edgeHandler();
+        return;
+    }
+    snapshot.frame = window.bounds;
+    snapshot.userInteractionEnabled = NO;
+    [window addSubview:snapshot];
+    __weak LCHomeButtonViewController *weakSelf = self;
+    [UIView animateWithDuration:0.3 delay:0 options:UIViewAnimationOptionCurveEaseIn animations:^{
+        snapshot.transform = CGAffineTransformMakeTranslation(0, window.bounds.size.height * 0.3);
+        snapshot.alpha = 0;
+    } completion:^(BOOL finished) {
+        [snapshot removeFromSuperview];
+        if (weakSelf.edgeHandler) weakSelf.edgeHandler();
+    }];
 }
 
 - (void)viewDidAppear:(BOOL)animated {

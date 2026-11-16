@@ -33,24 +33,6 @@ extern const char *TDHostHomeDocumentsPath(void);
 @implementation AppSceneViewController
 
 
-// 访客正常结束会留下这个标记; 没有标记说明进程是被信号/自身检测终止的.
-static BOOL TDGuestExitedNormally(void) {
-    NSString *path = [NSHomeDirectory() stringByAppendingPathComponent:@"Documents/.td_guest_exit_ok"];
-    return [[NSFileManager defaultManager] fileExistsAtPath:path];
-}
-
-static void TDHandleExtensionInterruption(AppSceneViewController *vc, void (^report)(NSError *)) {
-    if (!vc) return;
-    BOOL neverStarted = vc.pid <= 0 && !vc.isUserTerminating;
-    BOOL abnormalExit = vc.pid > 0 && !vc.isUserTerminating && !TDGuestExitedNormally();
-    [vc appTerminationCleanUp];
-    if (neverStarted) {
-        report([NSError errorWithDomain:@"LiveProcess" code:3 userInfo:@{NSLocalizedDescriptionKey: @"The app extension was interrupted before it finished starting."}]);
-    } else if (abnormalExit) {
-        report([NSError errorWithDomain:@"LiveProcess" code:4 userInfo:@{NSLocalizedDescriptionKey: @"The app terminated unexpectedly while running. If it has its own environment checks, see 崩溃日志 for details."}]);
-    }
-}
-
 - (instancetype)initWithBundleId:(NSString*)bundleId dataUUID:(NSString*)dataUUID delegate:(id<AppSceneViewControllerDelegate>)delegate {
     self = [super initWithNibName:nil bundle:nil];
     self.delegate = delegate;
@@ -130,11 +112,7 @@ static void TDHandleExtensionInterruption(AppSceneViewController *vc, void (^rep
         [weakSelf.delegate appSceneVC:weakSelf didInitializeWithError:error];
     }];
     [_extension setRequestInterruptionBlock:^(NSUUID *uuid) {
-        TDHandleExtensionInterruption(weakSelf, ^(NSError *error) {
-            AppSceneViewController *vc = weakSelf;
-            if (!vc) return;
-            [vc.delegate appSceneVC:vc didInitializeWithError:error];
-        });
+        [weakSelf appTerminationCleanUp];
     }];
     [_extension beginExtensionRequestWithInputItems:@[item] completion:^(NSUUID *identifier) {
         if(identifier) {
@@ -271,11 +249,7 @@ static void TDHandleExtensionInterruption(AppSceneViewController *vc, void (^rep
     
     __weak typeof(self) weakSelf = self;
     [self.extension setRequestInterruptionBlock:^(NSUUID *uuid) {
-        TDHandleExtensionInterruption(weakSelf, ^(NSError *error) {
-            AppSceneViewController *vc = weakSelf;
-            if (!vc) return;
-            [vc.delegate appSceneVC:vc didInitializeWithError:error];
-        });
+        [weakSelf appTerminationCleanUp];
     }];
     self.contentView.layer.anchorPoint = CGPointMake(0, 0);
     self.contentView.layer.position = CGPointMake(0, 0);
