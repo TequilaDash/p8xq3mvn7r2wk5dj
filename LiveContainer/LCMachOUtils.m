@@ -124,8 +124,8 @@ bool LCRepairTweakDependencies(const char *path, const char *substrateFrameworkP
     if (!path || !path[0] || !substrateFrameworkPath || !substrateFrameworkPath[0]) {
         return false;
     }
-    char rpath[PATH_MAX];
-    snprintf(rpath, sizeof(rpath), "%s", substrateFrameworkPath);
+    char *rpath = strdup(substrateFrameworkPath);
+    if (!rpath) return false;
     __block bool changed = false;
     LCParseMachO(path, false, ^(const char *slicePath, struct mach_header_64 *header, int fd, void *filePtr) {
         if (header->cputype != CPU_TYPE_ARM64) {
@@ -190,6 +190,7 @@ bool LCRepairTweakDependencies(const char *path, const char *substrateFrameworkP
             }
         }
     });
+    free(rpath);
     return changed;
 }
 

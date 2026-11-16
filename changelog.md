@@ -1,3 +1,10 @@
+20261117-021500 1.1.37 Update：
+1. 修复 1.1.36 构建失败与描述文件备份时机：只在需要重签时保存原始 `embedded.mobileprovision`，避免破坏已签名应用资源封印。
+2. 修复辅助触控显示/位置：保持单窗口，只在“始终显示”开启时显示，启动时固定回默认右侧；侧边下滑全局应用只保留手势。
+3. 修复 CydiaSubstrate 旧路径依赖：签名前把 tweak 的 `/Library/Frameworks/CydiaSubstrate.framework/CydiaSubstrate` 与 `@executable_path/libsubstrate.dylib` 统一改写成 `@rpath/CydiaSubstrate` 并补 LC rpath。
+4. 访客主 Bundle 的 `bundleIdentifier` 返回原始标识符；原始描述文件读取使用 `.td-original.mobileprovision`。
+5. 常驻进程按宿主 bundle 路径定位 `lcImageIndex`，避免镜像 index 0 指错。
+
 20261117-013000 1.1.36 Update：
 1. 签名前统一修复 tweak 的 CydiaSubstrate 依赖：把 `/Library/Frameworks/CydiaSubstrate.framework/CydiaSubstrate` 与 `@executable_path/libsubstrate.dylib` 改写为 `@rpath/CydiaSubstrate`，并补 LC 的 CydiaSubstrate framework rpath。
 2. 访客主 Bundle 的 `bundleIdentifier` 在内存中返回原始标识符，不再暴露被改写的宿主标识符。
