@@ -19,12 +19,21 @@ enum TDHideStatusProvider {
             dyldState = .partial
             dyldTitle = "dyld 镜像裁剪 (\(enabled)/\(total))"
         }
+        let envSpoof = envSpoofEnabled()
         return [
             .init(id: "env", icon: "leaf", title: "访客环境清洗", state: .builtIn),
             .init(id: "dyld", icon: "square.stack.3d.up.slash", title: dyldTitle, state: dyldState),
-            .init(id: "spoof", icon: "theatermasks", title: "伪值层", state: globalOn ? .active : .off),
+            .init(id: "spoof", icon: "theatermasks",
+                  title: envSpoof ? "伪值层 (环境伪值已开启)" : "伪值层 (环境伪值已关闭)",
+                  state: envSpoof ? .active : .off),
             .init(id: "tweaks", icon: "folder.badge.questionmark", title: "Tweaks 目录隐藏", state: .builtIn),
         ]
+    }
+
+    // 与 LCBootstrap 读取同一个 app group 键; 缺省为开启.
+    private static func envSpoofEnabled() -> Bool {
+        guard let defaults = UserDefaults(suiteName: LCSharedUtils.appGroupID()) else { return true }
+        return (defaults.object(forKey: "TDEnvSpoof") as? Bool) ?? true
     }
 
     private static func globalHideEnabled() -> Bool {

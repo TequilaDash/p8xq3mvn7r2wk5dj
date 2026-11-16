@@ -655,6 +655,7 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
     void (^dlopenBlock)(void) = ^{
         appHandle = dlopen_nolock(appExecPath, RTLD_LAZY|RTLD_GLOBAL|RTLD_FIRST);
     };
+    TDAppendLaunchLog([NSString stringWithFormat:@"dlopen start path=%s", appExecPath]);
     
     BOOL is27up = false;
     if(@available(iOS 27, *)) { is27up = true; }
@@ -705,22 +706,26 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
     if (!is32bit && ![appBundle loadAndReturnError:&error]) {
         appError = error.localizedDescription;
         NSLog(@"[LCBootstrap] loading bundle failed: %@", error);
+        TDAppendLaunchLog([NSString stringWithFormat:@"bundle load failed: %@", appError]);
         *path = oldPath;
         return appError;
     }
     NSLog(@"[LCBootstrap] loaded bundle");
+    TDAppendLaunchLog(@"bundle loaded");
 
     // Find main()
     appMain = getAppEntryPoint(appHandle);
     if (!appMain) {
         appError = @"Could not find the main entry point";
         NSLog(@"[LCBootstrap] %@", appError);
+        TDAppendLaunchLog([NSString stringWithFormat:@"entry point failed: %@", appError]);
         *path = oldPath;
         return appError;
     }
 
     // Go!
     NSLog(@"[LCBootstrap] jumping to main %p", appMain);
+    TDAppendLaunchLog([NSString stringWithFormat:@"jump main %p", appMain]);
     int ret;
     if(!is32bit) {
         argv[0] = (char *)appExecPath;
