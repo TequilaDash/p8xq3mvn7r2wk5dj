@@ -1,3 +1,7 @@
+20261116-121221 1.1.25 Update：
+1. 修复关闭全局隐藏后任意 App 启动闪退：App 自带的 fishhook（微信等）会重绑 open/stat，我们按符号调用会与其 hook 互相递归导致栈溢出；现在 open/openat/stat/lstat/fstatat/access/opendir/realpath/readlink/mkdir/rename/unlink/getattrlist/getmntinfo/getuid 等全部改为加载时捕获真实地址。
+2. ConsoleLog 增加多选/全选、导出、删除；单个日志分享的是真实文件，多文件导出整个 ConsoleLog 文件夹，不再把内容当文本发送。
+
 20261116-115542 1.1.24 Update：
 1. 隐藏状态页的“伪值层”改为读取实验性「环境伪值」开关，不再错误地跟随全局隐藏显示。
 2. 启动面包屑补密：dlopen 起点、bundle 加载、入口跳转与各阶段失败原因都写入 ConsoleLog，用于定位 ESign 这类在 guest index 之前就退出的应用。

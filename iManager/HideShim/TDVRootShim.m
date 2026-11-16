@@ -67,6 +67,57 @@ extern uid_t tdv_real_getuid(void) __asm("_getuid");
 extern uid_t tdv_real_geteuid(void) __asm("_geteuid");
 extern gid_t tdv_real_getgid(void) __asm("_getgid");
 extern gid_t tdv_real_getegid(void) __asm("_getegid");
+static decltype(&tdv_real_open) gTDVReal_open;
+static decltype(&tdv_real_openat) gTDVReal_openat;
+static decltype(&tdv_real_open_nocancel) gTDVReal_open_nocancel;
+static decltype(&tdv_real_stat) gTDVReal_stat;
+static decltype(&tdv_real_lstat) gTDVReal_lstat;
+static decltype(&tdv_real_fstatat) gTDVReal_fstatat;
+static decltype(&tdv_real_access) gTDVReal_access;
+static decltype(&tdv_real_faccessat) gTDVReal_faccessat;
+static decltype(&tdv_real_realpath) gTDVReal_realpath;
+static decltype(&tdv_real_readlink) gTDVReal_readlink;
+static decltype(&tdv_real_opendir) gTDVReal_opendir;
+static decltype(&tdv_real_mkdir) gTDVReal_mkdir;
+static decltype(&tdv_real_rename) gTDVReal_rename;
+static decltype(&tdv_real_unlink) gTDVReal_unlink;
+static decltype(&tdv_real_getattrlist) gTDVReal_getattrlist;
+static decltype(&tdv_real_getmntinfo) gTDVReal_getmntinfo;
+static decltype(&tdv_real_getmntinfo_r_np) gTDVReal_getmntinfo_r_np;
+static decltype(&tdv_real_getuid) gTDVReal_getuid;
+static decltype(&tdv_real_geteuid) gTDVReal_geteuid;
+static decltype(&tdv_real_getgid) gTDVReal_getgid;
+static decltype(&tdv_real_getegid) gTDVReal_getegid;
+
+// 其它 tweak / App (WeChat, ESign 等) 会 fishhook open/stat 等符号. 我们若继续
+// 按符号调用, 就会和对方的 hook 互相递归(真机 WeChat 已复现栈溢出).
+// 镜像加载时把真实地址存进自有变量, 之后调用走变量.
+#define TDV_REAL(name) (gTDVReal_##name ? gTDVReal_##name : tdv_real_##name)
+
+__attribute__((constructor)) static void tdv_capture_real_paths(void) {
+    gTDVReal_open = tdv_real_open;
+    gTDVReal_openat = tdv_real_openat;
+    gTDVReal_open_nocancel = tdv_real_open_nocancel;
+    gTDVReal_stat = tdv_real_stat;
+    gTDVReal_lstat = tdv_real_lstat;
+    gTDVReal_fstatat = tdv_real_fstatat;
+    gTDVReal_access = tdv_real_access;
+    gTDVReal_faccessat = tdv_real_faccessat;
+    gTDVReal_realpath = tdv_real_realpath;
+    gTDVReal_readlink = tdv_real_readlink;
+    gTDVReal_opendir = tdv_real_opendir;
+    gTDVReal_mkdir = tdv_real_mkdir;
+    gTDVReal_rename = tdv_real_rename;
+    gTDVReal_unlink = tdv_real_unlink;
+    gTDVReal_getattrlist = tdv_real_getattrlist;
+    gTDVReal_getmntinfo = tdv_real_getmntinfo;
+    gTDVReal_getmntinfo_r_np = tdv_real_getmntinfo_r_np;
+    gTDVReal_getuid = tdv_real_getuid;
+    gTDVReal_geteuid = tdv_real_geteuid;
+    gTDVReal_getgid = tdv_real_getgid;
+    gTDVReal_getegid = tdv_real_getegid;
+}
+
 
 #pragma mark - 访客可见性裁剪 (M37b: 隐藏 Tweaks 目录)
 
@@ -123,9 +174,9 @@ static int tdv_open(const char *path, int flags, ...) {
     }
     const char *use = tdv_mapped(path, buf, sizeof(buf));
     if (hasMode) {
-        return tdv_real_open(use, flags, mode);
+        return TDV_REAL(open)(use, flags, mode);
     }
-    return tdv_real_open(use, flags);
+    return TDV_REAL(open)(use, flags);
 }
 
 static int tdv_openat(int fd, const char *path, int flags, ...) {
@@ -146,9 +197,9 @@ static int tdv_openat(int fd, const char *path, int flags, ...) {
     // 相对路径不映射: 语义取决于 dirfd, 无法安全改写.
     const char *use = tdv_mapped(path, buf, sizeof(buf));
     if (hasMode) {
-        return tdv_real_openat(fd, use, flags, mode);
+        return TDV_REAL(openat)(fd, use, flags, mode);
     }
-    return tdv_real_openat(fd, use, flags);
+    return TDV_REAL(openat)(fd, use, flags);
 }
 
 static int tdv_open_nocancel(const char *path, int flags, ...) {
@@ -163,9 +214,9 @@ static int tdv_open_nocancel(const char *path, int flags, ...) {
     char buf[PATH_MAX];
     const char *use = tdv_mapped(path, buf, sizeof(buf));
     if (hasMode) {
-        return tdv_real_open_nocancel(use, flags, mode);
+        return TDV_REAL(open_nocancel)(use, flags, mode);
     }
-    return tdv_real_open_nocancel(use, flags);
+    return TDV_REAL(open_nocancel)(use, flags);
 }
 
 static int tdv_stat(const char *path, struct stat *sb) {
@@ -175,7 +226,7 @@ static int tdv_stat(const char *path, struct stat *sb) {
         return -1;
     }
     char buf[PATH_MAX];
-    return tdv_real_stat(tdv_mapped(path, buf, sizeof(buf)), sb);
+    return TDV_REAL(stat)(tdv_mapped(path, buf, sizeof(buf)), sb);
 }
 
 static int tdv_lstat(const char *path, struct stat *sb) {
@@ -185,7 +236,7 @@ static int tdv_lstat(const char *path, struct stat *sb) {
         return -1;
     }
     char buf[PATH_MAX];
-    return tdv_real_lstat(tdv_mapped(path, buf, sizeof(buf)), sb);
+    return TDV_REAL(lstat)(tdv_mapped(path, buf, sizeof(buf)), sb);
 }
 
 static int tdv_fstatat(int fd, const char *path, struct stat *sb, int flags) {
@@ -195,10 +246,10 @@ static int tdv_fstatat(int fd, const char *path, struct stat *sb, int flags) {
         return -1;
     }
     if (!path || path[0] != '/') {
-        return tdv_real_fstatat(fd, path, sb, flags);
+        return TDV_REAL(fstatat)(fd, path, sb, flags);
     }
     char buf[PATH_MAX];
-    return tdv_real_fstatat(fd, tdv_mapped(path, buf, sizeof(buf)), sb, flags);
+    return TDV_REAL(fstatat)(fd, tdv_mapped(path, buf, sizeof(buf)), sb, flags);
 }
 
 static int tdv_access(const char *path, int mode) {
@@ -208,15 +259,15 @@ static int tdv_access(const char *path, int mode) {
         return -1;
     }
     char buf[PATH_MAX];
-    return tdv_real_access(tdv_mapped(path, buf, sizeof(buf)), mode);
+    return TDV_REAL(access)(tdv_mapped(path, buf, sizeof(buf)), mode);
 }
 
 static int tdv_faccessat(int fd, const char *path, int mode, int flags) {
     if (!path || path[0] != '/') {
-        return tdv_real_faccessat(fd, path, mode, flags);
+        return TDV_REAL(faccessat)(fd, path, mode, flags);
     }
     char buf[PATH_MAX];
-    return tdv_real_faccessat(fd, tdv_mapped(path, buf, sizeof(buf)), mode, flags);
+    return TDV_REAL(faccessat)(fd, tdv_mapped(path, buf, sizeof(buf)), mode, flags);
 }
 
 static char *tdv_realpath(const char *path, char *resolved) {
@@ -226,12 +277,12 @@ static char *tdv_realpath(const char *path, char *resolved) {
         return NULL;
     }
     char buf[PATH_MAX];
-    return tdv_real_realpath(tdv_mapped(path, buf, sizeof(buf)), resolved);
+    return TDV_REAL(realpath)(tdv_mapped(path, buf, sizeof(buf)), resolved);
 }
 
 static ssize_t tdv_readlink(const char *path, char *buf, size_t bufSize) {
     char mapped[PATH_MAX];
-    return tdv_real_readlink(tdv_mapped(path, mapped, sizeof(mapped)), buf, bufSize);
+    return TDV_REAL(readlink)(tdv_mapped(path, mapped, sizeof(mapped)), buf, bufSize);
 }
 
 static DIR *tdv_opendir(const char *path) {
@@ -241,12 +292,12 @@ static DIR *tdv_opendir(const char *path) {
         return NULL;
     }
     char buf[PATH_MAX];
-    return tdv_real_opendir(tdv_mapped(path, buf, sizeof(buf)));
+    return TDV_REAL(opendir)(tdv_mapped(path, buf, sizeof(buf)));
 }
 
 static int tdv_mkdir(const char *path, mode_t mode) {
     char buf[PATH_MAX];
-    return tdv_real_mkdir(tdv_mapped(path, buf, sizeof(buf)), mode);
+    return TDV_REAL(mkdir)(tdv_mapped(path, buf, sizeof(buf)), mode);
 }
 
 static int tdv_rename(const char *from, const char *to) {
@@ -254,18 +305,18 @@ static int tdv_rename(const char *from, const char *to) {
     char toBuf[PATH_MAX];
     const char *newFrom = tdv_mapped(from, fromBuf, sizeof(fromBuf));
     const char *newTo = tdv_mapped(to, toBuf, sizeof(toBuf));
-    return tdv_real_rename(newFrom, newTo);
+    return TDV_REAL(rename)(newFrom, newTo);
 }
 
 static int tdv_unlink(const char *path) {
     char buf[PATH_MAX];
-    return tdv_real_unlink(tdv_mapped(path, buf, sizeof(buf)));
+    return TDV_REAL(unlink)(tdv_mapped(path, buf, sizeof(buf)));
 }
 
 static int tdv_getattrlist(const char *path, void *attrList, void *attrBuf,
                            size_t attrBufSize, unsigned long options) {
     char buf[PATH_MAX];
-    return tdv_real_getattrlist(tdv_mapped(path, buf, sizeof(buf)),
+    return TDV_REAL(getattrlist)(tdv_mapped(path, buf, sizeof(buf)),
                                 attrList, attrBuf, attrBufSize, options);
 }
 
@@ -296,7 +347,7 @@ static void tdv_fill_fake_mount(struct statfs *fs) {
 
 static int tdv_getmntinfo(struct statfs **mntbufp, int flags) {
     struct statfs *raw = NULL;
-    int n = tdv_real_getmntinfo(&raw, flags);
+    int n = TDV_REAL(getmntinfo)(&raw, flags);
     if (n <= 0) {
         if (mntbufp) {
             *mntbufp = raw;
@@ -338,7 +389,7 @@ static int tdv_getmntinfo(struct statfs **mntbufp, int flags) {
 
 static int tdv_getmntinfo_r_np(struct statfs **mntbufp, int flags) {
     struct statfs *raw = NULL;
-    int n = tdv_real_getmntinfo_r_np(&raw, flags);
+    int n = TDV_REAL(getmntinfo_r_np)(&raw, flags);
     if (n <= 0) {
         if (mntbufp) {
             *mntbufp = raw;
@@ -374,19 +425,19 @@ static int tdv_getmntinfo_r_np(struct statfs **mntbufp, int flags) {
 #pragma mark - 凭据伪造 (仅 full)
 
 static uid_t tdv_getuid(void) {
-    return TDVRootCurrentMode() == TDVRootModeFull ? 0 : tdv_real_getuid();
+    return TDVRootCurrentMode() == TDVRootModeFull ? 0 : TDV_REAL(getuid)();
 }
 
 static uid_t tdv_geteuid(void) {
-    return TDVRootCurrentMode() == TDVRootModeFull ? 0 : tdv_real_geteuid();
+    return TDVRootCurrentMode() == TDVRootModeFull ? 0 : TDV_REAL(geteuid)();
 }
 
 static gid_t tdv_getgid(void) {
-    return TDVRootCurrentMode() == TDVRootModeFull ? 0 : tdv_real_getgid();
+    return TDVRootCurrentMode() == TDVRootModeFull ? 0 : TDV_REAL(getgid)();
 }
 
 static gid_t tdv_getegid(void) {
-    return TDVRootCurrentMode() == TDVRootModeFull ? 0 : tdv_real_getegid();
+    return TDVRootCurrentMode() == TDVRootModeFull ? 0 : TDV_REAL(getegid)();
 }
 
 #pragma mark - sysctl 伪值表 (TD_SYSCTL_SPOOF)
