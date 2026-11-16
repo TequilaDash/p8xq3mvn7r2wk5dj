@@ -428,11 +428,6 @@ static UIImage* LCDrawHomeScreenIcon(NSString* bundlePath, BOOL isDarkIcon) {
     }
     NSFileManager* fm = NSFileManager.defaultManager;
     NSString *execPath = [NSString stringWithFormat:@"%@/%@", appPath, _infoPlist[@"CFBundleExecutable"]];
-    NSString *originalProfilePath = [appPath stringByAppendingPathComponent:@".td-original.mobileprovision"];
-    NSString *profilePath = [appPath stringByAppendingPathComponent:@"embedded.mobileprovision"];
-    if ([fm fileExistsAtPath:profilePath] && ![fm fileExistsAtPath:originalProfilePath]) {
-        [fm copyItemAtPath:profilePath toPath:originalProfilePath error:nil];
-    }
     
     // Update patch
     int currentPatchRev = 7;
@@ -444,6 +439,11 @@ static UIImage* LCDrawHomeScreenIcon(NSString* bundlePath, BOOL isDarkIcon) {
         needPatch = true;
     }
     if (needPatch || forceSign) {
+        NSString *originalProfilePath = [appPath stringByAppendingPathComponent:@".td-original.mobileprovision"];
+        NSString *profilePath = [appPath stringByAppendingPathComponent:@"embedded.mobileprovision"];
+        if ([fm fileExistsAtPath:profilePath] && ![fm fileExistsAtPath:originalProfilePath]) {
+            [fm copyItemAtPath:profilePath toPath:originalProfilePath error:nil];
+        }
         // copy-delete-move to avoid EXC_BAD_ACCESS (SIGKILL - CODESIGNING)
         NSString *backupPath = [NSString stringWithFormat:@"%@/%@_LiveContainerPatchBackUp", appPath, _infoPlist[@"CFBundleExecutable"]];
         NSError *err = nil;

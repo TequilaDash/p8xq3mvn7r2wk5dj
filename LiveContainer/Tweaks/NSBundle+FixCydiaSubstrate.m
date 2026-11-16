@@ -1,7 +1,10 @@
 #import <Foundation/Foundation.h>
 #import "Tweaks.h"
-#import "../utils.h"
 #import <objc/runtime.h>
+
+@interface NSUserDefaults (LiveContainerGuestID)
++ (NSString *)lcGuestAppId;
+@end
 
 @implementation NSString(LiveContainer)
 - (NSString *)lc_realpath {
