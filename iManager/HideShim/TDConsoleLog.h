@@ -9,4 +9,7 @@ NSString * _Nullable TDConsoleLogDirectory(void);
 /// 只用于低频启动面包屑, 不做 NSLog 全量劫持.
 void TDConsoleLog(NSString *format, ...) NS_FORMAT_FUNCTION(1, 2);
 
+/// 捕获未处理异常与崩溃信号并写入 ConsoleLog, 不做任何弹窗.
+void TDConsoleLogInstallCrashHandlers(void);
+
 NS_ASSUME_NONNULL_END

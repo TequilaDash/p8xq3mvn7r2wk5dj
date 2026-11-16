@@ -880,6 +880,7 @@ int LiveContainerMain(int argc, char *argv[]) {
 
     }
     NSSetUncaughtExceptionHandler(&exceptionHandler);
+    TDConsoleLogInstallCrashHandlers();
     if (selectedApp) {
         [lcUserDefaults removeObjectForKey:@"selected"];
         [lcUserDefaults removeObjectForKey:@"selectedContainer"];
