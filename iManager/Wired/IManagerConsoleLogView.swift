@@ -123,12 +123,21 @@ struct IManagerConsoleLogView: View {
     }
 
     private func exportSelected() {
-        // 单文件导出文件本身; 多文件导出 ConsoleLog 文件夹.
+        // 单文件: 导出文件本身. 多文件: 建一个只包含选中日志的临时文件夹再分享.
         if selected.count == 1, let name = selected.first, let url = fileURL(name) {
             presentShare(url)
-        } else if let directory = Self.directories.first(where: { FileManager.default.fileExists(atPath: $0) }) {
-            presentShare(URL(fileURLWithPath: directory))
+            return
         }
+        let stamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
+        let exportDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ConsoleLog-\(stamp)", isDirectory: true)
+        let fm = FileManager.default
+        try? fm.createDirectory(at: exportDir, withIntermediateDirectories: true)
+        for name in selected {
+            guard let source = fileURL(name) else { continue }
+            try? fm.copyItem(at: source, to: exportDir.appendingPathComponent(name))
+        }
+        presentShare(exportDir)
     }
 
     private func presentShare(_ url: URL) {
