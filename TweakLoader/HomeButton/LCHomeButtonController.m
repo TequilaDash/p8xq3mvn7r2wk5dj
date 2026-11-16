@@ -136,6 +136,17 @@ static const NSTimeInterval LCHomeButtonLeaveTimeout = 4;
     if (self.isLeaving || ![sharedUtils respondsToSelector:@selector(launchToGuestAppWithClassicMode:)]) {
         return;
     }
+    // 多任务 (LiveProcess) 里按主屏只把宿主 App 拉到前台, 不清 selected、不调用
+    // departure.leave: 那会结束扩展进程, 让其它多任务应用一起被杀. 期望是所有
+    // 多任务窗口保持存活, 只是最小化到 zContainer 后面.
+    if (NSUserDefaults.isLiveProcess) {
+        self.isLeaving = YES;
+        __weak LCHomeButtonController *weakSelf = self;
+        [self.buttonController fadeOutWithCompletion:^{
+            [weakSelf openZContainerWith:sharedUtils];
+        }];
+        return;
+    }
     self.isLeaving = YES;
     __weak LCHomeButtonController *weakSelf = self;
     [self.buttonController fadeOutWithCompletion:^{

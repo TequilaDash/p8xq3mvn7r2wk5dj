@@ -192,7 +192,7 @@ void TDConsoleLogInstallCrashHandlers(void) {
     if (!signalsEnabled || signalsEnabled[0] != '1') {
         return;
     }
-    const int signals[] = {SIGABRT, SIGSEGV, SIGBUS, SIGILL, SIGFPE, SIGTRAP};
+    const int signals[] = {SIGABRT, SIGSEGV, SIGBUS, SIGILL, SIGFPE, SIGTRAP, SIGTERM, SIGINT, SIGHUP};
     struct sigaction action;
     memset(&action, 0, sizeof(action));
     action.sa_handler = TDSignalHandler;

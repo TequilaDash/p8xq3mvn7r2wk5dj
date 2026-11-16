@@ -50,27 +50,29 @@ struct IManagerConsoleLogView: View {
         }
         .navigationTitle("ConsoleLog")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .topBarLeading) {
-                if selecting {
+        .safeAreaInset(edge: .bottom) {
+            if selecting {
+                HStack(spacing: 12) {
                     Button(selected.count == files.count ? "取消全选" : "全选") {
                         if selected.count == files.count { selected.removeAll() } else { selected = Set(files) }
                     }
+                    Spacer()
+                    Button("导出") { exportSelected() }.disabled(selected.isEmpty)
+                    Button("删除", role: .destructive) { deleteSelected() }.disabled(selected.isEmpty)
+                    Button("完成") { selecting = false; selected.removeAll() }
                 }
-            }
-            ToolbarItem(placement: .topBarTrailing) {
-                if selecting {
-                    HStack {
-                        Button("导出") { exportSelected() }.disabled(selected.isEmpty)
-                        Button("删除", role: .destructive) { deleteSelected() }.disabled(selected.isEmpty)
-                        Button("完成") { selecting = false; selected.removeAll() }
-                    }
-                } else {
-                    HStack {
-                        Button("选择") { selecting = true }
-                        Button("刷新") { refresh() }
-                    }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .background(.bar)
+            } else {
+                HStack(spacing: 12) {
+                    Spacer()
+                    Button("选择") { selecting = true }
+                    Button("刷新") { refresh() }
                 }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .background(.bar)
             }
         }
         .onAppear { refresh() }
