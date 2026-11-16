@@ -1,3 +1,10 @@
+20261117-013000 1.1.36 Update：
+1. 签名前统一修复 tweak 的 CydiaSubstrate 依赖：把 `/Library/Frameworks/CydiaSubstrate.framework/CydiaSubstrate` 与 `@executable_path/libsubstrate.dylib` 改写为 `@rpath/CydiaSubstrate`，并补 LC 的 CydiaSubstrate framework rpath。
+2. 访客主 Bundle 的 `bundleIdentifier` 在内存中返回原始标识符，不再暴露被改写的宿主标识符。
+3. 安装/重签前保存原始 `embedded.mobileprovision`，访客读取该文件时返回原始副本，避免静态哈希被重签破坏。
+4. 常驻进程按宿主 bundle 路径定位 `lcImageIndex`，不再按第一个 `MH_EXECUTE` 猜测，避免镜像枚举 index 0 指向旧访客/宿主。
+5. 版本号升至 1.1.36。
+
 20261116-231500 1.1.35 Update：
 1. 修正签名策略：恢复上游“已签则跳过”的 tweak 预检，验签改为 pread 读取 Mach-O，不再 mmap 未签名页；不再每次启动全量重签。
 2. 侧边下滑“全局应用”接入宿主现成设置呈现链路：访客写共享标记并发 Darwin 通知，宿主用 HomeScreenPresentation 打开设置页，而不是 guest 内自造转场。

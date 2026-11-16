@@ -1,5 +1,6 @@
 #import <Foundation/Foundation.h>
 #import "Tweaks.h"
+#import "../utils.h"
 #import <objc/runtime.h>
 
 @implementation NSString(LiveContainer)
@@ -22,3 +23,26 @@
     return self;
 }
 @end
+
+static IMP origBundleIdentifier = NULL;
+
+static NSString *hook_bundleIdentifier(NSBundle *bundle, SEL _cmd) {
+    NSString *guestID = NSUserDefaults.lcGuestAppId;
+    if (guestID.length > 0) {
+        NSBundle *mainBundle = NSBundle.mainBundle;
+        if (bundle == mainBundle || [bundle.bundlePath isEqualToString:mainBundle.bundlePath]) {
+            return guestID;
+        }
+    }
+    return ((NSString *(*)(id, SEL))origBundleIdentifier)(bundle, _cmd);
+}
+
+void NSBundleGuestHooksInit(void) {
+    static bool installed = false;
+    if (installed) return;
+    installed = true;
+    Method method = class_getInstanceMethod(NSBundle.class, @selector(bundleIdentifier));
+    if (!method) return;
+    origBundleIdentifier = method_getImplementation(method);
+    method_setImplementation(method, (IMP)hook_bundleIdentifier);
+}

@@ -66,7 +66,13 @@ extension LCUtils {
                 continue
             }
 
-            if !force, checkCodeSignature((fileURL.path as NSString).utf8String) {
+            let substrateFramework = (Bundle.main.bundlePath as NSString)
+                .appendingPathComponent("Frameworks/CydiaSubstrate.framework")
+            let repaired = LCRepairTweakDependencies(
+                (fileURL.path as NSString).utf8String,
+                (substrateFramework as NSString).utf8String
+            )
+            if !repaired, !force, checkCodeSignature((fileURL.path as NSString).utf8String) {
                 continue;
             }
             filesToSign.append(fileURL)

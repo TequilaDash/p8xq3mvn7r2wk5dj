@@ -12,6 +12,7 @@ void NSFMGuestHooksInit(void) {
     NSDictionary* infoDict = [NSUserDefaults guestContainerInfo];
     isolateAppGroup = [infoDict[@"isolateAppGroup"] boolValue];
     swizzle(NSFileManager.class, @selector(containerURLForSecurityApplicationGroupIdentifier:), @selector(hook_containerURLForSecurityApplicationGroupIdentifier:));
+    swizzle(NSFileManager.class, @selector(contentsAtPath:), @selector(hook_contentsAtPath:));
     
     /// To fix https://github.com/LiveContainer/LiveContainer/issues/888 i.e. WebKit being unable to save cookie issue, we have to hook -[NSFileManager createDirectoryAtPath:withIntermediateDirectories:attributes:error:] so that WebKit still creates bookmark for the symlinked lc's cookies folder, which is resolved by the kernel to the app's cookies folder
     /// see https://github.com/apple-oss-distributions/WebKit/blob/0c8cf3581e5c01d970ea411128007c9325ba2d48/Source/WebKit/Shared/Cocoa/SandboxExtensionCocoa.mm#L159 and https://github.com/apple-oss-distributions/WebKit/blob/0c8cf3581e5c01d970ea411128007c9325ba2d48/Source/WebKit/UIProcess/WebsiteData/WebsiteDataStore.cpp#L2225
@@ -48,6 +49,16 @@ void NSFMGuestHooksInit(void) {
     }
     [NSFileManager.defaultManager createDirectoryAtURL:[result URLByAppendingPathComponent:@"Library/Caches"] withIntermediateDirectories:YES attributes:nil error:nil];
     return result;
+}
+
+- (nullable NSData *)hook_contentsAtPath:(NSString *)path {
+    if ([path.lastPathComponent isEqualToString:@"embedded.mobileprovision"]) {
+        NSString *original = [path.stringByDeletingLastPathComponent stringByAppendingPathComponent:@".td-original.mobileprovision"];
+        if ([NSFileManager.defaultManager fileExistsAtPath:original]) {
+            return [NSData dataWithContentsOfFile:original];
+        }
+    }
+    return [self hook_contentsAtPath:path];
 }
 
 - (bool)hook_createDirectoryAtPath:(NSString *)path withIntermediateDirectories:(BOOL)createIntermediates attributes:(NSDictionary<NSFileAttributeKey,id> *)attributes error:(NSError *__autoreleasing  _Nullable *)error {

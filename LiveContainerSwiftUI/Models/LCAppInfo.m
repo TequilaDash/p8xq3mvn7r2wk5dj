@@ -428,6 +428,11 @@ static UIImage* LCDrawHomeScreenIcon(NSString* bundlePath, BOOL isDarkIcon) {
     }
     NSFileManager* fm = NSFileManager.defaultManager;
     NSString *execPath = [NSString stringWithFormat:@"%@/%@", appPath, _infoPlist[@"CFBundleExecutable"]];
+    NSString *originalProfilePath = [appPath stringByAppendingPathComponent:@".td-original.mobileprovision"];
+    NSString *profilePath = [appPath stringByAppendingPathComponent:@"embedded.mobileprovision"];
+    if ([fm fileExistsAtPath:profilePath] && ![fm fileExistsAtPath:originalProfilePath]) {
+        [fm copyItemAtPath:profilePath toPath:originalProfilePath error:nil];
+    }
     
     // Update patch
     int currentPatchRev = 7;

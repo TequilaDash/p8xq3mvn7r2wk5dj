@@ -115,6 +115,84 @@ void LCPatchAddRPath(const char *path, struct mach_header_64 *header) {
     insertRPathCommand("@loader_path", header);
 }
 
+// 旧 tweak 常把 CydiaSubstrate 的依赖名写死成
+// /Library/Frameworks/CydiaSubstrate.framework/CydiaSubstrate 或
+// @executable_path/libsubstrate.dylib；这两条在 zContainer 沙盒里都不存在。
+// 统一改写成 @rpath/CydiaSubstrate，并补一条指向 LC CydiaSubstrate.framework
+// 的 LC_RPATH，签名前完成，运行时就能解析到 TweakLoader 已加载的实现。
+bool LCRepairTweakDependencies(const char *path, const char *substrateFrameworkPath) {
+    if (!path || !path[0] || !substrateFrameworkPath || !substrateFrameworkPath[0]) {
+        return false;
+    }
+    char rpath[PATH_MAX];
+    snprintf(rpath, sizeof(rpath), "%s", substrateFrameworkPath);
+    __block bool changed = false;
+    LCParseMachO(path, false, ^(const char *slicePath, struct mach_header_64 *header, int fd, void *filePtr) {
+        if (header->cputype != CPU_TYPE_ARM64) {
+            return;
+        }
+        bool hasRPath = false;
+        struct load_command *command = (struct load_command *)(header + 1);
+        for (uint32_t i = 0; i < header->ncmds; i++) {
+            if (command->cmdsize < sizeof(struct load_command)) {
+                break;
+            }
+            if (command->cmd == LC_RPATH && command->cmdsize >= sizeof(struct rpath_command)) {
+                struct rpath_command *rpathCommand = (struct rpath_command *)command;
+                if (rpathCommand->path.offset < command->cmdsize) {
+                    const char *existing = (const char *)command + rpathCommand->path.offset;
+                    if (strncmp(existing, rpath, command->cmdsize - rpathCommand->path.offset) == 0) {
+                        hasRPath = true;
+                    }
+                }
+            }
+            if (command->cmd == LC_LOAD_DYLIB || command->cmd == LC_LOAD_WEAK_DYLIB) {
+                struct dylib_command *dylib = (struct dylib_command *)command;
+                if (dylib->dylib.name.offset < command->cmdsize) {
+                    char *name = (char *)command + dylib->dylib.name.offset;
+                    size_t capacity = command->cmdsize - dylib->dylib.name.offset;
+                    bool needsRepair = strstr(name, "CydiaSubstrate.framework/CydiaSubstrate") != NULL ||
+                                       strstr(name, "libsubstrate.dylib") != NULL;
+                    const char *replacement = "@rpath/CydiaSubstrate";
+                    if (needsRepair && capacity > strlen(replacement)) {
+                        bzero(name, capacity);
+                        strncpy(name, replacement, capacity - 1);
+                        changed = true;
+                    }
+                }
+            }
+            command = (struct load_command *)((char *)command + command->cmdsize);
+        }
+        if (!hasRPath) {
+            uint32_t textOffset = 0;
+            struct load_command *scan = (struct load_command *)(header + 1);
+            for (uint32_t i = 0; i < header->ncmds; i++) {
+                if (scan->cmd == LC_SEGMENT_64 && scan->cmdsize >= sizeof(struct segment_command_64)) {
+                    struct segment_command_64 *segment = (struct segment_command_64 *)scan;
+                    if (strcmp(segment->segname, "__TEXT") == 0) {
+                        for (uint32_t j = 0; j < segment->nsects; j++) {
+                            struct section_64 *section = (struct section_64 *)((char *)scan + sizeof(struct segment_command_64) + sizeof(struct section_64) * j);
+                            if (strcmp(section->sectname, "__text") == 0) {
+                                textOffset = section->offset;
+                                break;
+                            }
+                        }
+                    }
+                }
+                scan = (struct load_command *)((char *)scan + scan->cmdsize);
+            }
+            size_t commandSize = sizeof(struct rpath_command) + rnd32((uint32_t)strlen(rpath) + 1, 8);
+            size_t freeSpace = textOffset > (off_t)header->sizeofcmds
+                ? textOffset - sizeof(struct mach_header_64) - header->sizeofcmds : 0;
+            if (freeSpace >= commandSize) {
+                insertRPathCommand(rpath, header);
+                changed = true;
+            }
+        }
+    });
+    return changed;
+}
+
 int LCPatchExecSlice(const char *path, struct mach_header_64 *header, bool doInject) {
     uint8_t *imageHeaderPtr = (uint8_t*)header + sizeof(struct mach_header_64);
     int ans = 0;

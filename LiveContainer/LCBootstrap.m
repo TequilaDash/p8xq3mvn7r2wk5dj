@@ -413,6 +413,7 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
         lcGuestAppId = appBundle.bundleIdentifier;
         
     }
+    NSBundleGuestHooksInit();
 
     // Overwrite home and tmp path
     NSString *newHomePath = nil;
