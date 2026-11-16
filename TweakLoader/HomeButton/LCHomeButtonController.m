@@ -12,6 +12,18 @@ static const NSTimeInterval LCHomeButtonSaveTime = 0.3;
 // How long to wait for zContainer to open before giving the app back.
 static const NSTimeInterval LCHomeButtonLeaveTimeout = 4;
 
+
+// 读取 app group 里的实验性设置 (TweakLoader 不链接 LiveContainerShared).
+static NSString *LCHomeButtonSetting(NSString *key) {
+    Class sharedUtils = NSClassFromString(@"LCSharedUtils");
+    NSString *groupID = nil;
+    if ([sharedUtils respondsToSelector:@selector(appGroupID)]) {
+        groupID = ((NSString *(*)(id, SEL))objc_msgSend)(sharedUtils, @selector(appGroupID));
+    }
+    NSUserDefaults *shared = groupID ? [[NSUserDefaults alloc] initWithSuiteName:groupID] : nil;
+    return [shared stringForKey:key];
+}
+
 @interface LCHomeButtonController ()
 @property (nonatomic, nullable) LCHomeButtonWindow *window;
 @property (nonatomic, nullable) LCHomeButtonViewController *buttonController;
@@ -112,8 +124,15 @@ static const NSTimeInterval LCHomeButtonLeaveTimeout = 4;
         LCHomeButtonViewController *buttonController = [[LCHomeButtonViewController alloc] init];
         __weak LCHomeButtonController *weakSelf = self;
         buttonController.pressHandler = ^{
-            [weakSelf goBackToZContainer];
+            [weakSelf handlePress];
         };
+        // 侧边下滑: 与单击主屏按键走同一套动作.
+        if ([LCHomeButtonSetting(@"TDSideSwipeMode") isEqualToString:@"always"]) {
+            buttonController.edgeSwipeEnabled = YES;
+            buttonController.edgeHandler = ^{
+                [weakSelf handlePress];
+            };
+        }
         LCHomeButtonWindow *window = [[LCHomeButtonWindow alloc] initWithWindowScene:scene];
         window.windowLevel = UIWindowLevelAlert + 1;
         window.backgroundColor = UIColor.clearColor;
@@ -131,6 +150,24 @@ static const NSTimeInterval LCHomeButtonLeaveTimeout = 4;
 // so it can save. zContainer's launch ends this process as soon as iOS has
 // zContainer open; if it's still here a few seconds later, opening didn't
 // work, so the app comes back to the foreground.
+- (void)handlePress {
+    BOOL always = [LCHomeButtonSetting(@"TDAssistiveTouchMode") isEqualToString:@"always"];
+    // 全局显示模式下, 普通全屏启动的应用单击后先确认是否退出.
+    if (always && !NSUserDefaults.isLiveProcess) {
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"退出当前应用？"
+                                                                       message:nil
+                                                                preferredStyle:UIAlertControllerStyleAlert];
+        [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+        __weak LCHomeButtonController *weakSelf = self;
+        [alert addAction:[UIAlertAction actionWithTitle:@"确认" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *action) {
+            [weakSelf goBackToZContainer];
+        }]];
+        [self.buttonController presentViewController:alert animated:YES completion:nil];
+        return;
+    }
+    [self goBackToZContainer];
+}
+
 - (void)goBackToZContainer {
     Class sharedUtils = NSClassFromString(@"LCSharedUtils");
     if (self.isLeaving || ![sharedUtils respondsToSelector:@selector(launchToGuestAppWithClassicMode:)]) {
@@ -143,6 +180,10 @@ static const NSTimeInterval LCHomeButtonLeaveTimeout = 4;
         self.isLeaving = YES;
         __weak LCHomeButtonController *weakSelf = self;
         [self.buttonController fadeOutWithCompletion:^{
+            // 让宿主把所有多任务窗口最小化 (保持进程存活), 再把 zContainer 拉到前台.
+            CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),
+                                                 CFSTR("com.kdt.livecontainer.minimizeAll"),
+                                                 NULL, NULL, true);
             [weakSelf openZContainerWith:sharedUtils];
         }];
         return;

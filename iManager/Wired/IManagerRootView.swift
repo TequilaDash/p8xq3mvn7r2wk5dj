@@ -62,6 +62,11 @@ struct IManagerRootView: View {
                 } label: {
                     Label("辅助触控", systemImage: "circle.grid.cross")
                 }
+                NavigationLink {
+                    TDSideSwipeSettingsView()
+                } label: {
+                    Label("侧边下滑", systemImage: "hand.draw")
+                }
             } header: {
                 Text("实验性")
             } footer: {

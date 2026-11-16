@@ -50,29 +50,27 @@ struct IManagerConsoleLogView: View {
         }
         .navigationTitle("ConsoleLog")
         .navigationBarTitleDisplayMode(.inline)
-        .safeAreaInset(edge: .bottom) {
-            if selecting {
-                HStack(spacing: 12) {
+        .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                if selecting {
                     Button(selected.count == files.count ? "取消全选" : "全选") {
                         if selected.count == files.count { selected.removeAll() } else { selected = Set(files) }
                     }
-                    Spacer()
-                    Button("导出") { exportSelected() }.disabled(selected.isEmpty)
-                    Button("删除", role: .destructive) { deleteSelected() }.disabled(selected.isEmpty)
-                    Button("完成") { selecting = false; selected.removeAll() }
                 }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 10)
-                .background(.bar)
-            } else {
-                HStack(spacing: 12) {
-                    Spacer()
-                    Button("选择") { selecting = true }
-                    Button("刷新") { refresh() }
+            }
+            ToolbarItem(placement: .topBarTrailing) {
+                Menu {
+                    if selecting {
+                        Button("导出") { exportSelected() }.disabled(selected.isEmpty)
+                        Button("删除", role: .destructive) { deleteSelected() }.disabled(selected.isEmpty)
+                        Button("完成") { selecting = false; selected.removeAll() }
+                    } else {
+                        Button("选择") { selecting = true }
+                        Button("刷新") { refresh() }
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
                 }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 10)
-                .background(.bar)
             }
         }
         .onAppear { refresh() }

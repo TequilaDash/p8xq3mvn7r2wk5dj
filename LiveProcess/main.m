@@ -11,6 +11,8 @@
 #import "../LiveContainer/utils.h"
 #import "../LiveContainer/Tweaks/Tweaks.h"
 
+extern void TDConsoleLog(NSString *format, ...);
+
 @interface LiveProcessHandler : NSObject<NSExtensionRequestHandling>
 @end
 @implementation LiveProcessHandler
@@ -25,6 +27,7 @@ static NSDictionary *retrievedAppInfo;
 }
 
 - (void)beginRequestWithExtensionContext:(NSExtensionContext *)context {
+    TDConsoleLog(@"[LiveProcess] extension request received");
     extensionContext = context;
     retrievedAppInfo = [context.inputItems.firstObject userInfo];
     // Return control to LiveContainerMain
@@ -122,6 +125,7 @@ static void* hook_dlopen(void* dyldApiInstancePtr, const char* path, int mode) {
 
 // Extension entry point
 int NSExtensionMain(int argc, char *argv[], char *envp[], char *apple[]) {
+    TDConsoleLog(@"[LiveProcess] NSExtensionMain entered");
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wundeclared-selector"
     method_setImplementation(class_getInstanceMethod(NSClassFromString(@"NSXPCDecoder"), @selector(_validateAllowedClass:forKey:allowingInvocations:)), (IMP)hook_do_nothing);

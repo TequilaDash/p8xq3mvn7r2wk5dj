@@ -45,6 +45,33 @@ static const CGFloat LCHomeButtonFlingCarry = 0.12;
     [button addGestureRecognizer:[[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(buttonDragged:)]];
     [self.view addSubview:button];
     self.button = button;
+    if (self.edgeSwipeEnabled) {
+        [self addEdgeSwipeHandles];
+    }
+}
+
+// 左右边缘各一条窄热区; 只在开启侧边下滑时存在, 不影响中间区域的触摸.
+- (void)addEdgeSwipeHandles {
+    if (self.view.subviews.count > 1) return;
+    for (NSNumber *edge in @[@(UIRectEdgeLeft), @(UIRectEdgeRight)]) {
+        UIView *handle = [[UIView alloc] initWithFrame:CGRectZero];
+        handle.backgroundColor = UIColor.clearColor;
+        handle.tag = edge.integerValue;
+        UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(edgePanned:)];
+        [handle addGestureRecognizer:pan];
+        [self.view addSubview:handle];
+    }
+}
+
+- (void)edgePanned:(UIPanGestureRecognizer *)gesture {
+    if (gesture.state != UIGestureRecognizerStateEnded) return;
+    CGPoint translation = [gesture translationInView:self.view];
+    CGPoint velocity = [gesture velocityInView:self.view];
+    // 只认"向下"的手势, 且纵向位移明显大于横向, 避免影响返回手势.
+    if (translation.y < 80 || velocity.y <= 0 || fabs(translation.y) < fabs(translation.x) * 1.5) {
+        return;
+    }
+    if (self.edgeHandler) self.edgeHandler();
 }
 
 - (void)viewDidAppear:(BOOL)animated {
@@ -56,6 +83,14 @@ static const CGFloat LCHomeButtonFlingCarry = 0.12;
     [super viewDidLayoutSubviews];
     if (!self.isDragging) {
         self.button.center = [self.currentPlacement centerInArea:self.restingArea];
+    }
+    for (UIView *subview in self.view.subviews) {
+        if (subview == self.button || subview == self.cover) continue;
+        if (subview.tag == UIRectEdgeLeft) {
+            subview.frame = CGRectMake(0, 0, 24, self.view.bounds.size.height);
+        } else if (subview.tag == UIRectEdgeRight) {
+            subview.frame = CGRectMake(self.view.bounds.size.width - 24, 0, 24, self.view.bounds.size.height);
+        }
     }
 }
 

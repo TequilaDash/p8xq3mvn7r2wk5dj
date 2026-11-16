@@ -12,6 +12,10 @@ NS_ASSUME_NONNULL_BEGIN
 // Called when the button is pressed.
 @property (nonatomic, copy, nullable) void (^pressHandler)(void);
 
+// 侧边下滑 (实验性): 屏幕左右边缘向下拖动时调用, 与单击主屏按键同一动作.
+@property (nonatomic) BOOL edgeSwipeEnabled;
+@property (nonatomic, copy, nullable) void (^edgeHandler)(void);
+
 // Covers the app in black, as it closes to go back to zContainer, and calls
 // `completion` once the screen is black.
 - (void)fadeOutWithCompletion:(void (^)(void))completion;

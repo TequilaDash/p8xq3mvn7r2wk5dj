@@ -473,3 +473,39 @@ static void TDHandleExtensionInterruption(AppSceneViewController *vc, void (^rep
 
 @end
  
+
+#pragma mark - 多任务最小化
+
+// 访客进程 (LiveProcess) 单击主屏按键时发 Darwin 通知, 宿主把所有多任务窗口
+// 收进 Dock, 扩展进程保持存活; 随后 zContainer 被拉到前台.
+static void LCMinimizeControllerTree(UIViewController *controller) {
+    if (!controller) return;
+    if ([controller respondsToSelector:NSSelectorFromString(@"minimizeWindow")]) {
+        [(id)controller minimizeWindow];
+    }
+    for (UIViewController *child in controller.childViewControllers) {
+        LCMinimizeControllerTree(child);
+    }
+    LCMinimizeControllerTree(controller.presentedViewController);
+}
+
+static void LCMinimizeAllMultitaskWindows(CFNotificationCenterRef center, void *observer,
+                                          CFStringRef name, const void *object,
+                                          CFDictionaryRef userInfo) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
+            if (![scene isKindOfClass:UIWindowScene.class]) continue;
+            for (UIWindow *window in ((UIWindowScene *)scene).windows) {
+                LCMinimizeControllerTree(window.rootViewController);
+            }
+        }
+    });
+}
+
+__attribute__((constructor))
+static void LCRegisterMinimizeAllNotification(void) {
+    CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL,
+                                    LCMinimizeAllMultitaskWindows,
+                                    CFSTR("com.kdt.livecontainer.minimizeAll"),
+                                    NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
+}
