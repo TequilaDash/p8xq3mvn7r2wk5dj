@@ -175,14 +175,23 @@ static const NSTimeInterval LCHomeButtonLeaveTimeout = 4;
 // own Home button.
 __attribute__((constructor))
 static void LCHomeButtonInit(void) {
-    if (!NSUserDefaults.lcGuestAppId || NSUserDefaults.isLiveProcess) {
+    if (!NSUserDefaults.lcGuestAppId) {
         return;
     }
-    if (![NSUserDefaults.lcUserDefaults boolForKey:@"LCShowHomeButtonInApps"]) {
-        return;
-    }
-    if ([NSUserDefaults.guestAppInfo[@"hideHomeButton"] boolValue]) {
-        return;
+    // iManager -> 实验性 -> 辅助触控: "always" 表示任何应用界面都显示同一个
+    // 主屏按键 (单击回主界面); 默认 "default" 完全沿用原来的应用级开关.
+    NSUserDefaults *shared = [[NSUserDefaults alloc] initWithSuiteName:[LCSharedUtils appGroupID]];
+    BOOL always = [[shared stringForKey:@"TDAssistiveTouchMode"] isEqualToString:@"always"];
+    if (!always) {
+        if (NSUserDefaults.isLiveProcess) {
+            return;
+        }
+        if (![NSUserDefaults.lcUserDefaults boolForKey:@"LCShowHomeButtonInApps"]) {
+            return;
+        }
+        if ([NSUserDefaults.guestAppInfo[@"hideHomeButton"] boolValue]) {
+            return;
+        }
     }
     [LCHomeButtonController.sharedController start];
 }

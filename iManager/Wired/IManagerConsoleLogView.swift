@@ -23,26 +23,27 @@ struct IManagerConsoleLogView: View {
     @State private var selecting = false
 
     var body: some View {
-        List(selection: $selected) {
+        List {
             if files.isEmpty {
                 Text("暂无日志。启动访客或发生崩溃后会写入 ConsoleLog。")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
             ForEach(files, id: \.self) { name in
-                HStack {
+                HStack(spacing: 10) {
                     if selecting {
                         Image(systemName: selected.contains(name) ? "checkmark.circle.fill" : "circle")
                             .foregroundStyle(selected.contains(name) ? Color.accentColor : Color.secondary)
                     }
-                    Button {
-                        if selecting {
-                            toggle(name)
-                        } else {
-                            open(name)
-                        }
-                    } label: {
-                        Label(name, systemImage: name.hasPrefix("crash-") ? "exclamationmark.triangle" : "doc.text")
+                    Label(name, systemImage: name.hasPrefix("crash-") ? "exclamationmark.triangle" : "doc.text")
+                    Spacer()
+                }
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    if selecting {
+                        if selected.contains(name) { selected.remove(name) } else { selected.insert(name) }
+                    } else {
+                        open(name)
                     }
                 }
             }
@@ -50,31 +51,25 @@ struct IManagerConsoleLogView: View {
         .navigationTitle("ConsoleLog")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
+            ToolbarItem(placement: .topBarLeading) {
                 if selecting {
                     Button(selected.count == files.count ? "取消全选" : "全选") {
-                        if selected.count == files.count {
-                            selected.removeAll()
-                        } else {
-                            selected = Set(files)
-                        }
+                        if selected.count == files.count { selected.removeAll() } else { selected = Set(files) }
                     }
-                } else {
-                    Button("选择") { selecting = true }
                 }
             }
             ToolbarItem(placement: .topBarTrailing) {
                 if selecting {
-                    Menu {
-                        Button("导出所选") { exportSelected() }
-                            .disabled(selected.isEmpty)
-                        Button("删除所选", role: .destructive) { deleteSelected() }
-                            .disabled(selected.isEmpty)
-                    } label: {
-                        Image(systemName: "ellipsis.circle")
+                    HStack {
+                        Button("导出") { exportSelected() }.disabled(selected.isEmpty)
+                        Button("删除", role: .destructive) { deleteSelected() }.disabled(selected.isEmpty)
+                        Button("完成") { selecting = false; selected.removeAll() }
                     }
                 } else {
-                    Button("刷新") { refresh() }
+                    HStack {
+                        Button("选择") { selecting = true }
+                        Button("刷新") { refresh() }
+                    }
                 }
             }
         }
@@ -92,23 +87,11 @@ struct IManagerConsoleLogView: View {
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     if let url = fileURL(file.name) {
-                        // 分享真实文件, 而不是把内容当文本发出去.
-                        ShareLink(item: url) {
-                            Image(systemName: "square.and.arrow.up")
-                        }
+                        ShareLink(item: url) { Image(systemName: "square.and.arrow.up") }
                     }
                     Button("关闭") { opened = nil }
                 }
             }
-        }
-    }
-
-
-    private func toggle(_ name: String) {
-        if selected.contains(name) {
-            selected.remove(name)
-        } else {
-            selected.insert(name)
         }
     }
 
@@ -123,7 +106,6 @@ struct IManagerConsoleLogView: View {
     }
 
     private func exportSelected() {
-        // 单文件: 导出文件本身. 多文件: 建一个只包含选中日志的临时文件夹再分享.
         if selected.count == 1, let name = selected.first, let url = fileURL(name) {
             presentShare(url)
             return
@@ -181,4 +163,3 @@ struct IManagerConsoleLogView: View {
         opened = IManagerConsoleLogFile(name: name, body: body)
     }
 }
-

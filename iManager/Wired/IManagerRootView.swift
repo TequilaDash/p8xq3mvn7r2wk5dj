@@ -29,13 +29,6 @@ struct IManagerRootView: View {
         (Self.sharedDefaults?.object(forKey: "TDConsoleSignals") as? Bool) ?? false
     }()
 
-    @State private var assistiveTouch: Bool = {
-        (Self.sharedDefaults?.object(forKey: "TDAssistiveTouch") as? Bool) ?? false
-    }()
-
-    @State private var assistiveTouchGlobal: Bool = {
-        (Self.sharedDefaults?.object(forKey: "TDAssistiveTouchGlobal") as? Bool) ?? true
-    }()
 
     var body: some View {
         List {
@@ -64,9 +57,10 @@ struct IManagerRootView: View {
             Section {
                 Toggle("环境伪值", isOn: $envSpoof)
                 Toggle("崩溃信号采集", isOn: $crashSignals)
-                Toggle("辅助触控", isOn: $assistiveTouch)
-                if assistiveTouch {
-                    Toggle("在所有应用上显示", isOn: $assistiveTouchGlobal)
+                NavigationLink {
+                    TDAssistiveTouchSettingsView()
+                } label: {
+                    Label("辅助触控", systemImage: "circle.grid.cross")
                 }
             } header: {
                 Text("实验性")
@@ -95,14 +89,6 @@ struct IManagerRootView: View {
         }
         .onChange(of: crashSignals) { nv in
             Self.sharedDefaults?.set(nv, forKey: "TDConsoleSignals")
-        }
-        .onChange(of: assistiveTouch) { nv in
-            Self.sharedDefaults?.set(nv, forKey: "TDAssistiveTouch")
-            TDAssistiveTouch.sync()
-        }
-        .onChange(of: assistiveTouchGlobal) { nv in
-            Self.sharedDefaults?.set(nv, forKey: "TDAssistiveTouchGlobal")
-            TDAssistiveTouch.sync()
         }
         .navigationTitle("iManager")
         .navigationBarTitleDisplayMode(.inline)
