@@ -269,8 +269,12 @@ const char* hook_dyld_get_image_name(uint32_t image_index) {
     return orig_dyld_get_image_name(real_index);
 }
 
-void hideLiveContainerImageCallback(const struct mach_header* header, intptr_t vmaddr_slide) {
-    tdv_hide_image_if_needed(header);
+void TDRefreshDyldImageRemap(void) {
+    if (!gTDVRemapEnabled) return;
+    uint32_t total = orig_dyld_image_count();
+    for (uint32_t i = 0; i < total; i++) {
+        tdv_hide_image_if_needed(orig_dyld_get_image_header(i));
+    }
     tdv_rebuild_image_remap();
 }
 
@@ -533,11 +537,6 @@ void DyldHooksInit(bool hideLiveContainer, bool hookDlopen, uint32_t spoofSDKVer
         litehook_rebind_symbol(LITEHOOK_REBIND_GLOBAL, _dyld_get_image_header, hook_dyld_get_image_header, nil);
         litehook_rebind_symbol(LITEHOOK_REBIND_GLOBAL, _dyld_get_image_vmaddr_slide, hook_dyld_get_image_vmaddr_slide, nil);
         litehook_rebind_symbol(LITEHOOK_REBIND_GLOBAL, _dyld_get_image_name, hook_dyld_get_image_name, nil);
-        static bool gTDVCallbackRegistered = false;
-        if (!gTDVCallbackRegistered) {
-            gTDVCallbackRegistered = true;
-            _dyld_register_func_for_add_image((void (*)(const struct mach_header *, intptr_t))hideLiveContainerImageCallback);
-        }
     }
     
     appExecutableFileTypeOverwritten = !hideLiveContainer;
@@ -804,7 +803,7 @@ void *jitless_hook_dlopen(const char *path, int mode) {
     } else {
         result = orig_dlopen(path, mode);
     }
-    
+    if (result) TDRefreshDyldImageRemap();
     // restore old thread states
     thread_set_state(thread, ARM_DEBUG_STATE64, (thread_state_t)&origDebugState, ARM_DEBUG_STATE64_COUNT);
     thread_swap_exception_ports(thread, mask, handler, behavior, flavor, &mask, &masksCnt, &handler, &behavior, &flavor);
