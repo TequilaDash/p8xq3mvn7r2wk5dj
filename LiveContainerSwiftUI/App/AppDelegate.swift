@@ -8,7 +8,7 @@ private func TDOpenSettingsDarwinCallback(
     _ object: UnsafeRawPointer?,
     _ userInfo: CFDictionary?
 ) {
-    DispatchQueue.main.async { AppDelegate.consumePendingOpenSettings() }
+    NotificationCenter.default.post(name: .tdOpenSettings, object: nil)
 }
 
 @objc class AppDelegate: UIResponder, UIApplicationDelegate {
@@ -25,7 +25,7 @@ private func TDOpenSettingsDarwinCallback(
             }
         }
         Self.registerOpenSettingsNotification()
-        Self.consumePendingOpenSettings()
+
         
         // allow new scene pop up as a new fullscreen window
         method_exchangeImplementations(
@@ -55,13 +55,20 @@ private func TDOpenSettingsDarwinCallback(
         )
     }
 
-    private static func consumePendingOpenSettings() {
+    static func consumePendingOpenSettings() {
         let defaults = LCUtils.appGroupUserDefault
         guard defaults.bool(forKey: "TDPendingOpenSettings") else { return }
         defaults.removeObject(forKey: "TDPendingOpenSettings")
-        DataManager.shared.model.present(.settings)
+        NotificationCenter.default.post(name: .tdOpenSettings, object: nil)
     }
-    
+}
+
+extension Notification.Name {
+    static let tdOpenSettings = Notification.Name("TDPendingOpenSettings")
+}
+
+@objc private extension AppDelegate {
+
     func application(_ application: UIApplication, configurationForConnecting connectingSceneSession: UISceneSession, options: UIScene.ConnectionOptions) -> UISceneConfiguration {
         let configuration = UISceneConfiguration(name: nil, sessionRole: connectingSceneSession.role)
         configuration.delegateClass = SceneDelegate.self

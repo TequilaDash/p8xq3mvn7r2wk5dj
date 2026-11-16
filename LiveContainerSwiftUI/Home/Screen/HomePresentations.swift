@@ -19,6 +19,12 @@ struct HomePresentations: ViewModifier {
         @Bindable var model = model
 
         content
+            .onReceive(NotificationCenter.default.publisher(for: .tdOpenSettings)) { _ in
+                model.present(.settings)
+            }
+            .task {
+                AppDelegate.consumePendingOpenSettings()
+            }
             .modifier(HomeScreenPresentation(model: model, zoomNamespace: zoomNamespace))
             .alert(
                 model.removalTitle,
