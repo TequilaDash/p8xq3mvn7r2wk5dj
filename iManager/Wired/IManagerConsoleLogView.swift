@@ -33,7 +33,7 @@ struct IManagerConsoleLogView: View {
                 HStack {
                     if selecting {
                         Image(systemName: selected.contains(name) ? "checkmark.circle.fill" : "circle")
-                            .foregroundStyle(selected.contains(name) ? .accentColor : .secondary)
+                            .foregroundStyle(selected.contains(name) ? Color.accentColor : Color.secondary)
                     }
                     Button {
                         if selecting {
