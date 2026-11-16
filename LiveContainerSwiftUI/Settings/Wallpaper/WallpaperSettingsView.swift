@@ -16,6 +16,8 @@ struct WallpaperSettingsView: View {
         let hasPhoto = wallpaper.isCustom
 
         List {
+            SettingsPageHeader(page: .wallpaper, detail: "zc.settings.wallpaper.detail".loc)
+
             Section {
                 WallpaperPreview()
                     .frame(maxWidth: .infinity)

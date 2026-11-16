@@ -24,6 +24,8 @@ struct AdvancedSettingsView: View {
 
     var body: some View {
         List {
+            SettingsPageHeader(page: .advanced, detail: "zc.settings.advanced.detail".loc)
+
             // A second zContainer uses the first one's tweaks.
             if sharedModel.multiLCStatus != 2 {
                 Section {

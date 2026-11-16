@@ -27,6 +27,8 @@ struct AppearanceSettingsView: View {
 
     var body: some View {
         List {
+            SettingsPageHeader(page: .appearance, detail: "zc.settings.appearance.detail".loc)
+
             Section {
                 AppThemePicker(appearance: $appearance)
             } header: {

@@ -33957,6 +33957,42 @@
         }
       }
     },
+    "zc.settings.appearance.detail" : {
+      "comment" : "Settings > Appearance: what the page is for, under its name in the card at the top.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Choose the theme, whether app icons follow it, and how the Home button and Dock behave."
+          }
+        }
+      }
+    },
+    "zc.settings.wallpaper.detail" : {
+      "comment" : "Settings > Wallpaper: what the page is for, under its name in the card at the top.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Choose the Home Screen wallpaper, dim it, or return to the default."
+          }
+        }
+      }
+    },
+    "zc.settings.advanced.detail" : {
+      "comment" : "Settings > Advanced: what the page is for, under its name in the card at the top.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Manage tweaks, multitasking, JIT, and diagnostics."
+          }
+        }
+      }
+    },
     "zc.settings.app.detail" : {
       "comment" : "Settings > Apps > an app: what the app's page is for, under the app's name in the card at the top, as the Settings app's page for each app says. %@ is the app's name.",
       "extractionState" : "manual",
