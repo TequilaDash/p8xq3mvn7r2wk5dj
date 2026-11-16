@@ -180,21 +180,31 @@ static void TDExceptionHandler(NSException *exception) {
 }
 
 void TDConsoleLogInstallCrashHandlers(void) {
-    static BOOL installed = NO;
-    if (installed) return;
-    installed = YES;
-    // 异常仍写 ConsoleLog；信号捕获仅由实验性开关启用，避免默认改变信号状态。
-    gTDPreviousExceptionHandler = NSGetUncaughtExceptionHandler();
-    NSSetUncaughtExceptionHandler(&TDExceptionHandler);
-    const char *signalsEnabled = getenv("TD_CONSOLE_SIGNALS");
-    if (!signalsEnabled || signalsEnabled[0] != '1') return;
-    const int signals[] = {SIGABRT, SIGSEGV, SIGBUS, SIGILL, SIGFPE, SIGTRAP, SIGTERM, SIGINT, SIGHUP};
-    struct sigaction action;
-    memset(&action, 0, sizeof(action));
-    action.sa_handler = TDSignalHandler;
-    sigemptyset(&action.sa_mask);
-    action.sa_flags = SA_RESETHAND | SA_NODEFER;
-    for (size_t i = 0; i < sizeof(signals) / sizeof(signals[0]); i++) {
-        sigaction(signals[i], &action, NULL);
+    static BOOL exceptionInstalled = NO;
+    static BOOL signalsInstalled = NO;
+    static const int signals[] = {SIGABRT, SIGSEGV, SIGBUS, SIGILL, SIGFPE, SIGTRAP, SIGTERM, SIGINT, SIGHUP};
+    static struct sigaction previousActions[sizeof(signals) / sizeof(signals[0])];
+    if (!exceptionInstalled) {
+        exceptionInstalled = YES;
+        gTDPreviousExceptionHandler = NSGetUncaughtExceptionHandler();
+        NSSetUncaughtExceptionHandler(&TDExceptionHandler);
     }
+    const char *signalsEnabled = getenv("TD_CONSOLE_SIGNALS");
+    BOOL shouldInstallSignals = signalsEnabled && signalsEnabled[0] == '1';
+    if (shouldInstallSignals == signalsInstalled) return;
+    if (shouldInstallSignals) {
+        struct sigaction action;
+        memset(&action, 0, sizeof(action));
+        action.sa_handler = TDSignalHandler;
+        sigemptyset(&action.sa_mask);
+        action.sa_flags = SA_RESETHAND | SA_NODEFER;
+        for (size_t i = 0; i < sizeof(signals) / sizeof(signals[0]); i++) {
+            sigaction(signals[i], &action, &previousActions[i]);
+        }
+    } else {
+        for (size_t i = 0; i < sizeof(signals) / sizeof(signals[0]); i++) {
+            sigaction(signals[i], &previousActions[i], NULL);
+        }
+    }
+    signalsInstalled = shouldInstallSignals;
 }

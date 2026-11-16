@@ -70,7 +70,7 @@ struct IManagerRootView: View {
             } header: {
                 Text("实验性")
             } footer: {
-                Text("环境伪值关闭后所有访客都不再做 sysctl/SecTask/csops/proc 伪值；崩溃信号采集会安装信号处理器以记录回溯；辅助触控是悬浮球，可拖拽，空闲自动淡化。")
+        Text("环境伪值关闭后所有访客都不再做 sysctl/SecTask/csops/proc 伪值；崩溃信号采集开启后记录信号回溯；辅助触控与侧边下滑分别控制主屏按键和返回手势。")
             }
         }
         .onChange(of: globalHide) { nv in

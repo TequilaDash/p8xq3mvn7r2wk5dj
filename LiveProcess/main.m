@@ -88,7 +88,9 @@ int LiveProcessMain(int argc, char *argv[]) {
     setenv("LP_HOME_PATH", getenv("HOME"), 1);
     const char *overrideHomePath = [appInfo[@"lcHomePath"] fileSystemRepresentation];
     if(overrideHomePath) setenv("LC_HOME_PATH", overrideHomePath, 1);
-    // Pass selected app info to user defaults
+    // The extension enters before its payload environment exists. Re-run after
+    // applying the payload so TDConsoleSignals=1 actually installs handlers.
+    TDConsoleLogInstallCrashHandlers();
     NSUserDefaults *lcUserDefaults = NSUserDefaults.standardUserDefaults;
     [lcUserDefaults setObject:appInfo[@"hostUrlScheme"] forKey:@"hostUrlScheme"];
     [lcUserDefaults setObject:appInfo[@"launchAppUrlScheme"] forKey:@"launchAppUrlScheme"];

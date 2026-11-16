@@ -487,15 +487,6 @@ void DyldHooksInit(bool hideLiveContainer, bool hookDlopen, uint32_t spoofSDKVer
     gTDVMapLogged = false;
     lcImageIndex = UINT32_MAX;
 
-    // iterate through loaded images and find LiveContainer it self
-    int imageCount = _dyld_image_count();
-    for(int i = 0; i < imageCount; ++i) {
-        const struct mach_header* currentImageHeader = _dyld_get_image_header(i);
-        if(currentImageHeader->filetype == MH_EXECUTE) {
-            lcImageIndex = i;
-            break;
-        }
-    }
     
     // 复制成自有缓冲区: fileSystemRepresentation 的生命周期不归我们管, 但这条路径
     // 之后要被镜像枚举/回调反复比较. 常驻进程会多次启动访客, 先释放上一轮.
@@ -504,6 +495,23 @@ void DyldHooksInit(bool hideLiveContainer, bool hookDlopen, uint32_t spoofSDKVer
         lcMainBundlePath = strdup(NSUserDefaults.lcMainBundle.bundlePath.stringByDeletingLastPathComponent.stringByDeletingLastPathComponent.fileSystemRepresentation);
     } else {
         lcMainBundlePath = strdup(NSUserDefaults.lcMainBundle.bundlePath.fileSystemRepresentation);
+    }
+    // LiveProcess 常驻复用同一进程；上一位访客可能已经重绑定了 dyld
+    // 枚举 API。初始化下一位访客时只走加载时捕获的真实函数，并按宿主
+    // bundle 路径定位 lcImageIndex，不能依赖镜像加载顺序。
+    uint32_t imageCount = orig_dyld_image_count();
+    if (lcMainBundlePath && lcMainBundlePath[0]) {
+        size_t bundlePathLength = strlen(lcMainBundlePath);
+        for (uint32_t i = 0; i < imageCount; ++i) {
+            const struct mach_header *currentImageHeader = orig_dyld_get_image_header(i);
+            const char *currentImageName = orig_dyld_get_image_name(i);
+            if (!currentImageHeader || currentImageHeader->filetype != MH_EXECUTE || !currentImageName) continue;
+            if (strncmp(currentImageName, lcMainBundlePath, bundlePathLength) == 0 &&
+                currentImageName[bundlePathLength] == '/') {
+                lcImageIndex = i;
+                break;
+            }
+        }
     }
     // 不重新赋值 orig_dyld_get_image_header: 文件顶部的静态初始化已在加载时
     // 捕获真实实现；上一次隐藏启动可能已把该符号重绑到 hook，这里再取一次会把

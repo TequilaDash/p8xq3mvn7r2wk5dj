@@ -24,9 +24,6 @@ static const CGFloat LCHomeButtonFlingCarry = 0.12;
 @property (nonatomic) CGPoint dragOffset;
 // Counts touches, so a dimming planned before the last touch doesn't happen.
 @property (nonatomic) NSUInteger dimmingGeneration;
-// 侧边下滑时跟随手指的整屏快照.
-@property (nonatomic, nullable) UIView *edgeSnapshot;
-@property (nonatomic, weak, nullable) UIPanGestureRecognizer *edgeGesture;
 - (nullable UIWindow *)appWindow;
 @end
 
@@ -54,7 +51,7 @@ static const CGFloat LCHomeButtonFlingCarry = 0.12;
     }
 }
 
-// 左右边缘各一条窄热区; 只在开启侧边下滑时存在, 不影响中间区域的触摸.
+// 左右边缘各一条窄热区; 返回动作交给宿主当前的原生呈现/窗口转场.
 - (void)addEdgeSwipeHandles {
     if (self.view.subviews.count > 1) return;
     for (NSNumber *edge in @[@(UIRectEdgeLeft), @(UIRectEdgeRight)]) {
@@ -70,76 +67,17 @@ static const CGFloat LCHomeButtonFlingCarry = 0.12;
 
 - (BOOL)gestureRecognizerShouldBegin:(UIGestureRecognizer *)gesture {
     CGPoint velocity = [(UIPanGestureRecognizer *)gesture velocityInView:self.view];
-    return self.edgeSwipeEnabled && !self.edgeSnapshot && !self.cover && !self.isDragging &&
+    return self.edgeSwipeEnabled && !self.cover && !self.isDragging &&
         velocity.y > 0 && velocity.y > fabs(velocity.x);
 }
 
 - (void)edgePanned:(UIPanGestureRecognizer *)gesture {
-    if (gesture.state == UIGestureRecognizerStateBegan) {
-        if (self.edgeSnapshot) return;
-        UIWindow *appWindow = self.appWindow;
-        if (!appWindow) return;
-        UIView *snapshot = [appWindow snapshotViewAfterScreenUpdates:NO];
-        if (!snapshot) return;
-        snapshot.frame = [appWindow convertRect:appWindow.bounds toView:self.view];
-        snapshot.userInteractionEnabled = NO;
-        // The button and both touch strips stay above the app's picture.
-        [self.view insertSubview:snapshot atIndex:0];
-        self.edgeSnapshot = snapshot;
-        self.edgeGesture = gesture;
-    }
-    if (gesture != self.edgeGesture) return;
-
-    if (gesture.state == UIGestureRecognizerStateCancelled || gesture.state == UIGestureRecognizerStateFailed) {
-        [self finishEdgeSwipe:NO animated:YES];
-        return;
-    }
-    if (gesture.state != UIGestureRecognizerStateBegan && gesture.state != UIGestureRecognizerStateChanged &&
-        gesture.state != UIGestureRecognizerStateEnded) return;
-
+    if (gesture.state != UIGestureRecognizerStateEnded) return;
     CGPoint translation = [gesture translationInView:self.view];
+    CGPoint velocity = [gesture velocityInView:self.view];
     CGFloat travel = MAX(0, translation.y);
-    self.edgeSnapshot.transform = CGAffineTransformMakeTranslation(0, travel);
-    self.edgeSnapshot.alpha = 1 - MIN(0.35, travel / MAX(1, self.view.bounds.size.height));
-    if (gesture.state == UIGestureRecognizerStateEnded) {
-        CGPoint velocity = [gesture velocityInView:self.view];
-        BOOL dismiss = travel > 80 && velocity.y > 0 && translation.y >= fabs(translation.x);
-        [self finishEdgeSwipe:dismiss animated:YES];
-    }
-}
-
-- (void)finishEdgeSwipe:(BOOL)dismiss animated:(BOOL)animated {
-    UIView *snapshot = self.edgeSnapshot;
-    self.edgeGesture = nil;
-    if (!snapshot) return;
-    if (!animated) {
-        // Clear ownership first, so an interrupted completion cannot leave the app.
-        self.edgeSnapshot = nil;
-        [snapshot.layer removeAllAnimations];
-        [snapshot removeFromSuperview];
-        return;
-    }
-    CGFloat travel = MAX(snapshot.transform.ty, self.view.bounds.size.height * 0.3);
-    __weak LCHomeButtonViewController *weakSelf = self;
-    [UIView animateWithDuration:dismiss ? 0.3 : 0.25
-                          delay:0
-                        options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction |
-                                (dismiss ? UIViewAnimationOptionCurveEaseIn : UIViewAnimationOptionCurveEaseOut)
-                     animations:^{
-        snapshot.transform = dismiss ? CGAffineTransformMakeTranslation(0, travel) : CGAffineTransformIdentity;
-        snapshot.alpha = dismiss ? 0 : 1;
-    } completion:^(BOOL finished) {
-        [snapshot removeFromSuperview];
-        LCHomeButtonViewController *controller = weakSelf;
-        if (controller.edgeSnapshot != snapshot) return;
-        controller.edgeSnapshot = nil;
-        if (dismiss && finished && controller.edgeHandler) controller.edgeHandler();
-    }];
-}
-
-- (void)viewWillDisappear:(BOOL)animated {
-    [self finishEdgeSwipe:NO animated:NO];
-    [super viewWillDisappear:animated];
+    BOOL dismiss = travel > 80 && velocity.y > 0 && translation.y >= fabs(translation.x);
+    if (dismiss && self.edgeHandler) self.edgeHandler();
 }
 
 - (void)viewDidAppear:(BOOL)animated {
@@ -166,7 +104,6 @@ static const CGFloat LCHomeButtonFlingCarry = 0.12;
 // out again on its own, but the first place moves to the other side.
 - (void)viewWillTransitionToSize:(CGSize)size withTransitionCoordinator:(id<UIViewControllerTransitionCoordinator>)coordinator {
     [super viewWillTransitionToSize:size withTransitionCoordinator:coordinator];
-    [self finishEdgeSwipe:NO animated:NO];
     [coordinator animateAlongsideTransition:^(id<UIViewControllerTransitionCoordinatorContext> context) {
         [self.view setNeedsLayout];
         [self.view layoutIfNeeded];
@@ -301,7 +238,6 @@ static const CGFloat LCHomeButtonFlingCarry = 0.12;
 #pragma mark Going back to zContainer
 
 - (void)fadeOutWithCompletion:(void (^)(void))completion {
-    [self finishEdgeSwipe:NO animated:NO];
     [self.cover removeFromSuperview];
     UIView *cover = [[UIView alloc] initWithFrame:self.view.bounds];
     cover.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;

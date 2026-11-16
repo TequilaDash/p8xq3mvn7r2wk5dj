@@ -197,12 +197,7 @@ static NSString *LCHomeButtonSetting(NSString *key) {
         CFStringRef name = CFSTR("com.kdt.livecontainer.minimizeAll");
         CFNotificationCenterPostNotification(center, name, NULL, NULL, true);
         [self openHostKeepingExtension];
-        __weak LCHomeButtonController *weakSelf = self;
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.8 * NSEC_PER_SEC)),
-                       dispatch_get_main_queue(), ^{
-            CFNotificationCenterPostNotification(center, name, NULL, NULL, true);
-            weakSelf.isLeaving = NO;
-        });
+        self.isLeaving = NO;
         return;
     }
     Class sharedUtils = NSClassFromString(@"LCSharedUtils");
@@ -263,7 +258,8 @@ static void LCHomeButtonInit(void) {
     }
     NSUserDefaults *shared = groupID ? [[NSUserDefaults alloc] initWithSuiteName:groupID] : nil;
     BOOL always = [[shared stringForKey:@"TDAssistiveTouchMode"] isEqualToString:@"always"];
-    if (!always) {
+    BOOL sideSwipeAlways = [[shared stringForKey:@"TDSideSwipeMode"] isEqualToString:@"always"];
+    if (!always && !sideSwipeAlways) {
         if (NSUserDefaults.isLiveProcess) {
             return;
         }
