@@ -130,7 +130,7 @@ static NSString *LCHomeButtonSetting(NSString *key) {
         if ([LCHomeButtonSetting(@"TDSideSwipeMode") isEqualToString:@"always"]) {
             buttonController.edgeSwipeEnabled = YES;
             buttonController.edgeHandler = ^{
-                [weakSelf handlePress];
+                [weakSelf handleEdgeSwipe];
             };
         }
         LCHomeButtonWindow *window = [[LCHomeButtonWindow alloc] initWithWindowScene:scene];
@@ -169,6 +169,18 @@ static NSString *LCHomeButtonSetting(NSString *key) {
     [application openURL:url options:@{} completionHandler:nil];
 }
 
+- (void)handleEdgeSwipe {
+    Class sharedUtils = NSClassFromString(@"LCSharedUtils");
+    NSString *groupID = nil;
+    if ([sharedUtils respondsToSelector:@selector(appGroupID)]) {
+        groupID = ((NSString *(*)(id, SEL))objc_msgSend)(sharedUtils, @selector(appGroupID));
+    }
+    NSUserDefaults *shared = groupID ? [[NSUserDefaults alloc] initWithSuiteName:groupID] : nil;
+    [shared setBool:YES forKey:@"TDPendingOpenSettings"];
+    CFNotificationCenterRef center = CFNotificationCenterGetDarwinNotifyCenter();
+    CFNotificationCenterPostNotification(center, CFSTR("com.kdt.livecontainer.openSettings"), NULL, NULL, true);
+    [self goBackToZContainer];
+}
 - (void)handlePress {
     BOOL always = [LCHomeButtonSetting(@"TDAssistiveTouchMode") isEqualToString:@"always"];
     // 全局显示模式下, 普通全屏启动的应用单击后先确认是否退出.

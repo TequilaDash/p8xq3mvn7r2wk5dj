@@ -579,47 +579,130 @@ NSString* getEntitlementXML(struct mach_header_64* header, void** entitlementXML
     return ans;
 }
 
+static bool TDReadAt(int fd, void *buffer, size_t length, off_t offset) {
+    uint8_t *bytes = (uint8_t *)buffer;
+    size_t done = 0;
+    while (done < length) {
+        ssize_t got = pread(fd, bytes + done, length - done, offset + (off_t)done);
+        if (got <= 0) return false;
+        done += (size_t)got;
+    }
+    return true;
+}
+
+// Reads only the Mach-O header and load commands into heap memory. Mapping a
+// tweak that is not signed yet makes iOS 27 validate the page on
+// fault and kill the process (SIGKILL - CODESIGNING); pread has no such
+// side effect, while fcntl still checks the signature against the real file.
+static bool TDSafeCheckCodeSignature(const char *path) {
+    int fd = open(path, O_RDONLY);
+    if (fd < 0) return false;
+    struct stat st;
+    if (fstat(fd, &st) != 0 || st.st_size < (off_t)sizeof(uint32_t)) {
+        close(fd);
+        return false;
+    }
+
+    uint32_t magic = 0;
+    off_t sliceOffset = 0;
+    off_t sliceSize = st.st_size;
+    if (!TDReadAt(fd, &magic, sizeof(magic), 0)) {
+        close(fd);
+        return false;
+    }
+    if (magic == FAT_CIGAM) {
+        struct fat_header fat;
+        if (!TDReadAt(fd, &fat, sizeof(fat), 0)) {
+            close(fd);
+            return false;
+        }
+        uint32_t count = OSSwapInt32(fat.nfat_arch);
+        bool found = false;
+        for (uint32_t i = 0; i < count; i++) {
+            struct fat_arch arch;
+            off_t at = (off_t)sizeof(fat) + (off_t)i * (off_t)sizeof(arch);
+            if (!TDReadAt(fd, &arch, sizeof(arch), at)) break;
+            if (OSSwapInt32(arch.cputype) != CPU_TYPE_ARM64) continue;
+            sliceOffset = (off_t)OSSwapInt32(arch.offset);
+            sliceSize = (off_t)OSSwapInt32(arch.size);
+            found = sliceOffset >= 0 && sliceSize > (off_t)sizeof(struct mach_header_64) &&
+                    sliceOffset + sliceSize <= st.st_size;
+            break;
+        }
+        if (!found) {
+            close(fd);
+            return false;
+        }
+        if (!TDReadAt(fd, &magic, sizeof(magic), sliceOffset)) {
+            close(fd);
+            return false;
+        }
+    }
+    if (magic != MH_MAGIC_64) {
+        close(fd);
+        return false;
+    }
+
+    struct mach_header_64 header;
+    if (!TDReadAt(fd, &header, sizeof(header), sliceOffset) ||
+        header.cputype != CPU_TYPE_ARM64 || header.ncmds == 0 ||
+        header.sizeofcmds < sizeof(struct load_command) ||
+        header.sizeofcmds > (uint32_t)(sliceSize - (off_t)sizeof(header))) {
+        close(fd);
+        return false;
+    }
+
+    void *commands = malloc(header.sizeofcmds);
+    if (!commands || !TDReadAt(fd, commands, header.sizeofcmds,
+                               sliceOffset + (off_t)sizeof(header))) {
+        free(commands);
+        close(fd);
+        return false;
+    }
+
+    struct code_signature_command signature;
+    bool foundSignature = false;
+    uint8_t *cursor = (uint8_t *)commands;
+    uint32_t remaining = header.sizeofcmds;
+    for (uint32_t i = 0; i < header.ncmds && remaining >= sizeof(struct load_command); i++) {
+        struct load_command command;
+        memcpy(&command, cursor, sizeof(command));
+        if (command.cmdsize < sizeof(command) || command.cmdsize > remaining) break;
+        if (command.cmd == LC_CODE_SIGNATURE && command.cmdsize >= sizeof(signature)) {
+            memcpy(&signature, cursor, sizeof(signature));
+            foundSignature = true;
+            break;
+        }
+        cursor += command.cmdsize;
+        remaining -= command.cmdsize;
+    }
+    free(commands);
+    if (!foundSignature || signature.datasize == 0) {
+        close(fd);
+        return false;
+    }
+
+    fsignatures_t siginfo = {0};
+    siginfo.fs_file_start = sliceOffset;
+    siginfo.fs_blob_start = (void *)(long)signature.dataoff;
+    siginfo.fs_blob_size = signature.datasize;
+    if (fcntl(fd, F_ADDFILESIGS_RETURN, &siginfo) == -1) {
+        close(fd);
+        return false;
+    }
+
+    fchecklv_t checkInfo = {0};
+    char message[512] = {0};
+    checkInfo.lv_error_message_size = sizeof(message);
+    checkInfo.lv_error_message = message;
+    checkInfo.lv_file_start = sliceOffset;
+    int result = fcntl(fd, F_CHECK_LV, &checkInfo);
+    close(fd);
+    return result == 0;
+}
+
 bool checkCodeSignature(const char* path) {
-    __block bool checked = false;
-    __block bool ans = false;
-    LCParseMachO(path, true, ^(const char *path, struct mach_header_64 *header, int fd, void *filePtr) {
-        if(checked || header->cputype != CPU_TYPE_ARM64) {
-            return;
-        }
-        checked = true;
-        
-        struct code_signature_command* codeSignatureCommand = findSignatureCommand(header);
-        if(!codeSignatureCommand) {
-            return;
-        }
-        off_t sliceOffset = (void*)header - filePtr;
-        fsignatures_t siginfo;
-        siginfo.fs_file_start = sliceOffset;
-        siginfo.fs_blob_start = (void*)(long)(codeSignatureCommand->dataoff);
-        siginfo.fs_blob_size  = codeSignatureCommand->datasize;
-        int addFileSigsReault = fcntl(fd, F_ADDFILESIGS_RETURN, &siginfo);
-        if ( addFileSigsReault == -1 ) {
-            ans = false;
-            return;
-        }
-        
-        fchecklv_t checkInfo;
-        char     messageBuffer[512];
-        messageBuffer[0]                = '\0';
-        checkInfo.lv_error_message_size = sizeof(messageBuffer);
-        checkInfo.lv_error_message      = messageBuffer;
-        checkInfo.lv_file_start= sliceOffset;
-        int checkLVresult = fcntl(fd, F_CHECK_LV, &checkInfo);
-        
-        if (checkLVresult == 0) {
-            ans = true;
-            return;
-        } else {
-            ans = false;
-            return;
-        }
-    });
-    return ans;
+    return TDSafeCheckCodeSignature(path);
 }
 
 NSString* getExecutableEntitlementXML(NSString* path) {

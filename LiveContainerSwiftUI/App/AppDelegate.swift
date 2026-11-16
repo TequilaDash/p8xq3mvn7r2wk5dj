@@ -1,6 +1,16 @@
 import UIKit
 import SwiftUI
 
+private func TDOpenSettingsDarwinCallback(
+    _ center: CFNotificationCenter?,
+    _ observer: UnsafeMutableRawPointer?,
+    _ name: CFNotificationName?,
+    _ object: UnsafeRawPointer?,
+    _ userInfo: CFDictionary?
+) {
+    DispatchQueue.main.async { AppDelegate.consumePendingOpenSettings() }
+}
+
 @objc class AppDelegate: UIResponder, UIApplicationDelegate {
         
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? ) -> Bool {
@@ -14,6 +24,8 @@ import SwiftUI
                 UserDefaults.standard.removeObject(forKey: "selectedContainer")
             }
         }
+        Self.registerOpenSettingsNotification()
+        Self.consumePendingOpenSettings()
         
         // allow new scene pop up as a new fullscreen window
         method_exchangeImplementations(
@@ -31,6 +43,23 @@ import SwiftUI
         }
         
         return true
+    }
+    private static func registerOpenSettingsNotification() {
+        CFNotificationCenterAddObserver(
+            CFNotificationCenterGetDarwinNotifyCenter(),
+            nil,
+            TDOpenSettingsDarwinCallback,
+            "com.kdt.livecontainer.openSettings" as CFString,
+            nil,
+            .deliverImmediately
+        )
+    }
+
+    private static func consumePendingOpenSettings() {
+        let defaults = LCUtils.appGroupUserDefault
+        guard defaults.bool(forKey: "TDPendingOpenSettings") else { return }
+        defaults.removeObject(forKey: "TDPendingOpenSettings")
+        DataManager.shared.model.present(.settings)
     }
     
     func application(_ application: UIApplication, configurationForConnecting connectingSceneSession: UISceneSession, options: UIScene.ConnectionOptions) -> UISceneConfiguration {
