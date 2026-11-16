@@ -3,6 +3,7 @@
 #import "LCHomeButtonViewController.h"
 #import "LCHomeButtonWindow.h"
 #import "LCSharedUtils.h"
+#import <objc/message.h>
 #import "../../LiveContainer/utils.h"
 
 // How long the app gets to finish what it does on entering the background,
@@ -180,7 +181,13 @@ static void LCHomeButtonInit(void) {
     }
     // iManager -> 实验性 -> 辅助触控: "always" 表示任何应用界面都显示同一个
     // 主屏按键 (单击回主界面); 默认 "default" 完全沿用原来的应用级开关.
-    NSUserDefaults *shared = [[NSUserDefaults alloc] initWithSuiteName:[LCSharedUtils appGroupID]];
+    // TweakLoader 不链接 LiveContainerShared, 用运行时查类避免链接依赖.
+    Class sharedUtils = NSClassFromString(@"LCSharedUtils");
+    NSString *groupID = nil;
+    if ([sharedUtils respondsToSelector:@selector(appGroupID)]) {
+        groupID = ((NSString *(*)(id, SEL))objc_msgSend)(sharedUtils, @selector(appGroupID));
+    }
+    NSUserDefaults *shared = groupID ? [[NSUserDefaults alloc] initWithSuiteName:groupID] : nil;
     BOOL always = [[shared stringForKey:@"TDAssistiveTouchMode"] isEqualToString:@"always"];
     if (!always) {
         if (NSUserDefaults.isLiveProcess) {
