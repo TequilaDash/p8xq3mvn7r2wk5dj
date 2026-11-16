@@ -71,11 +71,7 @@ static const CGFloat LCHomeButtonFlingCarry = 0.12;
     CGPoint translation = [gesture translationInView:self.view];
     CGPoint velocity = [gesture velocityInView:self.view];
     CGFloat travel = MAX(0, translation.y);
-
-    if (gesture.state == UIGestureRecognizerStateBegan) {
-        // 只对"向下"的手势建立快照, 避免影响系统返回手势.
-        if (fabs(translation.x) > fabs(translation.y)) return;
-    }
+    if (gesture.state == UIGestureRecognizerStateBegan && fabs(translation.x) > fabs(translation.y)) return;
 
     if (!self.edgeSnapshot && travel > 4) {
         UIView *snapshot = [appWindow snapshotViewAfterScreenUpdates:NO];
@@ -90,30 +86,93 @@ static const CGFloat LCHomeButtonFlingCarry = 0.12;
         snapshot.transform = CGAffineTransformMakeTranslation(0, travel);
         snapshot.alpha = 1 - MIN(0.35, travel / MAX(1, self.view.bounds.size.height));
     }
+    if (gesture.state != UIGestureRecognizerStateEnded) return;
 
-    if (gesture.state == UIGestureRecognizerStateEnded) {
-        BOOL dismiss = travel > 80 && velocity.y > 0;
-        if (!dismiss || fabs(translation.x) > fabs(translation.y) * 1.5) {
-            [UIView animateWithDuration:0.25 animations:^{
-                snapshot.transform = CGAffineTransformIdentity;
-                snapshot.alpha = 1;
-            } completion:^(BOOL finished) {
-                [snapshot removeFromSuperview];
-            }];
-            self.edgeSnapshot = nil;
-            return;
-        }
-        __weak LCHomeButtonViewController *weakSelf = self;
-        [UIView animateWithDuration:0.3 delay:0 options:UIViewAnimationOptionCurveEaseIn animations:^{
-            snapshot.transform = CGAffineTransformMakeTranslation(0, self.view.bounds.size.height * 0.3);
-            snapshot.alpha = 0;
+    BOOL dismiss = travel > 80 && velocity.y > 0 && fabs(translation.y) >= fabs(translation.x);
+    __weak LCHomeButtonViewController *weakSelf = self;
+    if (!dismiss) {
+        [UIView animateWithDuration:0.25 animations:^{
+            snapshot.transform = CGAffineTransformIdentity;
+            snapshot.alpha = 1;
         } completion:^(BOOL finished) {
             [snapshot removeFromSuperview];
-            weakSelf.edgeSnapshot = nil;
-            if (weakSelf.edgeHandler) weakSelf.edgeHandler();
         }];
+        self.edgeSnapshot = nil;
+        return;
+    }
+    [UIView animateWithDuration:0.3 delay:0 options:UIViewAnimationOptionCurveEaseIn animations:^{
+        snapshot.transform = CGAffineTransformMakeTranslation(0, self.view.bounds.size.height * 0.3);
+        snapshot.alpha = 0;
+    } completion:^(BOOL finished) {
+        [snapshot removeFromSuperview];
+        weakSelf.edgeSnapshot = nil;
+        if (weakSelf.edgeHandler) weakSelf.edgeHandler();
+    }];
+}
+
+- (void)viewDidAppear:(BOOL)animated {
+    [super viewDidAppear:animated];
+    [self dimSoon];
+}
+
+- (void)viewDidLayoutSubviews {
+    [super viewDidLayoutSubviews];
+    if (!self.isDragging) {
+        self.button.center = [self.currentPlacement centerInArea:self.restingArea];
+    }
+    for (UIView *subview in self.view.subviews) {
+        if (subview == self.button || subview == self.cover) continue;
+        if (subview.tag == UIRectEdgeLeft) {
+            subview.frame = CGRectMake(0, 0, 24, self.view.bounds.size.height);
+        } else if (subview.tag == UIRectEdgeRight) {
+            subview.frame = CGRectMake(self.view.bounds.size.width - 24, 0, 24, self.view.bounds.size.height);
+        }
     }
 }
+
+// Turning an iPad all the way round keeps the view's size, so it isn't laid
+// out again on its own, but the first place moves to the other side.
+- (void)viewWillTransitionToSize:(CGSize)size withTransitionCoordinator:(id<UIViewControllerTransitionCoordinator>)coordinator {
+    [super viewWillTransitionToSize:size withTransitionCoordinator:coordinator];
+    [coordinator animateAlongsideTransition:^(id<UIViewControllerTransitionCoordinatorContext> context) {
+        [self.view setNeedsLayout];
+        [self.view layoutIfNeeded];
+    } completion:^(id<UIViewControllerTransitionCoordinatorContext> context) {
+        [self.view setNeedsLayout];
+    }];
+}
+
+// Where the button rests: where it was moved to, or else its first place,
+// which on an iPad is beside the iPad's Home button as it's turned now.
+- (LCHomeButtonPlacement *)currentPlacement {
+    return self.placement ?: [LCHomeButtonPlacement firstPlacementForInterfaceOrientation:self.currentInterfaceOrientation];
+}
+
+// Which way the screen shows the app now.
+- (UIInterfaceOrientation)currentInterfaceOrientation {
+    UIWindowScene *scene = self.view.window.windowScene;
+    if (!scene) {
+        return UIInterfaceOrientationPortrait;
+    }
+    if (@available(iOS 16.0, *)) {
+        return scene.effectiveGeometry.interfaceOrientation;
+    }
+    return scene.interfaceOrientation;
+}
+
+// The area the button's center rests in: the safe area, less the button's
+// radius and a small margin.
+- (CGRect)restingArea {
+    CGRect safeArea = UIEdgeInsetsInsetRect(self.view.bounds, self.view.safeAreaInsets);
+    CGFloat inset = LCHomeButtonView.diameter / 2 + LCHomeButtonEdgeMargin;
+    CGRect area = CGRectInset(safeArea, inset, inset);
+    if (CGRectIsNull(area) || CGRectIsEmpty(area)) {
+        return CGRectMake(CGRectGetMidX(self.view.bounds), CGRectGetMidY(self.view.bounds), 0, 0);
+    }
+    return area;
+}
+
+#pragma mark Touches
 
 - (void)buttonTouchedDown {
     [self brighten];
