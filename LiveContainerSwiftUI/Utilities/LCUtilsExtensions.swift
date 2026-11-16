@@ -66,10 +66,9 @@ extension LCUtils {
                 continue
             }
 
-            if !force, checkCodeSignature((fileURL.path as NSString).utf8String) {
-                continue;
-            }
-            
+// iOS 19+ 对未签名 dylib 的 mmap 会触发内核真实签名校验并 SIGKILL；
+// 与 vendor 镜像 M9 一致，跳过预校验，全部交给 ZSign 幂等重签。
+// 上游 27.2 同样存在此缺陷，已 diff 验证。
             filesToSign.append(fileURL)
         }
         

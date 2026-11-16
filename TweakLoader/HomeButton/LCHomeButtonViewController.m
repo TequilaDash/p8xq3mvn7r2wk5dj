@@ -40,7 +40,7 @@ static const CGFloat LCHomeButtonFlingCarry = 0.12;
 
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.placement = [LCHomeButtonPlacement savedPlacement];
+    self.placement = [LCHomeButtonPlacement firstPlacementForInterfaceOrientation:UIApplication.sharedApplication.statusBarOrientation];
 
     LCHomeButtonView *button = [[LCHomeButtonView alloc] initWithFrame:CGRectZero];
     [button addTarget:self action:@selector(buttonTouchedDown) forControlEvents:UIControlEventTouchDown];
