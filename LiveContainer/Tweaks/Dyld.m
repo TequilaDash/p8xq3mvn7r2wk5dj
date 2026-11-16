@@ -199,14 +199,22 @@ static inline bool tdv_map_image_index(uint32_t image_index, uint32_t *real_inde
     return true;
 }
 
-// 仅通过索引映射隐藏镜像，不改写 dyld 自己维护的 dli_fname。
-// 改写该字符串不可逆；常驻进程切换到关闭隐藏后，下一位访客仍会读到伪路径。
-static void tdv_hide_image_if_needed(const struct mach_header *header) {
-    if (!gTDVRemapEnabled) return;
-    Dl_info info;
-    if (!header || dladdr(header, &info) == 0 || !info.dli_fname) return;
-    if (!tdv_is_hidden_path(info.dli_fname)) return;
+// 只通过加载时捕获的真实 dyld 表按 header 找路径，不在 add-image 回调里调用
+// dladdr：dladdr 会在 dyld 正加载 tweak 时重入 dyld，读到尚未完成的映射。
+static void tdv_hide_image_with_name(const struct mach_header *header, const char *name) {
+    if (!header || !tdv_is_hidden_path(name)) return;
     tdv_mark_hidden(header);
+}
+
+static void tdv_hide_image_if_needed(const struct mach_header *header) {
+    if (!gTDVRemapEnabled || !header) return;
+    uint32_t total = orig_dyld_image_count();
+    for (uint32_t i = 0; i < total; i++) {
+        if (orig_dyld_get_image_header(i) == header) {
+            tdv_hide_image_with_name(header, orig_dyld_get_image_name(i));
+            return;
+        }
+    }
 }
 
 void* hook_dlsym(void * __handle, const char * __symbol) {
