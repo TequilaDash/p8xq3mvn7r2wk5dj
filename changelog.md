@@ -1,3 +1,8 @@
+20261116-122836 1.1.26 Update：
+1. 新增实验性「辅助触控」：宿主悬浮球覆盖访客界面，可拖拽、空闲 3.5 秒自动淡化，触摸穿透不影响访客操作。
+2. 点按悬浮球可打开 ConsoleLog 或关闭悬浮球（可在 iManager → 实验性重新开启）。
+3. 支持「在所有应用上显示」；关闭时只在当前前台应用上显示，保持原有多窗口行为。
+
 20261116-121221 1.1.25 Update：
 1. 修复关闭全局隐藏后任意 App 启动闪退：App 自带的 fishhook（微信等）会重绑 open/stat，我们按符号调用会与其 hook 互相递归导致栈溢出；现在 open/openat/stat/lstat/fstatat/access/opendir/realpath/readlink/mkdir/rename/unlink/getattrlist/getmntinfo/getuid 等全部改为加载时捕获真实地址。
 2. ConsoleLog 增加多选/全选、导出、删除；单个日志分享真实文件，多文件时生成只包含所选日志的文件夹再分享，不再把内容当文本发送。

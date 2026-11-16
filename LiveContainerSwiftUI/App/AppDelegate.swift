@@ -50,6 +50,7 @@ class SceneDelegate: NSObject, UIWindowSceneDelegate, ObservableObject { // Make
 
     func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options connectionOptions: UIScene.ConnectionOptions) {
         self.window = (scene as? UIWindowScene)?.keyWindow
+        TDAssistiveTouch.sync()
         // Turning an iPad all the way round leaves the window's size as it
         // was, so its geometry tells which way it now shows.
         geometryObservation = (scene as? UIWindowScene)?.observe(\.effectiveGeometry, options: [.initial, .new]) { [weak self] scene, _ in
@@ -60,6 +61,10 @@ class SceneDelegate: NSObject, UIWindowSceneDelegate, ObservableObject { // Make
                 }
             }
         }
+    }
+
+    func sceneDidBecomeActive(_ scene: UIScene) {
+        TDAssistiveTouch.sync()
     }
 
 }

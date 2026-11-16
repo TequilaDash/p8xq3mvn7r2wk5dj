@@ -29,6 +29,14 @@ struct IManagerRootView: View {
         (Self.sharedDefaults?.object(forKey: "TDConsoleSignals") as? Bool) ?? false
     }()
 
+    @State private var assistiveTouch: Bool = {
+        (Self.sharedDefaults?.object(forKey: "TDAssistiveTouch") as? Bool) ?? false
+    }()
+
+    @State private var assistiveTouchGlobal: Bool = {
+        (Self.sharedDefaults?.object(forKey: "TDAssistiveTouchGlobal") as? Bool) ?? true
+    }()
+
     var body: some View {
         List {
             Section {
@@ -56,10 +64,14 @@ struct IManagerRootView: View {
             Section {
                 Toggle("环境伪值", isOn: $envSpoof)
                 Toggle("崩溃信号采集", isOn: $crashSignals)
+                Toggle("辅助触控", isOn: $assistiveTouch)
+                if assistiveTouch {
+                    Toggle("在所有应用上显示", isOn: $assistiveTouchGlobal)
+                }
             } header: {
                 Text("实验性")
             } footer: {
-                Text("环境伪值关闭后所有访客都不再做 sysctl/SecTask/csops/proc 伪值；崩溃信号采集会安装信号处理器以记录回溯，部分检测器会因此多报一项。")
+                Text("环境伪值关闭后所有访客都不再做 sysctl/SecTask/csops/proc 伪值；崩溃信号采集会安装信号处理器以记录回溯；辅助触控是悬浮球，可拖拽，空闲自动淡化。")
             }
         }
         .onChange(of: globalHide) { nv in
@@ -83,6 +95,14 @@ struct IManagerRootView: View {
         }
         .onChange(of: crashSignals) { nv in
             Self.sharedDefaults?.set(nv, forKey: "TDConsoleSignals")
+        }
+        .onChange(of: assistiveTouch) { nv in
+            Self.sharedDefaults?.set(nv, forKey: "TDAssistiveTouch")
+            TDAssistiveTouch.sync()
+        }
+        .onChange(of: assistiveTouchGlobal) { nv in
+            Self.sharedDefaults?.set(nv, forKey: "TDAssistiveTouchGlobal")
+            TDAssistiveTouch.sync()
         }
         .navigationTitle("iManager")
         .navigationBarTitleDisplayMode(.inline)
