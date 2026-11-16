@@ -141,6 +141,9 @@ static const CGFloat LCHomeButtonFlingCarry = 0.12;
 
 - (void)viewDidAppear:(BOOL)animated {
     [super viewDidAppear:animated];
+    self.placement = [LCHomeButtonPlacement firstPlacementForInterfaceOrientation:self.currentInterfaceOrientation];
+    [self.view setNeedsLayout];
+    [self.view layoutIfNeeded];
     [self dimSoon];
 }
 

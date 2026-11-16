@@ -140,6 +140,8 @@ static NSString *LCHomeButtonSetting(NSString *key) {
         self.buttonController = buttonController;
         self.window = window;
         window.hidden = NO;
+        [buttonController.view setNeedsLayout];
+        [buttonController.view layoutIfNeeded];
     } @catch (NSException *exception) {
         NSLog(@"[LC] The Home button couldn't show: %@", exception);
     }
