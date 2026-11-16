@@ -67,7 +67,7 @@ extension Notification.Name {
     static let tdOpenSettings = Notification.Name("TDPendingOpenSettings")
 }
 
-@objc private extension AppDelegate {
+@objc extension AppDelegate {
 
     func application(_ application: UIApplication, configurationForConnecting connectingSceneSession: UISceneSession, options: UIScene.ConnectionOptions) -> UISceneConfiguration {
         let configuration = UISceneConfiguration(name: nil, sessionRole: connectingSceneSession.role)
