@@ -19,13 +19,6 @@ uint32_t dyld_get_sdk_version(const struct mach_header* mh);
 
 
 + (NSProgress *)signAppBundleWithZSign:(NSURL *)path completionHandler:(void (^)(BOOL success, NSError *error))completionHandler;
-// Signs the bundle with the identity the guest was installed with. Passing a nil
-// bundleId asks for the one recorded for that bundle (see below), so callers
-// that know the guest never have to hand over the host's identifier.
-+ (NSProgress *)signAppBundleWithZSign:(NSURL *)path bundleId:(NSString *)bundleId completionHandler:(void (^)(BOOL success, NSError *error))completionHandler;
-// The identifier to sign `path` (an .app bundle) with: whatever the guest shipped
-// with, never the host's, unless nothing says otherwise.
-+ (NSString *)guestBundleIdentifierForAppBundleAtPath:(NSString *)path;
 // The identifier the guest's own provisioning profile claims, read from the
 // backup taken at install time when there is one. nil when no profile is present
 // or it cannot be parsed.

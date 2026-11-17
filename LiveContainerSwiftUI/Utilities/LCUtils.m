@@ -182,29 +182,7 @@ static NSString* LCBundleIdentifierFromProvisioningProfileData(NSData* profileDa
     return nil;
 }
 
-+ (NSString *)guestBundleIdentifierForAppBundleAtPath:(NSString *)path {
-    NSString* profileBundleId = [self guestBundleIdentifierFromProvisioningProfileInBundleAtPath:path];
-    if(profileBundleId.length > 0) {
-        return profileBundleId;
-    }
-    // Nothing to read an identity from: an ad-hoc or profile-less guest. Its own
-    // Info.plist is the only record left, and it only counts while it still says
-    // something other than the host, because `doUseLCBundleId` overwrites it.
-    NSDictionary* infoPlist = [NSDictionary dictionaryWithContentsOfFile:[path stringByAppendingPathComponent:@"Info.plist"]];
-    NSString* plistBundleId = infoPlist[@"CFBundleIdentifier"];
-    NSString* hostBundleId = NSBundle.mainBundle.bundleIdentifier;
-    if([plistBundleId isKindOfClass:NSString.class] && plistBundleId.length > 0 && ![plistBundleId isEqualToString:hostBundleId]) {
-        return plistBundleId;
-    }
-    NSLog(@"[LC] no guest bundle identifier known for %@, signing it as the host", path.lastPathComponent);
-    return hostBundleId;
-}
-
 + (NSProgress *)signAppBundleWithZSign:(NSURL *)path completionHandler:(void (^)(BOOL success, NSError *error))completionHandler {
-    return [self signAppBundleWithZSign:path bundleId:nil completionHandler:completionHandler];
-}
-
-+ (NSProgress *)signAppBundleWithZSign:(NSURL *)path bundleId:(NSString *)bundleId completionHandler:(void (^)(BOOL success, NSError *error))completionHandler {
     NSError *error;
 
     // use zsign as our signer~
@@ -218,12 +196,7 @@ static NSString* LCBundleIdentifierFromProvisioningProfileData(NSData* profileDa
 
     NSLog(@"[LC] starting signing...");
 
-    // ZSigner takes a single identifier for everything in the bundle, so the
-    // caller's (the guest's) is what the main executable ends up signed with; the
-    // host's identifier must never reach it.
-    NSString* signBundleId = bundleId.length > 0 ? bundleId : [self guestBundleIdentifierForAppBundleAtPath:path.path];
-    
-    NSProgress* ans = [NSClassFromString(@"ZSigner") signWithAppPath:[path path] bundleId:signBundleId cert:self.certificateData pass:LCSharedUtils.certificatePassword completionHandler:completionHandler];
+    NSProgress* ans = [NSClassFromString(@"ZSigner") signWithAppPath:[path path] bundleId:NSBundle.mainBundle.bundleIdentifier cert:self.certificateData pass:LCSharedUtils.certificatePassword completionHandler:completionHandler];
     
     return ans;
 }

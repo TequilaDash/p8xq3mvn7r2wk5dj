@@ -691,10 +691,7 @@ static NSDictionary* LCFileIdentity(NSString* path) {
                 });
             };
             
-            // 签主 app 时用访客安装时的 bundle id, 不是宿主的; 解析不出来才由
-            // LCUtils 退回宿主 id, 保证 ZSigner 永远拿到非空值.
-            NSString *signBundleId = [self originalBundleIdentifierForSigning];
-            __block NSProgress *progress = [LCUtils signAppBundleWithZSign:appPathURL bundleId:signBundleId completionHandler:signCompletionHandler];
+            __block NSProgress *progress = [LCUtils signAppBundleWithZSign:appPathURL completionHandler:signCompletionHandler];
 
             if (progress) {
                 progressHandler(progress);
