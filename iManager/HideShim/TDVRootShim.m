@@ -641,8 +641,8 @@ static void *tdv_sectask_copy_impl(tdv_SecTaskRef task, CFStringRef entitlement,
 // 位定义与门控在 TDVRootConfig (TDVCsopsSpoofEnabled / TDVCsopsSpoofLookup).
 extern int tdv_real_csops(int pid, unsigned int ops, void *useraddr, size_t usersize)
     __asm("_csops");
-extern int tdv_real_csops_audittoken(void *token, unsigned int ops, void *useraddr,
-                                     size_t usersize)
+extern int tdv_real_csops_audittoken(int pid, unsigned int ops, void *useraddr,
+                                     size_t usersize, void *token)
     __asm("_csops_audittoken");
 
 static int tdv_csops_apply(unsigned int ops, void *useraddr, size_t usersize,
@@ -656,12 +656,11 @@ static int tdv_csops_apply(unsigned int ops, void *useraddr, size_t usersize,
         if (TDVCsopsSpoofLookup(fake, &fake)) {
             memcpy(useraddr, &fake, sizeof(unsigned int));
         }
-    } else if (ops == 13 /*CS_OPS_CDHASH*/ && usersize >= 20) {
+    } else if (ops == 5 /*CS_OPS_CDHASH*/ && usersize >= 20) {
         Dl_info info = {0};
         const char *callerImage = caller && dladdr(caller, &info) ? info.dli_fname : NULL;
-        if (callerImage &&
-            TDVOriginalExecutableCodeDirectoryHash(callerImage, useraddr, usersize)) {
-            // 真 csops 返回宿主重签后的摘要; 覆盖为安装前原件摘要.
+        if (callerImage) {
+            (void)TDVOriginalExecutableCodeDirectoryHash(callerImage, useraddr, usersize);
         }
     }
     return realRc;
@@ -669,13 +668,19 @@ static int tdv_csops_apply(unsigned int ops, void *useraddr, size_t usersize,
 
 static int tdv_csops_impl(int pid, unsigned int ops, void *useraddr, size_t usersize) {
     // 仅伪化自身 pid 查询 (getpid 同进程恒等; 跨 pid 查询给真值 —— 访客无权跨进程读).
+    if (pid != getpid()) {
+        return tdv_real_csops(pid, ops, useraddr, usersize);
+    }
     int rc = tdv_real_csops(pid, ops, useraddr, usersize);
     return tdv_csops_apply(ops, useraddr, usersize, rc, __builtin_return_address(0));
 }
 
-static int tdv_csops_audittoken_impl(void *token, unsigned int ops, void *useraddr,
-                                     size_t usersize) {
-    int rc = tdv_real_csops_audittoken(token, ops, useraddr, usersize);
+static int tdv_csops_audittoken_impl(int pid, unsigned int ops, void *useraddr,
+                                     size_t usersize, void *token) {
+    if (pid != getpid()) {
+        return tdv_real_csops_audittoken(pid, ops, useraddr, usersize, token);
+    }
+    int rc = tdv_real_csops_audittoken(pid, ops, useraddr, usersize, token);
     return tdv_csops_apply(ops, useraddr, usersize, rc, __builtin_return_address(0));
 }
 

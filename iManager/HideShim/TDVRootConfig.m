@@ -695,7 +695,8 @@ bool TDVOriginalExecutableCodeDirectoryHash(const char *callerImage, void *outHa
                         uint32_t superMagic = tdv_be32(*(const uint32_t *)blob);
                         uint32_t superLength = tdv_be32(*(const uint32_t *)(blob + 4));
                         if (superMagic == TDV_CS_EMBEDDED_SIGNATURE &&
-                            superLength >= 12 && blob + superLength <= blobEnd) {
+                            superLength >= 12 && superLength <= dataSize &&
+                            blob + superLength <= blobEnd) {
                             uint32_t count = tdv_be32(*(const uint32_t *)(blob + 8));
                             uint8_t *cd = NULL;
                             if (count > 0 && (uint64_t)12 + (uint64_t)count * 8 <= superLength) {
