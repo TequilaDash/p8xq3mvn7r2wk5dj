@@ -149,12 +149,53 @@ static void tdv_log_tweaks_hit(const char *fn, const char *path) {
 
 #pragma mark - 路径类替换
 
-// 把 path 映射到 vroot; 命中返回映射指针, 否则返回原指针.
+// 把 path 映射到 vroot 或访客包内原件; 命中返回映射指针, 否则返回原指针.
+// TDVGuestFileMapHidden 以 NULL + ENOENT 通知 path hook.
+static inline const char *tdv_mapped_for_caller(const char *path, char *buf, size_t bufSize,
+                                                void *caller) {
+    if (!path || path[0] != '/') {
+        return path;
+    }
+    Dl_info info = {0};
+    const char *callerImage = caller && dladdr(caller, &info) ? info.dli_fname : NULL;
+    TDVGuestFileMapResult guestMap = TDVGuestMapBundleFile(path, callerImage, buf, bufSize);
+    if (guestMap == TDVGuestFileMapTo) {
+        return buf;
+    }
+    if (guestMap == TDVGuestFileMapHidden) {
+        errno = ENOENT;
+        return NULL;
+    }
+    if (TDVRootMapPath(path, buf, bufSize)) {
+        return buf;
+    }
+    return path;
+}
+
 static inline const char *tdv_mapped(const char *path, char *buf, size_t bufSize) {
+    return tdv_mapped_for_caller(path, buf, bufSize, NULL);
+}
+
+static inline const char *tdv_vroot_mapped(const char *path, char *buf, size_t bufSize) {
     if (path && path[0] == '/' && TDVRootMapPath(path, buf, bufSize)) {
         return buf;
     }
     return path;
+}
+
+// A path that only exists to hand the guest original bytes must be invisible to
+// the guest. Unlike normal reads, mutating and path-resolving hooks must not
+// fall through to the backup even when the requested name is not an alias.
+static inline bool tdv_guest_backup_hidden(const char *path, void *caller) {
+    if (!path || path[0] != '/') return false;
+    Dl_info info = {0};
+    const char *callerImage = caller && dladdr(caller, &info) ? info.dli_fname : NULL;
+    char backup[PATH_MAX];
+    return TDVGuestMapBundleFile(path, callerImage, backup, sizeof(backup)) == TDVGuestFileMapHidden;
+}
+
+static inline bool tdv_hidden_path_result(const char *mapped) {
+    return mapped == NULL;
 }
 
 static int tdv_open(const char *path, int flags, ...) {
@@ -167,12 +208,18 @@ static int tdv_open(const char *path, int flags, ...) {
         va_end(ap);
     }
     char buf[PATH_MAX];
-    if (tdv_hide_tweaks(path, __builtin_return_address(0))) {
+    void *caller = __builtin_return_address(0);
+    if (tdv_hide_tweaks(path, caller)) {
         tdv_log_tweaks_hit("open", path);
         errno = ENOENT;
         return -1;
     }
-    const char *use = tdv_mapped(path, buf, sizeof(buf));
+    const char *use = tdv_mapped_for_caller(path, buf, sizeof(buf), caller);
+    if (tdv_hidden_path_result(use)) return -1;
+    if (use != path && (flags & O_ACCMODE) != O_RDONLY) {
+        errno = EROFS;
+        return -1;
+    }
     if (hasMode) {
         return TDV_REAL(open)(use, flags, mode);
     }
@@ -189,13 +236,19 @@ static int tdv_openat(int fd, const char *path, int flags, ...) {
         va_end(ap);
     }
     char buf[PATH_MAX];
-    if (tdv_hide_tweaks(path, __builtin_return_address(0))) {
+    void *caller = __builtin_return_address(0);
+    if (tdv_hide_tweaks(path, caller)) {
         tdv_log_tweaks_hit("openat", path);
         errno = ENOENT;
         return -1;
     }
     // 相对路径不映射: 语义取决于 dirfd, 无法安全改写.
-    const char *use = tdv_mapped(path, buf, sizeof(buf));
+    const char *use = tdv_mapped_for_caller(path, buf, sizeof(buf), caller);
+    if (tdv_hidden_path_result(use)) return -1;
+    if (path && path[0] == '/' && use != path && (flags & O_ACCMODE) != O_RDONLY) {
+        errno = EROFS;
+        return -1;
+    }
     if (hasMode) {
         return TDV_REAL(openat)(fd, use, flags, mode);
     }
@@ -212,7 +265,13 @@ static int tdv_open_nocancel(const char *path, int flags, ...) {
         va_end(ap);
     }
     char buf[PATH_MAX];
-    const char *use = tdv_mapped(path, buf, sizeof(buf));
+    void *caller = __builtin_return_address(0);
+    const char *use = tdv_mapped_for_caller(path, buf, sizeof(buf), caller);
+    if (tdv_hidden_path_result(use)) return -1;
+    if (use != path && (flags & O_ACCMODE) != O_RDONLY) {
+        errno = EROFS;
+        return -1;
+    }
     if (hasMode) {
         return TDV_REAL(open_nocancel)(use, flags, mode);
     }
@@ -226,7 +285,9 @@ static int tdv_stat(const char *path, struct stat *sb) {
         return -1;
     }
     char buf[PATH_MAX];
-    return TDV_REAL(stat)(tdv_mapped(path, buf, sizeof(buf)), sb);
+    const char *use = tdv_mapped_for_caller(path, buf, sizeof(buf), __builtin_return_address(0));
+    if (tdv_hidden_path_result(use)) return -1;
+    return TDV_REAL(stat)(use, sb);
 }
 
 static int tdv_lstat(const char *path, struct stat *sb) {
@@ -236,7 +297,9 @@ static int tdv_lstat(const char *path, struct stat *sb) {
         return -1;
     }
     char buf[PATH_MAX];
-    return TDV_REAL(lstat)(tdv_mapped(path, buf, sizeof(buf)), sb);
+    const char *use = tdv_mapped_for_caller(path, buf, sizeof(buf), __builtin_return_address(0));
+    if (tdv_hidden_path_result(use)) return -1;
+    return TDV_REAL(lstat)(use, sb);
 }
 
 static int tdv_fstatat(int fd, const char *path, struct stat *sb, int flags) {
@@ -249,7 +312,9 @@ static int tdv_fstatat(int fd, const char *path, struct stat *sb, int flags) {
         return TDV_REAL(fstatat)(fd, path, sb, flags);
     }
     char buf[PATH_MAX];
-    return TDV_REAL(fstatat)(fd, tdv_mapped(path, buf, sizeof(buf)), sb, flags);
+    const char *use = tdv_mapped_for_caller(path, buf, sizeof(buf), __builtin_return_address(0));
+    if (tdv_hidden_path_result(use)) return -1;
+    return TDV_REAL(fstatat)(fd, use, sb, flags);
 }
 
 static int tdv_access(const char *path, int mode) {
@@ -259,7 +324,9 @@ static int tdv_access(const char *path, int mode) {
         return -1;
     }
     char buf[PATH_MAX];
-    return TDV_REAL(access)(tdv_mapped(path, buf, sizeof(buf)), mode);
+    const char *use = tdv_mapped_for_caller(path, buf, sizeof(buf), __builtin_return_address(0));
+    if (tdv_hidden_path_result(use)) return -1;
+    return TDV_REAL(access)(use, mode);
 }
 
 static int tdv_faccessat(int fd, const char *path, int mode, int flags) {
@@ -267,22 +334,31 @@ static int tdv_faccessat(int fd, const char *path, int mode, int flags) {
         return TDV_REAL(faccessat)(fd, path, mode, flags);
     }
     char buf[PATH_MAX];
-    return TDV_REAL(faccessat)(fd, tdv_mapped(path, buf, sizeof(buf)), mode, flags);
+    const char *use = tdv_mapped_for_caller(path, buf, sizeof(buf), __builtin_return_address(0));
+    if (tdv_hidden_path_result(use)) return -1;
+    return TDV_REAL(faccessat)(fd, use, mode, flags);
 }
 
 static char *tdv_realpath(const char *path, char *resolved) {
-    if (tdv_hide_tweaks(path, __builtin_return_address(0))) {
-        tdv_log_tweaks_hit("realpath", path);
+    void *caller = __builtin_return_address(0);
+    if (tdv_hide_tweaks(path, caller) || tdv_guest_backup_hidden(path, caller)) {
+        if (path) tdv_log_tweaks_hit("realpath", path);
         errno = ENOENT;
         return NULL;
     }
+    // realpath deliberately resolves the *visible* alias, not the backup: handing
+    // the guest the `.td-original...` name would defeat the path virtualization.
     char buf[PATH_MAX];
-    return TDV_REAL(realpath)(tdv_mapped(path, buf, sizeof(buf)), resolved);
+    return TDV_REAL(realpath)(tdv_vroot_mapped(path, buf, sizeof(buf)), resolved);
 }
 
 static ssize_t tdv_readlink(const char *path, char *buf, size_t bufSize) {
     char mapped[PATH_MAX];
-    return TDV_REAL(readlink)(tdv_mapped(path, mapped, sizeof(mapped)), buf, bufSize);
+    void *caller = __builtin_return_address(0);
+    if (tdv_guest_backup_hidden(path, caller)) return -1;
+    const char *use = tdv_mapped_for_caller(path, mapped, sizeof(mapped), caller);
+    if (tdv_hidden_path_result(use)) return -1;
+    return TDV_REAL(readlink)(use, buf, bufSize);
 }
 
 static DIR *tdv_opendir(const char *path) {
@@ -292,32 +368,38 @@ static DIR *tdv_opendir(const char *path) {
         return NULL;
     }
     char buf[PATH_MAX];
-    return TDV_REAL(opendir)(tdv_mapped(path, buf, sizeof(buf)));
+    const char *use = tdv_mapped_for_caller(path, buf, sizeof(buf), __builtin_return_address(0));
+    if (tdv_hidden_path_result(use)) return NULL;
+    return TDV_REAL(opendir)(use);
 }
 
 static int tdv_mkdir(const char *path, mode_t mode) {
+    if (tdv_guest_backup_hidden(path, __builtin_return_address(0))) return -1;
     char buf[PATH_MAX];
-    return TDV_REAL(mkdir)(tdv_mapped(path, buf, sizeof(buf)), mode);
+    return TDV_REAL(mkdir)(tdv_vroot_mapped(path, buf, sizeof(buf)), mode);
 }
 
 static int tdv_rename(const char *from, const char *to) {
+    void *caller = __builtin_return_address(0);
+    if (tdv_guest_backup_hidden(from, caller) || tdv_guest_backup_hidden(to, caller)) return -1;
     char fromBuf[PATH_MAX];
     char toBuf[PATH_MAX];
-    const char *newFrom = tdv_mapped(from, fromBuf, sizeof(fromBuf));
-    const char *newTo = tdv_mapped(to, toBuf, sizeof(toBuf));
-    return TDV_REAL(rename)(newFrom, newTo);
+    return TDV_REAL(rename)(tdv_vroot_mapped(from, fromBuf, sizeof(fromBuf)),
+                            tdv_vroot_mapped(to, toBuf, sizeof(toBuf)));
 }
 
 static int tdv_unlink(const char *path) {
+    if (tdv_guest_backup_hidden(path, __builtin_return_address(0))) return -1;
     char buf[PATH_MAX];
-    return TDV_REAL(unlink)(tdv_mapped(path, buf, sizeof(buf)));
+    return TDV_REAL(unlink)(tdv_vroot_mapped(path, buf, sizeof(buf)));
 }
 
 static int tdv_getattrlist(const char *path, void *attrList, void *attrBuf,
                            size_t attrBufSize, unsigned long options) {
     char buf[PATH_MAX];
-    return TDV_REAL(getattrlist)(tdv_mapped(path, buf, sizeof(buf)),
-                                attrList, attrBuf, attrBufSize, options);
+    const char *use = tdv_mapped_for_caller(path, buf, sizeof(buf), __builtin_return_address(0));
+    if (tdv_hidden_path_result(use)) return -1;
+    return TDV_REAL(getattrlist)(use, attrList, attrBuf, attrBufSize, options);
 }
 
 #pragma mark - getmntinfo 追加 vroot 项
@@ -533,6 +615,15 @@ static void *tdv_sectask_copy_impl(tdv_SecTaskRef task, CFStringRef entitlement,
     if (entitlement) {
         ok = CFStringGetCString(entitlement, name, sizeof(name), kCFStringEncodingUTF8);
     }
+    if (ok) {
+        Dl_info info = {0};
+        const char *callerImage = dladdr(__builtin_return_address(0), &info) ? info.dli_fname : NULL;
+        void *replacement = TDVSecTaskReplacementForEntitlement(name, callerImage);
+        if (replacement) {
+            if (error) *error = NULL;
+            return replacement;
+        }
+    }
     if (ok && TDVSecTaskHideEntitlement(name)) {
         if (error) *error = NULL;
         return NULL;
@@ -555,13 +646,22 @@ extern int tdv_real_csops_audittoken(void *token, unsigned int ops, void *userad
     __asm("_csops_audittoken");
 
 static int tdv_csops_apply(unsigned int ops, void *useraddr, size_t usersize,
-                           int realRc) {
-    if (ops == 0 /*CS_OPS_STATUS*/ && realRc == 0 && useraddr &&
-        usersize >= sizeof(unsigned int)) {
+                           int realRc, void *caller) {
+    if (realRc != 0 || !useraddr) {
+        return realRc;
+    }
+    if (ops == 0 /*CS_OPS_STATUS*/ && usersize >= sizeof(unsigned int)) {
         unsigned int fake = 0;
         memcpy(&fake, useraddr, sizeof(unsigned int));
         if (TDVCsopsSpoofLookup(fake, &fake)) {
             memcpy(useraddr, &fake, sizeof(unsigned int));
+        }
+    } else if (ops == 13 /*CS_OPS_CDHASH*/ && usersize >= 20) {
+        Dl_info info = {0};
+        const char *callerImage = caller && dladdr(caller, &info) ? info.dli_fname : NULL;
+        if (callerImage &&
+            TDVOriginalExecutableCodeDirectoryHash(callerImage, useraddr, usersize)) {
+            // 真 csops 返回宿主重签后的摘要; 覆盖为安装前原件摘要.
         }
     }
     return realRc;
@@ -570,13 +670,13 @@ static int tdv_csops_apply(unsigned int ops, void *useraddr, size_t usersize,
 static int tdv_csops_impl(int pid, unsigned int ops, void *useraddr, size_t usersize) {
     // 仅伪化自身 pid 查询 (getpid 同进程恒等; 跨 pid 查询给真值 —— 访客无权跨进程读).
     int rc = tdv_real_csops(pid, ops, useraddr, usersize);
-    return tdv_csops_apply(ops, useraddr, usersize, rc);
+    return tdv_csops_apply(ops, useraddr, usersize, rc, __builtin_return_address(0));
 }
 
 static int tdv_csops_audittoken_impl(void *token, unsigned int ops, void *useraddr,
                                      size_t usersize) {
     int rc = tdv_real_csops_audittoken(token, ops, useraddr, usersize);
-    return tdv_csops_apply(ops, useraddr, usersize, rc);
+    return tdv_csops_apply(ops, useraddr, usersize, rc, __builtin_return_address(0));
 }
 
 #pragma mark - proc 族伪值 (TD_PROC_SPOOF)
@@ -791,9 +891,12 @@ TDV_INTERPOSE(tdv_getegid, tdv_real_getegid);
 TDV_INTERPOSE(tdv_sysctlbyname, tdv_real_sysctlbyname);
 TDV_INTERPOSE(tdv_sysctl_impl, tdv_real_sysctl);
 TDV_INTERPOSE(tdv_sectask_copy_impl, tdv_real_sectask_copy);
+static void tdv_sectask_apply_replacement(const void *key, const void *value, void *context) {
+    CFDictionarySetValue((CFMutableDictionaryRef)context, key, value);
+}
 static CFDictionaryRef tdv_sectask_copy_values_impl(tdv_SecTaskRef task,
-                                                    CFArrayRef entitlements,
-                                                    void **error);
+                                                     CFArrayRef entitlements,
+                                                     void **error);
 extern CFDictionaryRef tdv_real_sectask_copy_values(tdv_SecTaskRef task,
                                                     CFArrayRef entitlements,
                                                     void **error)
@@ -824,26 +927,53 @@ static CFDictionaryRef tdv_sectask_copy_values_impl(tdv_SecTaskRef task,
         return tdv_real_sectask_copy_values(task, entitlements, error);
     }
     CFIndex n = CFArrayGetCount(entitlements);
-    bool anyHidden = false;
+    bool anyHidden = false, anyReplacement = false;
+    Dl_info info = {0};
+    const char *callerImage = dladdr(__builtin_return_address(0), &info) ? info.dli_fname : NULL;
     CFMutableArrayRef filtered = CFArrayCreateMutableCopy(kCFAllocatorDefault, n, entitlements);
+    CFMutableDictionaryRef replacements = NULL;
     if (filtered == NULL) {
         return tdv_real_sectask_copy_values(task, entitlements, error);
     }
-    // 从后往前剔除命中键 (避免索引位移).
+    replacements = CFDictionaryCreateMutable(kCFAllocatorDefault, 0,
+        &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+    // 从后往前剔除命中键 (避免索引位移). 原始 profile 能替换的键保留并记录替换值,
+    // 只隐藏无原件对应项的宿主键.
     for (CFIndex i = n - 1; i >= 0; i--) {
         CFStringRef key = (CFStringRef)CFArrayGetValueAtIndex(entitlements, i);
         char name[256];
-        if (key && CFStringGetCString(key, name, sizeof(name), kCFStringEncodingUTF8) &&
-            TDVSecTaskHideEntitlement(name)) {
+        if (!key || !CFStringGetCString(key, name, sizeof(name), kCFStringEncodingUTF8)) {
+            continue;
+        }
+        void *replacement = TDVSecTaskReplacementForEntitlement(name, callerImage);
+        if (replacement) {
+            if (replacements) {
+                CFDictionarySetValue(replacements, key, replacement);
+                anyReplacement = true;
+            }
+            CFRelease(replacement);
+            continue;
+        }
+        if (TDVSecTaskHideEntitlement(name)) {
             CFArrayRemoveValueAtIndex(filtered, i);
             anyHidden = true;
         }
     }
-    if (!anyHidden) {
+    if (!anyHidden && !anyReplacement) {
+        if (replacements) CFRelease(replacements);
         CFRelease(filtered);
         return tdv_real_sectask_copy_values(task, entitlements, error);
     }
     CFDictionaryRef result = tdv_real_sectask_copy_values(task, filtered, error);
     CFRelease(filtered);
+    if (anyReplacement && result) {
+        CFDictionaryRef overridden = CFDictionaryCreateMutableCopy(kCFAllocatorDefault, 0, result);
+        if (overridden) {
+            CFDictionaryApplyFunction(replacements, tdv_sectask_apply_replacement, (void *)overridden);
+            CFRelease(result);
+            result = overridden;
+        }
+    }
+    if (replacements) CFRelease(replacements);
     return result;
 }

@@ -20,6 +20,10 @@ static const CGFloat LCHomeButtonFirstFraction = 0.62;
     return self;
 }
 
++ (void)removeSavedPlacement {
+    [NSUserDefaults.lcUserDefaults removeObjectForKey:LCHomeButtonPlacementKey];
+}
+
 + (instancetype)savedPlacement {
     NSDictionary *saved = [NSUserDefaults.lcUserDefaults dictionaryForKey:LCHomeButtonPlacementKey];
     NSNumber *edge = saved[@"edge"];

@@ -116,7 +116,95 @@
     loaded = YES;
 }
 
+// A provisioning profile is a CMS blob with an XML plist inside; the identity the
+// app was published under lives in that plist's entitlements as
+// "<TEAM>.<bundle id>". Slicing the plist out of the bytes is all we need, and it
+// works on profiles we did not sign ourselves.
+static NSString* LCBundleIdentifierFromProvisioningProfileData(NSData* profileData) {
+    if(profileData.length == 0) {
+        return nil;
+    }
+    NSData* openTag = [@"<plist" dataUsingEncoding:NSUTF8StringEncoding];
+    NSData* xmlTag = [@"<?xml" dataUsingEncoding:NSUTF8StringEncoding];
+    NSData* closeTag = [@"</plist>" dataUsingEncoding:NSUTF8StringEncoding];
+    NSRange whole = NSMakeRange(0, profileData.length);
+    NSRange begin = [profileData rangeOfData:openTag options:0 range:whole];
+    if(begin.location == NSNotFound) {
+        begin = [profileData rangeOfData:xmlTag options:0 range:whole];
+    }
+    if(begin.location == NSNotFound) {
+        return nil;
+    }
+    NSRange tail = NSMakeRange(begin.location, profileData.length - begin.location);
+    NSRange end = [profileData rangeOfData:closeTag options:NSDataSearchBackwards range:tail];
+    if(end.location == NSNotFound) {
+        return nil;
+    }
+    NSData* plistData = [profileData subdataWithRange:NSMakeRange(begin.location, end.location + end.length - begin.location)];
+    NSDictionary* profile = [NSPropertyListSerialization propertyListWithData:plistData options:0 error:nil];
+    if(![profile isKindOfClass:NSDictionary.class]) {
+        return nil;
+    }
+    NSDictionary* entitlements = profile[@"Entitlements"];
+    if(![entitlements isKindOfClass:NSDictionary.class]) {
+        return nil;
+    }
+    for(NSString* key in @[@"application-identifier", @"com.apple.application-identifier"]) {
+        NSString* value = entitlements[key];
+        if(![value isKindOfClass:NSString.class]) {
+            continue;
+        }
+        NSRange separator = [value rangeOfString:@"."];
+        if(separator.location != NSNotFound && separator.location + 1 < value.length) {
+            return [value substringFromIndex:separator.location + 1];
+        }
+    }
+    return nil;
+}
+
++ (NSString *)guestBundleIdentifierFromProvisioningProfileInBundleAtPath:(NSString *)path {
+    if(path.length == 0) {
+        return nil;
+    }
+    NSFileManager* fm = NSFileManager.defaultManager;
+    // The backup taken at install time is the copy that still carries the guest's
+    // own identity; a profile-less app has none and we are not going to invent one.
+    for(NSString* name in @[@".td-original.mobileprovision", @"embedded.mobileprovision"]) {
+        NSString* profilePath = [path stringByAppendingPathComponent:name];
+        if(![fm fileExistsAtPath:profilePath]) {
+            continue;
+        }
+        NSString* bundleId = LCBundleIdentifierFromProvisioningProfileData([NSData dataWithContentsOfFile:profilePath]);
+        if(bundleId.length > 0) {
+            return bundleId;
+        }
+    }
+    return nil;
+}
+
++ (NSString *)guestBundleIdentifierForAppBundleAtPath:(NSString *)path {
+    NSString* profileBundleId = [self guestBundleIdentifierFromProvisioningProfileInBundleAtPath:path];
+    if(profileBundleId.length > 0) {
+        return profileBundleId;
+    }
+    // Nothing to read an identity from: an ad-hoc or profile-less guest. Its own
+    // Info.plist is the only record left, and it only counts while it still says
+    // something other than the host, because `doUseLCBundleId` overwrites it.
+    NSDictionary* infoPlist = [NSDictionary dictionaryWithContentsOfFile:[path stringByAppendingPathComponent:@"Info.plist"]];
+    NSString* plistBundleId = infoPlist[@"CFBundleIdentifier"];
+    NSString* hostBundleId = NSBundle.mainBundle.bundleIdentifier;
+    if([plistBundleId isKindOfClass:NSString.class] && plistBundleId.length > 0 && ![plistBundleId isEqualToString:hostBundleId]) {
+        return plistBundleId;
+    }
+    NSLog(@"[LC] no guest bundle identifier known for %@, signing it as the host", path.lastPathComponent);
+    return hostBundleId;
+}
+
 + (NSProgress *)signAppBundleWithZSign:(NSURL *)path completionHandler:(void (^)(BOOL success, NSError *error))completionHandler {
+    return [self signAppBundleWithZSign:path bundleId:nil completionHandler:completionHandler];
+}
+
++ (NSProgress *)signAppBundleWithZSign:(NSURL *)path bundleId:(NSString *)bundleId completionHandler:(void (^)(BOOL success, NSError *error))completionHandler {
     NSError *error;
 
     // use zsign as our signer~
@@ -129,8 +217,13 @@
     }
 
     NSLog(@"[LC] starting signing...");
+
+    // ZSigner takes a single identifier for everything in the bundle, so the
+    // caller's (the guest's) is what the main executable ends up signed with; the
+    // host's identifier must never reach it.
+    NSString* signBundleId = bundleId.length > 0 ? bundleId : [self guestBundleIdentifierForAppBundleAtPath:path.path];
     
-    NSProgress* ans = [NSClassFromString(@"ZSigner") signWithAppPath:[path path] bundleId:NSBundle.mainBundle.bundleIdentifier cert:self.certificateData pass:LCSharedUtils.certificatePassword completionHandler:completionHandler];
+    NSProgress* ans = [NSClassFromString(@"ZSigner") signWithAppPath:[path path] bundleId:signBundleId cert:self.certificateData pass:LCSharedUtils.certificatePassword completionHandler:completionHandler];
     
     return ans;
 }

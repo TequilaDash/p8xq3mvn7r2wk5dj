@@ -792,3 +792,304 @@ NSString* getExecutableEntitlementXML(NSString* path) {
     });
     return ans;
 }
+
+#pragma mark - Guest executable Mach-O header restore (anti-tamper)
+
+// DyldHooksInit / LCBootstrap 维护的访客主镜像真实索引; 使用前必须按路径核验,
+// 不能盲信 (常驻进程里它可能仍指向上一轮访客或尚未解析).
+extern uint32_t appMainImageIndex;
+
+#define LC_TD_ORIG_EXEC_SUFFIX ".td-original.executable"
+// load commands 区域上限: __TEXT 空洞远小于此, 更大的 sizeofcmds 必为损坏/伪造.
+#define LC_TD_MAX_SIZEOFCMDS (256 * 1024)
+
+static inline uint32_t LC_td_swap32(uint32_t value, bool swap) {
+    return swap ? OSSwapInt32(value) : value;
+}
+
+// 头文件在 iOS SDK 里不导出 mach_vm_region 的原型, 与运行时 (libsystem_kernel
+// 的 MIG 桩) 保持 syscalls.h 中的签名一致.
+extern kern_return_t mach_vm_region(vm_map_t target_task,
+                                    mach_vm_address_t *address,
+                                    mach_vm_size_t *size,
+                                    vm_region_flavor_t flavor,
+                                    vm_region_info_t info,
+                                    mach_msg_type_number_t *infoCnt,
+                                    mach_port_t *object_name);
+
+static bool LCIsArm64Header(struct mach_header_64 *header, off_t available) {
+    return header->magic == MH_MAGIC_64 &&
+           header->cputype == CPU_TYPE_ARM64 &&
+           header->ncmds > 0 && header->ncmds <= 4096 &&
+           header->sizeofcmds >= (uint32_t)header->ncmds * (uint32_t)sizeof(struct load_command) &&
+           header->sizeofcmds <= LC_TD_MAX_SIZEOFCMDS &&
+           header->sizeofcmds <= (uint32_t)(available - (off_t)sizeof(struct mach_header_64)) &&
+           (off_t)sizeof(struct mach_header_64) + header->sizeofcmds <= available;
+}
+
+// 严格走一遍 load command 序列: 每条 cmdsize 至少容纳自身、不超过剩余空间,
+// ncmds 条必须全部落在缓冲区里. 防止把越界/截断数据当合法头写回内存.
+static bool LCValidateLoadCommands(struct mach_header_64 *header) {
+    uint8_t *cursor = (uint8_t *)header + sizeof(struct mach_header_64);
+    uint8_t *end = (uint8_t *)header + sizeof(struct mach_header_64) + header->sizeofcmds;
+    for (uint32_t i = 0; i < header->ncmds; i++) {
+        if ((uint8_t *)end - cursor < (ptrdiff_t)sizeof(struct load_command)) return false;
+        struct load_command *command = (struct load_command *)cursor;
+        if (command->cmdsize < sizeof(struct load_command)) return false;
+        if (command->cmdsize > (uint32_t)((uint8_t *)end - cursor)) return false;
+        cursor += command->cmdsize;
+    }
+    return true;
+}
+
+bool LCLoadOriginalExecutableMachOHeader(const char *execPath,
+                                         struct mach_header_64 **outHeader,
+                                         uint32_t *outHeaderSize) {
+    if (outHeader) *outHeader = NULL;
+    if (outHeaderSize) *outHeaderSize = 0;
+    if (!execPath || !execPath[0] || !outHeader || !outHeaderSize) return false;
+
+    char backupPath[PATH_MAX];
+    int written = snprintf(backupPath, sizeof(backupPath), "%s%s", execPath, LC_TD_ORIG_EXEC_SUFFIX);
+    if (written < 0 || (size_t)written >= sizeof(backupPath)) return false;
+
+    // 与 TDSafeCheckCodeSignature 同样的理由: pread 读头, 不 mmap, 避免签名
+    // 校验路径上的额外副作用; 备份不存在时保持现状 (no-op, 返回 false).
+    int fd = open(backupPath, O_RDONLY);
+    if (fd < 0) return false;
+    struct stat st = {0};
+    if (fstat(fd, &st) != 0 || st.st_size < (off_t)sizeof(struct mach_header_64)) {
+        close(fd);
+        return false;
+    }
+
+    off_t sliceOffset = 0;
+    off_t sliceSize = st.st_size;
+    uint32_t magic = 0;
+    bool ok = TDReadAt(fd, &magic, sizeof(magic), 0);
+    if (ok && (magic == FAT_CIGAM || magic == FAT_MAGIC)) {
+        // universal: 找 arm64 slice. 首选 cputype==CPU_TYPE_ARM64; 兼容个别
+        // 工具把 64 位 slice 标成 CPU_TYPE_ARM+CPU_SUBTYPE_ARM64_ALL 的写法,
+        // 这类候选必须靠 slice 自身的 MH_MAGIC_64 二次确认.
+        struct fat_header fat;
+        if (!TDReadAt(fd, &fat, sizeof(fat), 0)) {
+            close(fd);
+            return false;
+        }
+        bool swapFields = (magic == FAT_CIGAM);
+        uint32_t count = LC_td_swap32(fat.nfat_arch, swapFields);
+        if (count == 0 || count > 64 ||
+            (off_t)sizeof(fat) + (off_t)count * (off_t)sizeof(struct fat_arch) > st.st_size) {
+            close(fd);
+            return false;
+        }
+        bool haveExact = false, haveLoose = false;
+        off_t looseOffset = 0, looseSize = 0;
+        for (uint32_t i = 0; i < count; i++) {
+            struct fat_arch arch;
+            off_t at = (off_t)sizeof(fat) + (off_t)i * (off_t)sizeof(arch);
+            if (!TDReadAt(fd, &arch, sizeof(arch), at)) break;
+            uint32_t cputype = LC_td_swap32(arch.cputype, swapFields);
+            uint32_t subtype = LC_td_swap32(arch.cpusubtype, swapFields);
+            uint32_t offset = LC_td_swap32(arch.offset, swapFields);
+            uint32_t size = LC_td_swap32(arch.size, swapFields);
+            // offset/size 是 uint32, 转 off_t(64 位)后相加不会溢出 32 位边界;
+            // 仍需检查 slice 完整落在文件内.
+            bool inBounds = (off_t)offset + (off_t)size <= st.st_size &&
+                            size >= (uint32_t)sizeof(struct mach_header_64);
+            if (!inBounds) continue;
+            if (cputype == CPU_TYPE_ARM64) {
+                sliceOffset = (off_t)offset;
+                sliceSize = (off_t)size;
+                haveExact = true;
+                break;
+            }
+            if (!haveLoose && cputype == CPU_TYPE_ARM && subtype == CPU_SUBTYPE_ARM64_ALL) {
+                looseOffset = (off_t)offset;
+                looseSize = (off_t)size;
+                haveLoose = true;
+            }
+        }
+        if (!haveExact) {
+            if (!haveLoose) {
+                close(fd);
+                return false;
+            }
+            sliceOffset = looseOffset;
+            sliceSize = looseSize;
+        }
+        if (!TDReadAt(fd, &magic, sizeof(magic), sliceOffset)) {
+            close(fd);
+            return false;
+        }
+    }
+    if (ok && magic == MH_MAGIC_64) {
+        struct mach_header_64 probe;
+        if (!TDReadAt(fd, &probe, sizeof(probe), sliceOffset) ||
+            !LCIsArm64Header(&probe, sliceSize)) {
+            ok = false;
+        } else {
+            uint32_t total = (uint32_t)sizeof(probe) + probe.sizeofcmds;
+            struct mach_header_64 *buffer = (struct mach_header_64 *)malloc(total);
+            if (!buffer || !TDReadAt(fd, buffer, total, sliceOffset) ||
+                !LCValidateLoadCommands(buffer)) {
+                free(buffer);
+                ok = false;
+            } else {
+                *outHeader = buffer;
+                *outHeaderSize = total;
+            }
+        }
+    } else {
+        ok = false;
+    }
+    close(fd);
+    if (!ok) {
+        *outHeader = NULL;
+        *outHeaderSize = 0;
+    }
+    return ok;
+}
+
+// dyld 内部表 (all_image_infos) 按真实加载顺序排列且不受 litehook 对
+// _dyld_* 的重绑影响; 这里的路径比较容忍 /private 前缀差异 (dlopen 记录
+// 的常是 realpath).
+static bool LCTDImagePathMatches(const char * imagePath, const char *execPath) {
+    if (!imagePath || !execPath) return false;
+    if (strcmp(imagePath, execPath) == 0) return true;
+    if (strncmp(imagePath, "/private", 8) == 0 && strcmp(imagePath + 8, execPath) == 0) return true;
+    if (strncmp(execPath, "/private", 8) == 0 && strcmp(imagePath, execPath + 8) == 0) return true;
+    return false;
+}
+
+static bool LCTDHeaderLooksLikeGuest(struct mach_header_64 *header) {
+    if (!header || header->magic != MH_MAGIC_64 || header->cputype != CPU_TYPE_ARM64) return false;
+    // 补丁后的镜像是 MH_DYLIB, 已恢复/未打补丁的是 MH_EXECUTE; 其它一律拒绝.
+    return header->filetype == MH_EXECUTE || header->filetype == MH_DYLIB;
+}
+
+// 定位当前访客主镜像在内存里的 header, 并给出它在 dyld 表里的路径 (读备份用).
+// 优先: 按路径核验过的 appMainImageIndex; 回退: all_image_infos / _dyld 枚举
+// 里的 exec path 匹配. 不依赖任何未经验证的全局.
+static struct mach_header_64 *LCTDResolveGuestImageHeader(const char *execPath,
+                                                          const char **outPath) {
+    if (outPath) *outPath = NULL;
+    struct dyld_all_image_infos *infos = _alt_dyld_get_all_image_infos();
+    if (infos && infos->infoArray && infos->infoArrayCount) {
+        uint32_t count = infos->infoArrayCount;
+        if (execPath && execPath[0] && appMainImageIndex < count) {
+            const char *candidatePath = infos->infoArray[appMainImageIndex].imageFilePath;
+            struct mach_header_64 *candidate =
+                (struct mach_header_64 *)infos->infoArray[appMainImageIndex].imageLoadAddress;
+            if (LCTDImagePathMatches(candidatePath, execPath) &&
+                LCTDHeaderLooksLikeGuest(candidate)) {
+                if (outPath) *outPath = candidatePath;
+                return candidate;
+            }
+        }
+        if (execPath && execPath[0]) {
+            // 常驻进程里可能留着上一轮访客的同路径镜像, 从后往前取最新一轮.
+            for (uint32_t i = count; i-- > 0;) {
+                const char *candidatePath = infos->infoArray[i].imageFilePath;
+                struct mach_header_64 *candidate =
+                    (struct mach_header_64 *)infos->infoArray[i].imageLoadAddress;
+                if (LCTDImagePathMatches(candidatePath, execPath) &&
+                    LCTDHeaderLooksLikeGuest(candidate)) {
+                    if (outPath) *outPath = candidatePath;
+                    return candidate;
+                }
+            }
+        } else {
+            // 调用方没给路径: appMainImageIndex 只能靠自身合理性核验
+            // (arm64 主可执行/被补丁形态), 无法再对路径.
+            if (appMainImageIndex < count) {
+                const char *candidatePath = infos->infoArray[appMainImageIndex].imageFilePath;
+                struct mach_header_64 *candidate =
+                    (struct mach_header_64 *)infos->infoArray[appMainImageIndex].imageLoadAddress;
+                if (candidatePath && LCTDHeaderLooksLikeGuest(candidate)) {
+                    if (outPath) *outPath = candidatePath;
+                    return candidate;
+                }
+            }
+        }
+    }
+    if (execPath && execPath[0]) {
+        // 最后回退: 公开 _dyld 枚举. 它可能已被重绑成"可见清单", 但可见清单
+        // 与 header/名称之间自洽, 按路径匹配仍然成立.
+        uint32_t count = _dyld_image_count();
+        for (uint32_t i = count; i-- > 0;) {
+            const char *candidatePath = _dyld_get_image_name(i);
+            struct mach_header_64 *candidate =
+                (struct mach_header_64 *)_dyld_get_image_header(i);
+            if (LCTDImagePathMatches(candidatePath, execPath) &&
+                LCTDHeaderLooksLikeGuest(candidate)) {
+                if (outPath) *outPath = candidatePath;
+                return candidate;
+            }
+        }
+    }
+    return NULL;
+}
+
+bool LCRestoreGuestExecutableMachOHeader(const char *execPath) {
+    const char *imagePath = NULL;
+    struct mach_header_64 *guestHeader = LCTDResolveGuestImageHeader(execPath, &imagePath);
+    if (!guestHeader) return false;
+
+    struct mach_header_64 *orig = NULL;
+    uint32_t origSize = 0;
+    // 备份缺失/损坏: 完全 no-op, 保持现有行为.
+    if (!LCLoadOriginalExecutableMachOHeader(imagePath ? imagePath : execPath, &orig, &origSize)) {
+        return false;
+    }
+
+    bool restored = false;
+    do {
+        if (orig->cputype != guestHeader->cputype) break;
+        // LCPatchExecSlice 只会往空洞里加命令, 所以原始头部必然不比当前头大.
+        // 若相等即已恢复过 -> memcmp 命中直接成功; 若"当前更小"说明镜像不是
+        // 我们认识的那份, 绝不扩大写入范围.
+        if (orig->sizeofcmds > guestHeader->sizeofcmds) break;
+        if (memcmp(guestHeader, orig, origSize) == 0) {
+            restored = true; // 幂等: 已经是原始结构
+            break;
+        }
+
+        uint64_t start = (uint64_t)guestHeader & ~(uint64_t)(16384 - 1);
+        uint64_t end = ((uint64_t)guestHeader + origSize + (16384 - 1)) & ~(uint64_t)(16384 - 1);
+        vm_size_t span = (vm_size_t)(end - start);
+
+        // 先查询该页现有保护, 写完按原样恢复; 页里可能同时有 __text,
+        // 不能像旧实现那样无条件降级成只读.
+        vm_prot_t currentProt = VM_PROT_READ | VM_PROT_EXECUTE;
+        mach_vm_address_t regionAddr = (mach_vm_address_t)start;
+        mach_vm_size_t regionSize = 0;
+        vm_region_basic_info_data_64_t regionInfo = {0};
+        mach_msg_type_number_t regionCount = VM_REGION_BASIC_INFO_COUNT_64;
+        mach_port_t regionObject = MACH_PORT_NULL;
+        if (mach_vm_region(mach_task_self(), &regionAddr, &regionSize, VM_REGION_BASIC_INFO_64,
+                           (vm_region_info_t)&regionInfo, &regionCount, &regionObject) == KERN_SUCCESS) {
+            currentProt = regionInfo.protection;
+        }
+        if (regionObject) mach_port_deallocate(mach_task_self(), regionObject);
+
+        kern_return_t kret = builtin_vm_protect(mach_task_self(), (mach_vm_address_t)start, span,
+                                                false, currentProt | VM_PROT_WRITE | VM_PROT_COPY);
+        if (kret != KERN_SUCCESS) {
+            NSLog(@"[LC] failed to make guest mach header writable: %d", kret);
+            break;
+        }
+        // 只覆盖原始 header+load commands 的字节范围: 保留镜像指针与运行时映射,
+        // 不碰 __LINKEDIT, 不做 section 地址重映射.
+        memcpy(guestHeader, orig, origSize);
+        kret = builtin_vm_protect(mach_task_self(), (mach_vm_address_t)start, span,
+                                  false, currentProt);
+        if (kret != KERN_SUCCESS) {
+            NSLog(@"[LC] failed to restore guest mach header protection: %d", kret);
+        }
+        restored = true;
+    } while (0);
+
+    free(orig);
+    return restored;
+}

@@ -415,6 +415,135 @@ static UIImage* LCDrawHomeScreenIcon(NSString* bundlePath, BOOL isDarkIcon) {
     return nil;
 }
 
+// The file the guest's untouched main executable is kept in: right next to the
+// executable itself, so the HideShim can hand a guest back the bytes it was
+// installed with whenever it opens its own binary (see TDVRootShim.m).
+static NSString* LCOriginalExecutableBackupPath(NSString* execPath) {
+    return [execPath stringByAppendingString:@".td-original.executable"];
+}
+
+// Size and modification date of a file, or nil when there is no such file. The
+// pair is what tells us a backup is still the exact file we wrote ourselves.
+static NSDictionary* LCFileIdentity(NSString* path) {
+    NSDictionary* attrs = [NSFileManager.defaultManager attributesOfItemAtPath:path error:nil];
+    if(!attrs) {
+        return nil;
+    }
+    return @{
+        @"size": @([attrs fileSize]),
+        @"mtime": @([[attrs fileModificationDate] timeIntervalSince1970]),
+    };
+}
+
+// The bundle identifier the app was installed with, recorded in LCAppInfo.plist.
+// Re-signing must not read `CFBundleIdentifier` blindly: `doUseLCBundleId`
+// overwrites it with the host's, and an old install may have been rewritten
+// without anything recording the value. So: our own record first, then the
+// original the switch kept, then the plist while it still says something that is
+// not the host, then the identity the guest's own provisioning profile claims.
+// Nil means nothing trustworthy is known and the caller has to decide.
+- (NSString*)originalBundleIdentifierForSigning {
+    NSString* hostBundleId = NSBundle.mainBundle.bundleIdentifier;
+    id recorded = _info[@"TDOriginalBundleIdentifier"];
+    if([recorded isKindOfClass:NSString.class] && [recorded length] > 0 && ![recorded isEqualToString:hostBundleId]) {
+        return recorded;
+    }
+    NSString* found = nil;
+    id keptByBundleIdSwitch = _info[@"LCOrignalBundleIdentifier"];
+    if([keptByBundleIdSwitch isKindOfClass:NSString.class] && [keptByBundleIdSwitch length] > 0 && ![keptByBundleIdSwitch isEqualToString:hostBundleId]) {
+        found = keptByBundleIdSwitch;
+    }
+    if(!found) {
+        id plistBundleId = _infoPlist[@"CFBundleIdentifier"];
+        if([plistBundleId isKindOfClass:NSString.class] && [plistBundleId length] > 0 && ![plistBundleId isEqualToString:hostBundleId]) {
+            found = plistBundleId;
+        }
+    }
+    if(!found) {
+        found = [LCUtils guestBundleIdentifierFromProvisioningProfileInBundleAtPath:self.bundlePath];
+    }
+    if([found isKindOfClass:NSString.class] && [found length] > 0) {
+        // Traceable from now on, whatever happens to Info.plist afterwards.
+        _info[@"TDOriginalBundleIdentifier"] = found;
+        [self save];
+        return found;
+    }
+    return nil;
+}
+
+// Copies Info.plist before `doUseLCBundleId` or LCBootstrap rewrites its
+// bundle identifier. Existing backups may predate this feature (or be made
+// after a previous host rewrite), so a known original identifier is repaired
+// without changing any other plist keys.
+- (void)ensureOriginalInfoPlistBackupForBundlePath:(NSString*)bundlePath
+                                    knownGuestId:(NSString*)guestId {
+    NSFileManager* fm = NSFileManager.defaultManager;
+    NSString* plistPath = [bundlePath stringByAppendingPathComponent:@"Info.plist"];
+    NSString* backupPath = [bundlePath stringByAppendingPathComponent:@".td-original.Info.plist"];
+    if(![fm fileExistsAtPath:backupPath]) {
+        if(![fm fileExistsAtPath:plistPath]) {
+            return;
+        }
+        [fm copyItemAtPath:plistPath toPath:backupPath error:nil];
+    }
+    NSString* hostBundleId = NSBundle.mainBundle.bundleIdentifier;
+    if(![guestId isKindOfClass:NSString.class] || guestId.length == 0 ||
+       [guestId isEqualToString:hostBundleId]) {
+        return;
+    }
+    NSMutableDictionary* dict = [[NSMutableDictionary alloc] initWithContentsOfFile:backupPath];
+    if(!dict) {
+        NSDictionary* parsed = [NSDictionary dictionaryWithContentsOfFile:backupPath];
+        if(parsed) {
+            dict = [parsed mutableCopy];
+        }
+    }
+    NSString* backupBundleId = [dict objectForKey:@"CFBundleIdentifier"];
+    if(dict && [backupBundleId isEqualToString:hostBundleId]) {
+        [dict setObject:guestId forKey:@"CFBundleIdentifier"];
+        [dict writeToFile:backupPath atomically:YES];
+    }
+}
+
+// Copies the executable aside before the patch touches it. An existing backup is
+// only rewritten when it is gone or is no longer the file we recorded (host
+// upgrade wiping the container, interrupted run, someone else replacing it), so
+// a repeated patch pass costs no extra copy of a 100MB binary, and a rebuilt
+// container gets its backup back. Old installs are backed up as they are found:
+// their on-disk executable is already patched, which keeps the guest reading the
+// bytes it actually runs from instead of nothing at all.
+- (void)ensureOriginalExecutableBackupForPath:(NSString*)execPath {
+    NSFileManager* fm = NSFileManager.defaultManager;
+    NSString* originalPath = LCOriginalExecutableBackupPath(execPath);
+    NSDictionary* identity = LCFileIdentity(originalPath);
+    if(identity &&
+       [_info[@"TDOriginalExecutableSize"] longLongValue] == [identity[@"size"] longLongValue] &&
+       fabs([_info[@"TDOriginalExecutableMTime"] doubleValue] - [identity[@"mtime"] doubleValue]) < 1.0 &&
+       !LCParseMachO(originalPath.UTF8String, true, ^(const char* path, struct mach_header_64* header, int fd, void* filePtr) {})) {
+        return; // our own complete backup, nothing to redo
+    }
+    [_info removeObjectForKey:@"TDOriginalExecutableSize"];
+    [_info removeObjectForKey:@"TDOriginalExecutableMTime"];
+    if(![fm fileExistsAtPath:execPath]) {
+        // The executable is missing mid-patch; the copy-delete-move below puts it
+        // back and the next patch pass will do the backup.
+        [self save];
+        return;
+    }
+    NSError* err = nil;
+    [fm removeItemAtPath:originalPath error:nil];
+    if(![fm copyItemAtPath:execPath toPath:originalPath error:&err]) {
+        NSLog(@"[LC] failed to keep the original executable of %@ (%@)", execPath.lastPathComponent, err.localizedDescription);
+        [self save];
+        return;
+    }
+    NSDictionary* written = LCFileIdentity(originalPath);
+    _info[@"TDOriginalExecutableSize"] = written[@"size"];
+    _info[@"TDOriginalExecutableMTime"] = written[@"mtime"];
+    [self save];
+    NSLog(@"[LC] kept the original executable of %@ at %@", execPath.lastPathComponent, originalPath.lastPathComponent);
+}
+
 - (void)patchExecAndSignIfNeedWithCompletionHandler:(void(^)(bool success, NSString* errorInfo))completetionHandler progressHandler:(void(^)(NSProgress* progress))progressHandler forceSign:(BOOL)forceSign {
     [NSUserDefaults.standardUserDefaults setObject:@(YES) forKey:@"SigningInProgress"];
     NSString *appPath = self.bundlePath;
@@ -430,7 +559,11 @@ static UIImage* LCDrawHomeScreenIcon(NSString* bundlePath, BOOL isDarkIcon) {
     NSString *execPath = [NSString stringWithFormat:@"%@/%@", appPath, _infoPlist[@"CFBundleExecutable"]];
     
     // Update patch
-    int currentPatchRev = 7;
+    // rev 8: keeps the untouched main executable next to the patched one, which
+    // is what lets the guest read original bytes instead of our patch; installs
+    // made by the host before this go through the patch pass once more so that
+    // backup gets created for them.
+    int currentPatchRev = 8;
     bool needPatch = [info[@"LCPatchRevision"] intValue] < currentPatchRev;
     // 旧版本可能已经把脏依赖名写进二进制; 版本号相同但名字损坏时必须重打并重签,
     // 否则 dlopen 会一直去找 TweakLoader.dylibC.
@@ -443,6 +576,17 @@ static UIImage* LCDrawHomeScreenIcon(NSString* bundlePath, BOOL isDarkIcon) {
         NSString *profilePath = [appPath stringByAppendingPathComponent:@"embedded.mobileprovision"];
         if ([fm fileExistsAtPath:profilePath] && ![fm fileExistsAtPath:originalProfilePath]) {
             [fm copyItemAtPath:profilePath toPath:originalProfilePath error:nil];
+        }
+        if (needPatch) {
+            // Anything below this line rewrites the executable, so the original
+            // bytes have to be filed away first, together with the identifier the
+            // app was installed with, which re-signing uses instead of the host's.
+            [self ensureOriginalExecutableBackupForPath:execPath];
+            [self ensureOriginalInfoPlistBackupForBundlePath:appPath
+                                                knownGuestId:_infoPlist[@"CFBundleIdentifier"]];
+            (void)[self originalBundleIdentifierForSigning];
+            [self ensureOriginalInfoPlistBackupForBundlePath:appPath
+                                                knownGuestId:_info[@"TDOriginalBundleIdentifier"]];
         }
         // copy-delete-move to avoid EXC_BAD_ACCESS (SIGKILL - CODESIGNING)
         NSString *backupPath = [NSString stringWithFormat:@"%@/%@_LiveContainerPatchBackUp", appPath, _infoPlist[@"CFBundleExecutable"]];
@@ -547,7 +691,10 @@ static UIImage* LCDrawHomeScreenIcon(NSString* bundlePath, BOOL isDarkIcon) {
                 });
             };
             
-            __block NSProgress *progress = [LCUtils signAppBundleWithZSign:appPathURL completionHandler:signCompletionHandler];
+            // 签主 app 时用访客安装时的 bundle id, 不是宿主的; 解析不出来才由
+            // LCUtils 退回宿主 id, 保证 ZSigner 永远拿到非空值.
+            NSString *signBundleId = [self originalBundleIdentifierForSigning];
+            __block NSProgress *progress = [LCUtils signAppBundleWithZSign:appPathURL bundleId:signBundleId completionHandler:signCompletionHandler];
 
             if (progress) {
                 progressHandler(progress);
@@ -708,6 +855,8 @@ static UIImage* LCDrawHomeScreenIcon(NSString* bundlePath, BOOL isDarkIcon) {
     _info[@"doUseLCBundleId"] = [NSNumber numberWithBool:doUseLCBundleId];
     NSString *infoPath = [NSString stringWithFormat:@"%@/Info.plist", self.bundlePath];
     if(doUseLCBundleId) {
+        [self ensureOriginalInfoPlistBackupForBundlePath:self.bundlePath
+                                            knownGuestId:_infoPlist[@"CFBundleIdentifier"]];
         _info[@"LCOrignalBundleIdentifier"] = _infoPlist[@"CFBundleIdentifier"];
         _infoPlist[@"CFBundleIdentifier"] = NSBundle.mainBundle.bundleIdentifier;
     } else if (_info[@"LCOrignalBundleIdentifier"]) {

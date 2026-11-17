@@ -18,6 +18,7 @@ NS_ASSUME_NONNULL_BEGIN
 
 // The place saved last, or nil before the button was ever moved.
 + (nullable instancetype)savedPlacement;
++ (void)removeSavedPlacement;
 
 // The first place, before the button is moved. On an iPad it's halfway along
 // the edge beside the iPad's own Home button, as iPads with one have it, which

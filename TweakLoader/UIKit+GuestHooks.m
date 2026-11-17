@@ -4,6 +4,7 @@
 #import "../LiveContainer/utils.h"
 #import <LocalAuthentication/LocalAuthentication.h>
 #import "Localization.h"
+#import "HomeButton/LCHomeButtonController.h"
 #include <notify.h>
 
 UIInterfaceOrientation LCOrientationLock = UIInterfaceOrientationUnknown;
@@ -34,10 +35,9 @@ static void UIKitGuestHooksInit() {
     swizzle(UIApplication.class, @selector(setDelegate:), @selector(hook_setDelegate:));
     swizzle(UIScene.class, @selector(scene:didReceiveActions:fromTransitionContext:), @selector(hook_scene:didReceiveActions:fromTransitionContext:));
     swizzle(UIScene.class, @selector(openURL:options:completionHandler:), @selector(hook_openURL:options:completionHandler:));
-    // Only an app in a multitasking window has one to bring forward.
-    if (NSUserDefaults.isLiveProcess) {
-        swizzle(UIApplication.class, @selector(sendEvent:), @selector(hook_sendEvent:));
-    }
+    // The edge-swipe fallback must see events in both classic and
+    // multitasking launches; window-touched notification stays LiveProcess-only.
+    swizzle(UIApplication.class, @selector(sendEvent:), @selector(hook_sendEvent:));
     NSInteger LCOrientationLockDirection = [NSUserDefaults.guestAppInfo[@"LCOrientationLock"] integerValue];
     if(LCOrientationLockDirection != 0 && [UIDevice.currentDevice userInterfaceIdiom] == UIUserInterfaceIdiomPhone) {
         switch (LCOrientationLockDirection) {
@@ -552,12 +552,15 @@ static LCControlAppURLHandling LCHandleControlAppURL(NSURL *url, NSString** modi
     if (event.type != UIEventTypeTouches) {
         return;
     }
-    for (UITouch *touch in event.allTouches) {
-        if (touch.phase == UITouchPhaseBegan) {
-            LCPostWindowTouched();
-            return;
+    if (NSUserDefaults.isLiveProcess) {
+        for (UITouch *touch in event.allTouches) {
+            if (touch.phase == UITouchPhaseBegan) {
+                LCPostWindowTouched();
+                break;
+            }
         }
     }
+    [[LCHomeButtonController sharedController] handleApplicationEvent:event];
 }
 
 - (void)hook__applicationOpenURLAction:(id)action payload:(NSDictionary *)payload origin:(id)origin {

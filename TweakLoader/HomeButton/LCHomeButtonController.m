@@ -42,6 +42,9 @@ NSString *LCHomeButtonSetting(NSString *key) {
 - (void)scheduleGeometryCheckInScene:(UIWindowScene *)scene;
 @property (nonatomic) LCAppDeparture *departure;
 @property (nonatomic) BOOL isLeaving;
+@property (nonatomic, weak, nullable) UITouch *globalEdgeTouch;
+@property (nonatomic) CGPoint globalEdgeStart;
+@property (nonatomic) BOOL globalEdgeFired;
 @end
 
 @implementation LCHomeButtonController
@@ -151,7 +154,7 @@ NSString *LCHomeButtonSetting(NSString *key) {
         }
         if (self.window) {
             self.window.hidden = NO;
-            [self applyGeometry:bounds inScene:scene resetPlacement:YES];
+            [self applyGeometry:bounds inScene:scene resetPlacement:NO];
             [self scheduleGeometryCheckInScene:scene];
             return;
         }
@@ -172,7 +175,7 @@ NSString *LCHomeButtonSetting(NSString *key) {
         self.buttonController = buttonController;
         self.window = window;
         window.hidden = NO;
-        [self applyGeometry:bounds inScene:scene resetPlacement:YES];
+        [self applyGeometry:bounds inScene:scene resetPlacement:NO];
         [self scheduleGeometryCheckInScene:scene];
     } @catch (NSException *exception) {
         NSLog(@"[LC] The Home button couldn't show: %@", exception);
@@ -214,6 +217,65 @@ NSString *LCHomeButtonSetting(NSString *key) {
     NSURL *url = [NSURL URLWithString:@"zcontainer://"];
     UIApplication *application = [NSClassFromString(@"UIApplication") sharedApplication];
     [application openURL:url options:@{} completionHandler:nil];
+}
+
+static const CGFloat LCHomeButtonGlobalEdgeWidth = 36;
+static const CGFloat LCHomeButtonGlobalEdgeTravel = 80;
+
+- (void)handleApplicationEvent:(UIEvent *)event {
+    if (self.isLeaving || self.globalEdgeFired || !self.buttonController.edgeSwipeEnabled) {
+        return;
+    }
+    if (event.type != UIEventTypeTouches) return;
+
+    for (UITouch *touch in event.allTouches) {
+        UIWindow *window = touch.window;
+        UIView *view = touch.view;
+        if (!window || !view) continue;
+
+        // Never treat a touch that starts on the overlay controls as a system
+        // edge gesture; it belongs to the button/edge recognizer already.
+        if ([view isDescendantOfView:self.window.rootViewController.view]) {
+            continue;
+        }
+
+        CGPoint location = [touch locationInView:window];
+        CGFloat width = window.bounds.size.width;
+        switch (touch.phase) {
+            case UITouchPhaseBegan:
+                if (self.globalEdgeTouch || (location.x > LCHomeButtonGlobalEdgeWidth &&
+                                             location.x < width - LCHomeButtonGlobalEdgeWidth)) {
+                    break;
+                }
+                self.globalEdgeTouch = touch;
+                self.globalEdgeStart = location;
+                break;
+            case UITouchPhaseMoved:
+                if (touch != self.globalEdgeTouch) break;
+                CGFloat travel = location.y - self.globalEdgeStart.y;
+                CGFloat horizontal = fabs(location.x - self.globalEdgeStart.x);
+                if (travel > LCHomeButtonGlobalEdgeTravel && travel > horizontal) {
+                    self.globalEdgeFired = YES;
+                    self.globalEdgeTouch = nil;
+                    [self handleEdgeSwipe];
+                    __weak LCHomeButtonController *weakSelf = self;
+                    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                        LCHomeButtonController *controller = weakSelf;
+                        controller.globalEdgeFired = NO;
+                        controller.globalEdgeTouch = nil;
+                    });
+                }
+                break;
+            case UITouchPhaseEnded:
+            case UITouchPhaseCancelled:
+                if (touch == self.globalEdgeTouch) {
+                    self.globalEdgeTouch = nil;
+                }
+                break;
+            default:
+                break;
+        }
+    }
 }
 
 - (void)handleEdgeSwipe {

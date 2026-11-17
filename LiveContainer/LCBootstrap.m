@@ -22,6 +22,7 @@
 
 extern void TDVRootInstallIfRequested(void);
 
+#include <unistd.h>
 #include <sys/syslimits.h>
 #include <string.h>
 
@@ -274,6 +275,31 @@ static void *getAppEntryPoint(void *handle) {
     return (void *)header + entryoff;
 }
 
+static void LCEnsureOriginalInfoPlistBackup(NSString* bundlePath,
+                                            NSString* knownGuestId) {
+    NSFileManager* fm = NSFileManager.defaultManager;
+    NSString* plistPath = [bundlePath stringByAppendingPathComponent:@"Info.plist"];
+    NSString* backupPath = [bundlePath stringByAppendingPathComponent:@".td-original.Info.plist"];
+    if (![fm fileExistsAtPath:backupPath]) {
+        if (![fm fileExistsAtPath:plistPath]) {
+            return;
+        }
+        [fm copyItemAtPath:plistPath toPath:backupPath error:nil];
+    }
+    NSString* hostBundleId = NSBundle.mainBundle.bundleIdentifier;
+    if (![knownGuestId isKindOfClass:NSString.class] || knownGuestId.length == 0 ||
+        [knownGuestId isEqualToString:hostBundleId]) {
+        return;
+    }
+    NSMutableDictionary* dict = [[NSMutableDictionary alloc] initWithContentsOfFile:backupPath];
+    NSString* backupBundleId = [dict[@"CFBundleIdentifier"] isKindOfClass:NSString.class]
+        ? dict[@"CFBundleIdentifier"] : nil;
+    if (dict && [backupBundleId isEqualToString:hostBundleId]) {
+        dict[@"CFBundleIdentifier"] = knownGuestId;
+        [dict writeBinToFile:backupPath atomically:YES];
+    }
+}
+
 static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContainer, int argc, char *argv[]) {
     NSString *appError = nil;
     if([[lcUserDefaults objectForKey:@"LCWaitForDebugger"] boolValue]) {
@@ -319,6 +345,7 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
     
     if([guestAppInfo[@"doUseLCBundleId"] boolValue] ) {
         NSMutableDictionary* infoPlist = [NSMutableDictionary dictionaryWithContentsOfFile:[NSString stringWithFormat:@"%@/Info.plist", bundlePath]];
+        LCEnsureOriginalInfoPlistBackup(bundlePath, infoPlist[@"CFBundleIdentifier"]);
         CFErrorRef error = NULL;
         void* taskSelf = SecTaskCreateFromSelf(NULL);
         CFTypeRef value = taskSelf ? SecTaskCopyValueForEntitlement(taskSelf, CFSTR("application-identifier"), &error) : NULL;
@@ -373,17 +400,27 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
     }
     setenv("LC_GLOBAL_TWEAKS_FOLDER", tweakFolder.UTF8String, 1);
 
-    // Update TweakLoader symlink
+    // Update TweakLoader symlink. Older releases could leave either a regular
+    // stale dylib or an absolute symlink pointing at a removed container path.
     NSString *tweakLoaderPath = [tweakFolder stringByAppendingPathComponent:@"TweakLoader.dylib"];
-    if (![fm fileExistsAtPath:tweakLoaderPath]) {
+    NSString *liveContainerBundlePath = NSBundle.mainBundle.bundlePath;
+    if ([liveContainerBundlePath hasSuffix:@"/PlugIns/LiveProcess.appex"]) {
+        // traverse back to LiveContainer.app
+        liveContainerBundlePath = liveContainerBundlePath.stringByDeletingLastPathComponent.stringByDeletingLastPathComponent;
+    }
+    NSString *tweakLoaderTarget = [liveContainerBundlePath stringByAppendingPathComponent:@"Frameworks/TweakLoader.dylib"];
+    char currentTarget[PATH_MAX] = {};
+    ssize_t currentTargetLength = readlink(tweakLoaderPath.UTF8String, currentTarget, sizeof(currentTarget) - 1);
+    BOOL tweakLoaderCurrent = currentTargetLength > 0 &&
+                              strcmp(currentTarget, tweakLoaderTarget.UTF8String) == 0;
+    if (!tweakLoaderCurrent) {
         remove(tweakLoaderPath.UTF8String);
-        NSString *bundlePath = NSBundle.mainBundle.bundlePath;
-        if([bundlePath hasSuffix:@"PlugIns/LiveProcess.appex"]) {
-            // traverse back to LiveContainer.app
-            bundlePath = bundlePath.stringByDeletingLastPathComponent.stringByDeletingLastPathComponent;
+        if (symlink(tweakLoaderTarget.UTF8String, tweakLoaderPath.UTF8String) != 0) {
+            NSData *currentTweakLoader = [NSData dataWithContentsOfFile:tweakLoaderTarget];
+            if (currentTweakLoader) {
+                [currentTweakLoader writeToFile:tweakLoaderPath atomically:YES];
+            }
         }
-        NSString *target = [bundlePath stringByAppendingPathComponent:@"Frameworks/TweakLoader.dylib"];
-        symlink(target.UTF8String, tweakLoaderPath.UTF8String);
     }
 
     // If JIT is enabled, bypass library validation so we can load arbitrary binaries

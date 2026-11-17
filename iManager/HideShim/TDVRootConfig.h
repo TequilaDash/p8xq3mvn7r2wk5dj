@@ -56,6 +56,36 @@ bool TDVSecTaskSpoofEnabled(void);
 // entitlement = 请求键名 (CFStringRef). 返回 true = 应答 NULL (调用方返回 NULL);
 // false = 透传真实现. 仅对字符串型查询有意义, 数组型键 (application-groups) 永远透传.
 bool TDVSecTaskHideEntitlement(const char *entitlement);
+// 访客身份替换 (同一 TD_SECTASK_SPOOF 开关): 请求键在访客安装时的原 profile
+// (`.td-original.mobileprovision`) 的 entitlements 里有值时, 返回那份原值
+// (CFString / CFArray, 已 CFRetain, 调用方负责释放), 让 bundle id / team id /
+// keychain groups 不再暴露宿主身份, 也不要在 profile 本来有值时返回 NULL.
+// 返回 NULL = 没有替换 (未启用 / 非访客 / 没有原 profile / 解析失败), 调用方保持
+// 现有行为. entitlement = 请求键名, callerImage = 调用方镜像路径 (NULL = 未知).
+void *TDVSecTaskReplacementForEntitlement(const char *entitlement, const char *callerImage);
+
+// 文件级篡改检测虚拟化: 访客打开自己的主可执行文件或 embedded.mobileprovision 时,
+// 换成安装时留下的原件. 判定仍基于 caller 的 dladdr 路径 —— caller 镜像必须在
+// /Documents/Applications/ 下, 且请求路径必须是该 caller 所在 bundle 根下的直接
+// 子文件; 宿主 zContainer 自己的读写永远不命中 (它的镜像路径不在该前缀).
+// 未知 caller 一律透传, 宁少不多. 这里不设 env 开关: 只影响访客对自己包的读.
+typedef enum {
+    TDVGuestFileMapNone = 0,     // 原样透传
+    TDVGuestFileMapTo = 1,       // 已写 out = 原件路径
+    TDVGuestFileMapHidden = 2,   // 原件不存在: 应答 ENOENT, 绝不能放行被打过的新文件
+} TDVGuestFileMapResult;
+
+// imagePath 是否为访客镜像 (含 /Documents/Applications/).
+bool TDVGuestCallerIsGuestImage(const char *imagePath);
+// caller 所在访客 bundle 目录 (绝对路径, 无尾斜杠). 非访客 / 解析失败 -> false.
+bool TDVGuestBundleDirFromCallerImage(const char *callerImage, char *out, size_t outSize);
+// path = 请求路径 (绝对), callerImage = 调用方镜像路径 (NULL = 未知).
+// 命中时写 out (TDVGuestFileMapTo) 或要求 ENOENT (TDVGuestFileMapHidden).
+TDVGuestFileMapResult TDVGuestMapBundleFile(const char *path, const char *callerImage,
+                                            char *out, size_t outSize);
+// caller bundle 里那份 `.td-original.executable` 的完整路径 (在 bundle 根内查找,
+// 按 bundle 目录缓存). 没有 -> false.
+bool TDVGuestOriginalExecutablePath(const char *callerImage, char *out, size_t outSize);
 
 // csops 伪 CS flags (TD_CSOPS_SPOOF=1, launcher 按 per-app csopsSpoof 透传):
 // 检测器经 csops(CS_OPS_STATUS) 读代码签名 flags: CS_DEBUGGED 0x10000000 =
@@ -66,6 +96,8 @@ bool TDVCsopsSpoofEnabled(void);
 // 返回 true = *flagsOut 已伪值化 (调用方直接 copyout); false = 透传真 csops.
 // flagsIn = 真 flags. 仅处理 CS_OPS_STATUS; 其余 ops 由 shim 层透传.
 bool TDVCsopsSpoofLookup(unsigned int flagsIn, unsigned int *flagsOut);
+/// 从 caller 所属访客包的原始 executable 备份读取 CodeDirectory 摘要.
+bool TDVOriginalExecutableCodeDirectoryHash(const char *callerImage, void *outHash, size_t outSize);
 
 // proc 族伪值 (TD_PROC_SPOOF=1, launcher 按 per-app procSpoof 透传):
 // 访客枚举/探测进程信息时隐藏宿主与其它进程 (Reveil "Suspicious PFlag value"

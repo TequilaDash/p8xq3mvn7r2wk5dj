@@ -22,6 +22,11 @@ NS_ASSUME_NONNULL_BEGIN
 // screen the app comes back to.
 - (void)start;
 
+// Fallback edge-swipe tracking from UIApplication's event stream. This is
+// independent of the overlay window's gesture recognizers, so system gesture
+// delivery cannot silently disable the user's "global" setting.
+- (void)handleApplicationEvent:(UIEvent *)event;
+
 @end
 
 // Reads an experimental setting from the app group; used by the button

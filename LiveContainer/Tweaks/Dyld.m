@@ -63,18 +63,119 @@ static void ensureBreakpointExceptionHandler(void) {
     pthread_create(&thread, NULL, exception_handler, NULL);
 }
 
-static void overwriteAppExecutableFileType(void) {
+static const uint32_t kLCInvalidTweakLoaderCommand = 0x114514;
+static const uint32_t kLCInvalidDuplicateCommand = 0x114515;
+static struct mach_header_64 *gLCVisibleGuestHeader = NULL;
+
+static bool lC_command_is_injected(const struct load_command *command,
+                                   const uint8_t *commandsEnd) {
+    if (!command || (const uint8_t *)command >= commandsEnd) return true;
+    switch (command->cmd) {
+        case LC_ID_DYLIB:
+        case kLCInvalidTweakLoaderCommand:
+        case kLCInvalidDuplicateCommand:
+            return true;
+        case LC_LOAD_DYLIB: {
+            if (command->cmdsize < sizeof(struct dylib_command)) return false;
+            const struct dylib_command *dylib = (const struct dylib_command *)command;
+            uint32_t nameOffset = dylib->dylib.name.offset;
+            if (nameOffset < sizeof(struct dylib_command) ||
+                nameOffset >= command->cmdsize ||
+                (const uint8_t *)command + nameOffset >= commandsEnd) {
+                return false;
+            }
+            const char *name = (const char *)command + nameOffset;
+            const char *nameEnd = (const char *)memchr(name, '\0',
+                                                       commandsEnd - (const uint8_t *)name);
+            if (!nameEnd) return false;
+            return strcmp(name, "@loader_path/../../Tweaks/TweakLoader.dylib") == 0 ||
+                   strcmp(name, "/var/containers/Bundle/Application/.kb-LiveContainerPrivateDocuments/Tweaks/TweakLoader.dylib") == 0;
+        }
+        default:
+            return false;
+    }
+}
+
+static void lC_clean_guest_executable_header(struct mach_header_64 *header) {
+    if (!header || header->magic != MH_MAGIC_64) return;
+
+    uint8_t *commands = (uint8_t *)header + sizeof(*header);
+    uint8_t *commandsEnd = commands + header->sizeofcmds;
+    uint8_t *source = commands;
+    uint8_t *destination = commands;
+    uint32_t visibleCommandCount = 0;
+    uint32_t visibleCommandSize = 0;
+
+    while (source + sizeof(struct load_command) <= commandsEnd) {
+        struct load_command *command = (struct load_command *)source;
+        uint32_t commandSize = command->cmdsize;
+        if (commandSize < sizeof(struct load_command) ||
+            source + commandSize > commandsEnd) {
+            break;
+        }
+        if (!lC_command_is_injected(command, commandsEnd)) {
+            if (destination != source) {
+                memmove(destination, source, commandSize);
+            }
+            destination += commandSize;
+            visibleCommandCount++;
+            visibleCommandSize += commandSize;
+        }
+        source += commandSize;
+    }
+
+    header->ncmds = visibleCommandCount;
+    header->sizeofcmds = visibleCommandSize;
+    header->filetype = MH_EXECUTE;
+}
+
+static bool lC_refresh_guest_executable_header(void) {
     uint32_t guestHeaderIndex = tdv_guest_header_index();
     if (guestHeaderIndex == UINT32_MAX) guestHeaderIndex = appMainImageIndex;
-    struct mach_header_64* appImageMachOHeader = (struct mach_header_64*) orig_dyld_get_image_header(guestHeaderIndex);
-    kern_return_t kret = builtin_vm_protect(mach_task_self(), (vm_address_t)appImageMachOHeader, sizeof(appImageMachOHeader), false, PROT_READ | PROT_WRITE | VM_PROT_COPY);
-    if(kret != KERN_SUCCESS) {
-        NSLog(@"[LC] failed to change appImageMachOHeader to rw");
-    } else {
-        NSLog(@"[LC] changed appImageMachOHeader to rw");
-        appImageMachOHeader->filetype = MH_EXECUTE;
-        builtin_vm_protect(mach_task_self(), (vm_address_t)appImageMachOHeader, sizeof(appImageMachOHeader), false,  PROT_READ);
+    struct mach_header_64 *header =
+        (struct mach_header_64 *)orig_dyld_get_image_header(guestHeaderIndex);
+    if (!header) return false;
+
+    bool alreadyCleaned = (header == gLCVisibleGuestHeader &&
+                           header->filetype == MH_EXECUTE);
+    if (alreadyCleaned) return true;
+
+    char executablePath[PATH_MAX] = {};
+    uint32_t executablePathSize = sizeof(executablePath);
+    if (_NSGetExecutablePath(executablePath, &executablePathSize) == 0 &&
+        executablePath[0] &&
+        LCRestoreGuestExecutableMachOHeader(executablePath)) {
+        header = (struct mach_header_64 *)orig_dyld_get_image_header(guestHeaderIndex);
+        if (header) {
+            gLCVisibleGuestHeader = header;
+            return true;
+        }
     }
+
+    size_t protectedLength = sizeof(*header) + header->sizeofcmds;
+    kern_return_t result = builtin_vm_protect(mach_task_self(),
+                                               (vm_address_t)header,
+                                               protectedLength,
+                                               false,
+                                               PROT_READ | PROT_WRITE | VM_PROT_COPY);
+    if (result != KERN_SUCCESS) {
+        NSLog(@"[LC] failed to make guest executable header writable");
+        return false;
+    }
+    lC_clean_guest_executable_header(header);
+    result = builtin_vm_protect(mach_task_self(),
+                                (vm_address_t)header,
+                                protectedLength,
+                                false,
+                                PROT_READ);
+    if (result == KERN_SUCCESS) {
+        gLCVisibleGuestHeader = header;
+    }
+    return result == KERN_SUCCESS;
+}
+
+static void overwriteAppExecutableFileType(void) {
+    lC_refresh_guest_executable_header();
 }
 
 // 镜像清单裁剪: 维护一张"可见索引 -> 真实索引"映射表.
@@ -254,7 +355,13 @@ uint32_t hook_dyld_image_count(void) {
 const struct mach_header* hook_dyld_get_image_header(uint32_t image_index) {
     uint32_t real_index = 0;
     if (!tdv_map_image_index(image_index, &real_index)) return NULL;
-    return orig_dyld_get_image_header(real_index);
+    const struct mach_header *header = orig_dyld_get_image_header(real_index);
+    if (image_index == 0 && header &&
+        (header->filetype != MH_EXECUTE ||
+         (const struct mach_header *)gLCVisibleGuestHeader != header)) {
+        lC_refresh_guest_executable_header();
+    }
+    return header;
 }
 
 intptr_t hook_dyld_get_image_vmaddr_slide(uint32_t image_index) {
@@ -497,6 +604,7 @@ void DyldHooksInit(bool hideLiveContainer, bool hookDlopen, uint32_t spoofSDKVer
     gTDVRemapCount[1] = 0;
     atomic_store(&gTDVRemapActive, 0);
     gTDVMapLogged = false;
+    gLCVisibleGuestHeader = NULL;
     lcImageIndex = UINT32_MAX;
     
     // 复制成自有缓冲区: fileSystemRepresentation 的生命周期不归我们管, 但这条路径
@@ -567,9 +675,14 @@ void DyldHooksInit(bool hideLiveContainer, bool hookDlopen, uint32_t spoofSDKVer
 }
 
 void* getGuestAppHeader(void) {
+    lC_refresh_guest_executable_header();
     uint32_t guest = tdv_guest_header_index();
     if (guest == UINT32_MAX) guest = appMainImageIndex;
     return (void*)orig_dyld_get_image_header(guest);
+}
+
+void LCRefreshGuestExecutableHeader(void) {
+    lC_refresh_guest_executable_header();
 }
 
 // 真实镜像总数: 隐藏开启时 _dyld_image_count 已被重绑成"可见数量",

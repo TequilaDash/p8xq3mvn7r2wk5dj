@@ -90,4 +90,8 @@ typedef NS_ENUM(NSInteger, MultitaskSpecified){
 - (NSDictionary *)generateWebClipConfigWithContainerId:(NSString*)containerId iconStyle:(GeneratedIconStyle)style;
 - (void)save;
 - (void)patchExecAndSignIfNeedWithCompletionHandler:(void(^)(bool success, NSString* errorInfo))completetionHandler progressHandler:(void(^)(NSProgress* progress))progressHandler  forceSign:(BOOL)forceSign;
+/// Ensure `.td-original.Info.plist` exists and, when guestId is known to differ
+/// from the host, rewrite only that backup's CFBundleIdentifier to the guest ID.
+- (void)ensureOriginalInfoPlistBackupForBundlePath:(NSString*)bundlePath
+                                      knownGuestId:(nullable NSString*)guestId;
 @end

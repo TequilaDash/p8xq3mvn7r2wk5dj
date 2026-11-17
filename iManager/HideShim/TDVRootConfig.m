@@ -10,6 +10,7 @@
 
 #import <Foundation/Foundation.h>
 
+#include <dirent.h>
 #include <errno.h>
 #include <limits.h>
 #include <pthread.h>
@@ -17,6 +18,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
 #include <sys/syslimits.h>
 #include <unistd.h>
 
@@ -240,6 +243,303 @@ bool TDVSecTaskHideEntitlement(const char *entitlement) {
     return false;
 }
 
+static bool tdv_string_ends_with(const char *s, const char *suffix) {
+    size_t n = strlen(s), m = strlen(suffix);
+    return n >= m && strncmp(s + n - m, suffix, m) == 0;
+}
+
+bool TDVGuestCallerIsGuestImage(const char *imagePath) {
+    return imagePath != NULL && strstr(imagePath, "/Documents/Applications/") != NULL;
+}
+
+bool TDVGuestBundleDirFromCallerImage(const char *callerImage, char *out, size_t outSize) {
+    if (!TDVGuestCallerIsGuestImage(callerImage) || !out || outSize == 0) {
+        return false;
+    }
+    static const char kGuestMark[] = "/Documents/Applications/";
+    // 紧跟该前缀的第一个组件就是访客 bundle 目录: 镜像必须在它下面
+    // (<...>/Applications/Foo.app/Foo 或 Foo.app/Frameworks/lib.dylib).
+    const char *component = strstr(callerImage, kGuestMark) + sizeof(kGuestMark) - 1;
+    const char *end = strchr(component, '/');
+    size_t length = end ? (size_t)(end - callerImage) : strlen(callerImage);
+    if (length == (size_t)(component - callerImage)) {
+        return false; // bundle 组件为空
+    }
+    // 只认 .app bundle; Data/ 之类的 overlay 目录不是访客包.
+    if (length < 4 || strncmp(callerImage + length - 4, ".app", 4) != 0) {
+        return false;
+    }
+    if (length + 1 > outSize) {
+        return false;
+    }
+    memcpy(out, callerImage, length);
+    out[length] = '\0';
+    return true;
+}
+
+// 访客 bundle 的原件备份按 bundle 目录缓存 (一个进程最多几个访客包, 轮换取代).
+#define TDVGuestCacheSlots 4
+typedef struct {
+    char bundle[PATH_MAX];
+    char execBackup[PATH_MAX]; // 空 = 这个 bundle 没有 `.td-original.executable`
+    bool resolved;
+} TDVGuestBundleEntry;
+static TDVGuestBundleEntry gTDVGuestBundles[TDVGuestCacheSlots];
+static unsigned gTDVGuestBundleNext = 0;
+static pthread_mutex_t gTDVGuestLock = PTHREAD_MUTEX_INITIALIZER;
+// The file-path helpers below call opendir/stat directly, and those libc symbols
+// are interposed by this same image. Without this guard the interposed helpers
+// re-enter TDVGuestMapBundleFile forever. One level is always enough: nested
+// path queries are made by our own backup lookup, not by the caller.
+static __thread bool gTDVGuestFileMapInProgress = false;
+
+// bundle 根目录里那份 `.td-original.executable` 的真实名字带上原可执行文件名,
+// 而这个名字在 shim 里不可靠 (CFBundleExecutable 可能被我们改写过), 所以在目录里找
+// 唯一一份带该后缀的文件. 只在首次访问某 bundle 时扫一次目录.
+static bool tdv_guest_exec_backup_locked(const char *bundle, char *out, size_t outSize) {
+    for (int i = 0; i < TDVGuestCacheSlots; i++) {
+        TDVGuestBundleEntry *entry = &gTDVGuestBundles[i];
+        if (!entry->resolved || strcmp(entry->bundle, bundle) != 0) {
+            continue;
+        }
+        if (entry->execBackup[0] == '\0') {
+            return false;
+        }
+        return snprintf(out, outSize, "%s", entry->execBackup) < (int)outSize;
+    }
+    char found[PATH_MAX];
+    found[0] = '\0';
+    DIR *dir = opendir(bundle);
+    if (dir) {
+        struct dirent *item;
+        while ((item = readdir(dir)) != NULL) {
+            if (item->d_name[0] == '.') {
+                continue;
+            }
+            if (tdv_string_ends_with(item->d_name, ".td-original.executable")) {
+                if (snprintf(found, sizeof(found), "%s/%s", bundle, item->d_name) >= (int)sizeof(found)) {
+                    found[0] = '\0';
+                }
+                break;
+            }
+        }
+        closedir(dir);
+    }
+    TDVGuestBundleEntry *slot = &gTDVGuestBundles[gTDVGuestBundleNext % TDVGuestCacheSlots];
+    gTDVGuestBundleNext++;
+    snprintf(slot->bundle, sizeof(slot->bundle), "%s", bundle);
+    snprintf(slot->execBackup, sizeof(slot->execBackup), "%s", found);
+    slot->resolved = true;
+    return found[0] != '\0' && snprintf(out, outSize, "%s", found) < (int)outSize;
+}
+
+bool TDVGuestOriginalExecutablePath(const char *callerImage, char *out, size_t outSize) {
+    char bundle[PATH_MAX];
+    if (!out || outSize == 0 || gTDVGuestFileMapInProgress ||
+        !TDVGuestBundleDirFromCallerImage(callerImage, bundle, sizeof(bundle))) {
+        return false;
+    }
+    gTDVGuestFileMapInProgress = true;
+    pthread_mutex_lock(&gTDVGuestLock);
+    bool found = tdv_guest_exec_backup_locked(bundle, out, outSize);
+    pthread_mutex_unlock(&gTDVGuestLock);
+    gTDVGuestFileMapInProgress = false;
+    return found;
+}
+
+TDVGuestFileMapResult TDVGuestMapBundleFile(const char *path, const char *callerImage,
+                                            char *out, size_t outSize) {
+    if (!path || !out || outSize == 0 || gTDVGuestFileMapInProgress) {
+        return TDVGuestFileMapNone;
+    }
+    char bundle[PATH_MAX];
+    if (!TDVGuestBundleDirFromCallerImage(callerImage, bundle, sizeof(bundle))) {
+        return TDVGuestFileMapNone; // 宿主自身 / 未知 caller / 镜像不在 .app 里
+    }
+    char normalized[PATH_MAX];
+    if (!tdv_normalize_absolute(path, normalized, sizeof(normalized)) ||
+        !tdv_path_is_under(normalized, bundle)) {
+        return TDVGuestFileMapNone;
+    }
+    const char *child = normalized + strlen(bundle);
+    if (child[0] != '/' || child[1] == '\0') {
+        return TDVGuestFileMapNone;
+    }
+    child++;
+    if (strchr(child, '/') != NULL) {
+        return TDVGuestFileMapNone; // 只处理 bundle 根下的直接子文件
+    }
+    // 原件自己不该被访客看见: 让它读到 ENOENT, 否则"打开备份"就能绕过映射,
+    // 而备份的存在本身也是容器化痕迹.
+    if (strncmp(child, ".td-original.", strlen(".td-original.")) == 0 ||
+        tdv_string_ends_with(child, ".td-original.executable")) {
+        return TDVGuestFileMapHidden;
+    }
+    char backup[PATH_MAX];
+    gTDVGuestFileMapInProgress = true;
+    TDVGuestFileMapResult result = TDVGuestFileMapNone;
+    if (strcmp(child, "embedded.mobileprovision") == 0) {
+        // 只认安装时留下的原 profile. 没有原件就应答 ENOENT —— 重签后留在包里的
+        // embedded.mobileprovision 描述的是宿主身份, 访客读到它等于自证被篡改.
+        if (snprintf(backup, sizeof(backup), "%s/.td-original.mobileprovision", bundle) < (int)sizeof(backup)) {
+            struct stat st;
+            if (stat(backup, &st) != 0) {
+                result = TDVGuestFileMapHidden;
+            } else {
+                result = snprintf(out, outSize, "%s", backup) < (int)sizeof(backup)
+                    ? TDVGuestFileMapTo : TDVGuestFileMapNone;
+            }
+        }
+    } else if (strcmp(child, "Info.plist") == 0) {
+        // `doUseLCBundleId` 会把包内 Info.plist 改成宿主标识符. 访客静态读这份文件
+        // 时会立刻看到篡改; 有原件备份就交给它, 没备份则保持当前文件可用.
+        if (snprintf(backup, sizeof(backup), "%s/.td-original.Info.plist", bundle) < (int)sizeof(backup)) {
+            struct stat st;
+            if (stat(backup, &st) == 0) {
+                result = snprintf(out, outSize, "%s", backup) < (int)sizeof(backup)
+                    ? TDVGuestFileMapTo : TDVGuestFileMapNone;
+            }
+        }
+    } else {
+        // 主可执行文件 (以及任何被打过并留了备份的直接子文件):
+        // LCAppInfo 的备份名就是 `<原名>.td-original.executable`, 因此存在即命中.
+        if (snprintf(backup, sizeof(backup), "%s/%s.td-original.executable", bundle, child) < (int)sizeof(backup)) {
+            struct stat st;
+            if (stat(backup, &st) == 0) {
+                result = snprintf(out, outSize, "%s", backup) < (int)outSize
+                    ? TDVGuestFileMapTo : TDVGuestFileMapNone;
+            }
+        }
+    }
+    gTDVGuestFileMapInProgress = false;
+    return result;
+}
+
+// profile 的 entitlements 缓存: 键 = bundle 目录.
+static char gTDVGuestProfileBundles[TDVGuestCacheSlots][PATH_MAX];
+static NSDictionary *gTDVGuestProfileEntitlements[TDVGuestCacheSlots];
+static bool gTDVGuestProfileResolved[TDVGuestCacheSlots];
+static unsigned gTDVGuestProfileNext = 0;
+
+// `.td-original.mobileprovision` 是一段 CMS 包着一个 XML plist, 安装时的
+// entitlements 就在那个 plist 里. 从字节里切出 plist 即可, 不引入 CMS 解析依赖.
+// 解析不出来返回 nil (调用方保持现有行为).
+static NSDictionary *tdv_profile_entitlements_from_path(const char *profilePath) {
+    NSString *path = [NSString stringWithUTF8String:profilePath];
+    if (!path) {
+        return nil;
+    }
+    NSData *data = [NSData dataWithContentsOfFile:path];
+    if (data.length == 0) {
+        return nil;
+    }
+    const char *bytes = (const char *)data.bytes;
+    static const char kOpen[] = "<plist";
+    static const char kXml[] = "<?xml";
+    static const char kClose[] = "</plist>";
+    const char *begin = memmem(bytes, data.length, kOpen, sizeof(kOpen) - 1);
+    if (!begin) {
+        begin = memmem(bytes, data.length, kXml, sizeof(kXml) - 1);
+    }
+    if (!begin) {
+        return nil;
+    }
+    size_t rest = (size_t)(bytes + data.length - begin);
+    const char *end = memmem(begin, rest, kClose, sizeof(kClose) - 1);
+    if (!end) {
+        return nil;
+    }
+    end += sizeof(kClose) - 1;
+    NSData *plistData = [data subdataWithRange:NSMakeRange((size_t)(begin - bytes), (size_t)(end - begin))];
+    NSDictionary *profile = [NSPropertyListSerialization propertyListWithData:plistData
+                                                                      options:NSPropertyListImmutable
+                                                                       format:NULL
+                                                                        error:NULL];
+    if (![profile isKindOfClass:NSDictionary.class]) {
+        return nil;
+    }
+    NSDictionary *entitlements = profile[@"Entitlements"];
+    if (![entitlements isKindOfClass:NSDictionary.class]) {
+        return nil;
+    }
+    return entitlements;
+}
+
+// 只在调用方要求时读盘一次, 之后按 bundle 命中缓存 (锁内不做 IO 以外的分配).
+static NSDictionary *tdv_guest_profile_entitlements_locked(const char *bundle) {
+    for (int i = 0; i < TDVGuestCacheSlots; i++) {
+        if (gTDVGuestProfileResolved[i] && strcmp(gTDVGuestProfileBundles[i], bundle) == 0) {
+            return gTDVGuestProfileEntitlements[i];
+        }
+    }
+    char profilePath[PATH_MAX];
+    NSDictionary *entitlements = nil;
+    if (snprintf(profilePath, sizeof(profilePath), "%s/.td-original.mobileprovision", bundle) < (int)sizeof(profilePath)) {
+        entitlements = tdv_profile_entitlements_from_path(profilePath);
+    }
+    int slot = (int)(gTDVGuestProfileNext % TDVGuestCacheSlots);
+    gTDVGuestProfileNext++;
+    snprintf(gTDVGuestProfileBundles[slot], sizeof(gTDVGuestProfileBundles[slot]), "%s", bundle);
+    gTDVGuestProfileEntitlements[slot] = entitlements;
+    gTDVGuestProfileResolved[slot] = true;
+    return entitlements;
+}
+
+// 替换表: 请求键 -> 原 profile 里可能带着同一事实的键 (首选在前). 表外的键一律不动,
+// 宿主合法键仍走透传, 不在此处硬编码任何 bundle.
+typedef struct {
+    const char *requested;
+    const char *profileKeys[3];
+} TDVSecTaskReplacementEntry;
+
+static const TDVSecTaskReplacementEntry kTDVSecTaskReplacements[] = {
+    {"application-identifier", {"application-identifier", "com.apple.application-identifier", NULL}},
+    {"com.apple.application-identifier", {"com.apple.application-identifier", "application-identifier", NULL}},
+    {"team-identifier", {"team-identifier", "com.apple.developer.team-identifier", NULL}},
+    {"com.apple.developer.team-identifier", {"com.apple.developer.team-identifier", "team-identifier", NULL}},
+    {"keychain-access-groups", {"keychain-access-groups", "com.apple.keychain-access-groups", NULL}},
+    {"com.apple.keychain-access-groups", {"com.apple.keychain-access-groups", "keychain-access-groups", NULL}},
+    {"application-groups", {"com.apple.security.application-groups", "application-groups", NULL}},
+    {"com.apple.security.application-groups", {"com.apple.security.application-groups", "application-groups", NULL}},
+};
+
+void *TDVSecTaskReplacementForEntitlement(const char *entitlement, const char *callerImage) {
+    if (!entitlement || !TDVSecTaskSpoofEnabled() || !TDVGuestCallerIsGuestImage(callerImage)) {
+        return NULL;
+    }
+    char bundle[PATH_MAX];
+    if (!TDVGuestBundleDirFromCallerImage(callerImage, bundle, sizeof(bundle))) {
+        return NULL;
+    }
+    const TDVSecTaskReplacementEntry *entry = NULL;
+    for (size_t i = 0; i < sizeof(kTDVSecTaskReplacements) / sizeof(kTDVSecTaskReplacements[0]); i++) {
+        if (strcmp(entitlement, kTDVSecTaskReplacements[i].requested) == 0) {
+            entry = &kTDVSecTaskReplacements[i];
+            break;
+        }
+    }
+    if (!entry) {
+        return NULL;
+    }
+    gTDVGuestFileMapInProgress = true;
+    pthread_mutex_lock(&gTDVGuestLock);
+    NSDictionary *entitlements = tdv_guest_profile_entitlements_locked(bundle);
+    id value = nil;
+    for (int i = 0; i < 3 && entry->profileKeys[i] != NULL; i++) {
+        id candidate = entitlements[[NSString stringWithUTF8String:entry->profileKeys[i]]];
+        if ([candidate isKindOfClass:NSString.class] || [candidate isKindOfClass:NSArray.class]) {
+            value = candidate;
+            break;
+        }
+    }
+    pthread_mutex_unlock(&gTDVGuestLock);
+    gTDVGuestFileMapInProgress = false;
+    if (!value) {
+        return NULL; // 原 profile 里没有这个键 / 解析失败: 保持现有行为
+    }
+    return (void *)CFRetain((__bridge CFTypeRef)value);
+}
+
 bool TDVCsopsSpoofEnabled(void) {
     tdv_init_once();
     return gTDVCsopsSpoof;
@@ -267,6 +567,159 @@ bool TDVCsopsSpoofLookup(unsigned int flagsIn, unsigned int *flagsOut) {
     }
     *flagsOut = v;
     return true;
+}
+
+static uint32_t tdv_be32(uint32_t value) {
+    return ((value & 0x000000FFu) << 24) |
+           ((value & 0x0000FF00u) << 8) |
+           ((value & 0x00FF0000u) >> 8) |
+           ((value & 0xFF000000u) >> 24);
+}
+
+static uint64_t tdv_be64(uint64_t value) {
+    return ((uint64_t)tdv_be32((uint32_t)value) << 32) |
+           tdv_be32((uint32_t)(value >> 32));
+}
+
+#define TDV_MH_MAGIC_64     0xfeedfacfu
+#define TDV_MH_MAGIC        0xfeedfaceu
+#define TDV_FAT_MAGIC       0xcafebabeu
+#define TDV_FAT_MAGIC_64    0xcafebabfu
+#define TDV_LC_CODE_SIGNATURE 0x1du
+#define TDV_CS_EMBEDDED_SIGNATURE 0xfade0cc0u
+#define TDV_CS_CODEDIRECTORY    0xfade0c02u
+#define TDV_CPU_ARM64           0x0100000cu
+
+bool TDVOriginalExecutableCodeDirectoryHash(const char *callerImage, void *outHash,
+                                            size_t outSize) {
+    if (!TDVCsopsSpoofEnabled() || !callerImage || !outHash || outSize == 0) {
+        return false;
+    }
+    char backup[PATH_MAX];
+    if (!TDVGuestOriginalExecutablePath(callerImage, backup, sizeof(backup))) {
+        return false;
+    }
+    int fd = open(backup, O_RDONLY);
+    if (fd < 0) {
+        return false;
+    }
+    struct stat st;
+    if (fstat(fd, &st) != 0 || st.st_size < 0) {
+        close(fd);
+        return false;
+    }
+    uint8_t *map = mmap(NULL, (size_t)st.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
+    close(fd);
+    if (map == MAP_FAILED) {
+        return false;
+    }
+
+    uint8_t *base = map;
+    uint64_t fileSize = (uint64_t)st.st_size;
+    bool found = false;
+    bool copied = false;
+    if (fileSize >= 4) {
+        uint32_t magic = *(const uint32_t *)base;
+        uint64_t imageOffset = 0;
+        uint64_t imageLimit = fileSize;
+        if (magic == TDV_FAT_MAGIC_64 || magic == tdv_be32(TDV_FAT_MAGIC_64)) {
+            bool swap = magic != TDV_FAT_MAGIC_64;
+            uint32_t count = swap ? tdv_be32(((const uint32_t *)(base + 8))[0]) : ((const uint32_t *)(base + 8))[0];
+            for (uint32_t i = 0; i < count; i++) {
+                uint8_t *arch = base + 32 + (size_t)i * 32;
+                if ((uint64_t)(arch + 32 - map) > fileSize) break;
+                uint32_t cputype = swap ? tdv_be32(*(const uint32_t *)arch) : *(const uint32_t *)arch;
+                uint64_t offset = swap ? tdv_be64(*(const uint64_t *)(arch + 8)) : *(const uint64_t *)(arch + 8);
+                uint32_t size = swap ? tdv_be32(*(const uint32_t *)(arch + 16)) : *(const uint32_t *)(arch + 16);
+                if (cputype == TDV_CPU_ARM64 && offset + size <= fileSize) {
+                    imageOffset = offset;
+                    imageLimit = offset + size;
+                    found = true;
+                    break;
+                }
+            }
+        } else if (magic == TDV_FAT_MAGIC || magic == tdv_be32(TDV_FAT_MAGIC)) {
+            bool swap = magic != TDV_FAT_MAGIC;
+            uint32_t count = swap ? tdv_be32(((const uint32_t *)(base + 8))[0]) : ((const uint32_t *)(base + 8))[0];
+            for (uint32_t i = 0; i < count; i++) {
+                uint8_t *arch = base + 8 + (size_t)i * 20;
+                if ((uint64_t)(arch + 20 - map) > fileSize) break;
+                uint32_t cputype = swap ? tdv_be32(*(const uint32_t *)arch) : *(const uint32_t *)arch;
+                uint32_t offset = swap ? tdv_be32(((const uint32_t *)(arch + 8))[0]) : ((const uint32_t *)(arch + 8))[0];
+                uint32_t size = swap ? tdv_be32(((const uint32_t *)(arch + 12))[0]) : ((const uint32_t *)(arch + 12))[0];
+                if (cputype == TDV_CPU_ARM64 && offset + size <= fileSize) {
+                    imageOffset = offset;
+                    imageLimit = offset + size;
+                    found = true;
+                    break;
+                }
+            }
+        } else if (magic == TDV_MH_MAGIC_64 || magic == TDV_MH_MAGIC ||
+                   magic == tdv_be32(TDV_MH_MAGIC_64) || magic == tdv_be32(TDV_MH_MAGIC)) {
+            imageOffset = 0;
+            found = true;
+        }
+    }
+    if (found && imageOffset + 64 <= fileSize) {
+        uint8_t *image = map + imageOffset;
+        uint32_t headerMagic = *(const uint32_t *)image;
+        bool swap = headerMagic == tdv_be32(TDV_MH_MAGIC_64) || headerMagic == tdv_be32(TDV_MH_MAGIC);
+        uint32_t sizeofCmds = *(const uint32_t *)(image + 20);
+        uint32_t ncmds = *(const uint32_t *)(image + 16);
+        if (swap) {
+            sizeofCmds = tdv_be32(sizeofCmds);
+            ncmds = tdv_be32(ncmds);
+        }
+        if (imageOffset + 64 + sizeofCmds <= fileSize) {
+            uint8_t *cmd = image + 64;
+            uint8_t *end = cmd + sizeofCmds;
+            for (uint32_t i = 0; i < ncmds && cmd < end; i++) {
+                uint32_t cmdType = *(const uint32_t *)cmd;
+                uint32_t cmdSize = *(const uint32_t *)(cmd + 4);
+                if (swap) {
+                    cmdType = tdv_be32(cmdType);
+                    cmdSize = tdv_be32(cmdSize);
+                }
+                if (cmdSize < 8 || cmd + cmdSize > end) break;
+                if (cmdType == TDV_LC_CODE_SIGNATURE && cmdSize >= 16) {
+                    uint32_t dataOffset = *(const uint32_t *)(cmd + 8);
+                    uint32_t dataSize = *(const uint32_t *)(cmd + 12);
+                    if (swap) {
+                        dataOffset = tdv_be32(dataOffset);
+                        dataSize = tdv_be32(dataSize);
+                    }
+                    if ((uint64_t)dataOffset < imageLimit && dataSize >= 32) {
+                        uint8_t *blob = map + dataOffset;
+                        uint8_t *blobEnd = map + imageLimit;
+                        if (blob + 44 <= blobEnd) {
+                            uint32_t superMagic = tdv_be32(*(const uint32_t *)blob);
+                            uint32_t superLength = tdv_be32(*(const uint32_t *)(blob + 4));
+                            uint32_t cdMagic = tdv_be32(*(const uint32_t *)(blob + 12));
+                            if (superMagic == TDV_CS_EMBEDDED_SIGNATURE && cdMagic == TDV_CS_CODEDIRECTORY &&
+                                superLength >= 32 && blob + superLength <= blobEnd) {
+                                uint8_t hashSize = blob[40];
+                                uint32_t hashOffset = tdv_be32(*(const uint32_t *)(blob + 44));
+                                if (hashSize > 0 && hashSize <= 32 &&
+                                    (uint64_t)hashOffset + hashSize <= superLength) {
+                                    size_t copy = hashSize < outSize ? hashSize : outSize;
+                                    if (blob + hashOffset + copy <= blobEnd) {
+                                        memcpy(outHash, blob + hashOffset, copy);
+                                        if (copy < outSize) {
+                                            memset((uint8_t *)outHash + copy, 0, outSize - copy);
+                                        }
+                                        copied = true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                cmd += cmdSize;
+            }
+        }
+    }
+    munmap(map, (size_t)fileSize);
+    return copied;
 }
 
 bool TDVProcSpoofEnabled(void) {
