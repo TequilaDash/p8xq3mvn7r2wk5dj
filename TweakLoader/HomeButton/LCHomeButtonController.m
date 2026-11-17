@@ -40,8 +40,11 @@ NSString *LCHomeButtonSetting(NSString *key) {
 @property (nonatomic, nullable) LCHomeButtonViewController *buttonController;
 - (void)applyGeometry:(CGRect)bounds inScene:(UIWindowScene *)scene resetPlacement:(BOOL)reset;
 - (void)scheduleGeometryCheckInScene:(UIWindowScene *)scene;
+- (void)showInActiveScenes;
 @property (nonatomic) LCAppDeparture *departure;
 @property (nonatomic) BOOL isLeaving;
+@property (nonatomic) BOOL started;
+@property (nonatomic) NSUInteger showAttempts;
 @property (nonatomic, weak, nullable) UITouch *globalEdgeTouch;
 @property (nonatomic) CGPoint globalEdgeStart;
 @property (nonatomic) BOOL globalEdgeFired;
@@ -67,9 +70,30 @@ NSString *LCHomeButtonSetting(NSString *key) {
 }
 
 - (void)start {
+    if (self.started) {
+        return;
+    }
+    self.started = YES;
     NSNotificationCenter *center = NSNotificationCenter.defaultCenter;
     [center addObserver:self selector:@selector(sceneDidActivate:) name:UISceneDidActivateNotification object:nil];
     [center addObserver:self selector:@selector(windowDidBecomeVisible:) name:UIWindowDidBecomeVisibleNotification object:nil];
+    // TweakLoader can be injected after the app's first scene is already active
+    // (classic launches, hot reload). Notifications alone then never fire.
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [self showInActiveScenes];
+    });
+}
+
+- (void)showInActiveScenes {
+    for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
+        if (![scene isKindOfClass:UIWindowScene.class] || ![self isOwnScreen:(UIWindowScene *)scene]) {
+            continue;
+        }
+        if (scene.activationState == UISceneActivationStateForegroundActive ||
+            scene.activationState == UISceneActivationStateForegroundInactive) {
+            [self showSoonInScene:(UIWindowScene *)scene];
+        }
+    }
 }
 
 // The button moves to the screen the person is using.
@@ -95,12 +119,13 @@ NSString *LCHomeButtonSetting(NSString *key) {
 // button waits for the app's first window before it shows.
 - (void)windowDidBecomeVisible:(NSNotification *)notification {
     UIWindow *window = notification.object;
-    if (![window isKindOfClass:UIWindow.class] || window == self.window || self.window.windowScene) {
+    if (![window isKindOfClass:UIWindow.class] || window == self.window) {
         return;
     }
     UIWindowScene *scene = window.windowScene;
-    if (scene && [self isOwnScreen:scene] && (scene.activationState == UISceneActivationStateForegroundActive ||
-                  scene.activationState == UISceneActivationStateForegroundInactive)) {
+    if (scene && [self isOwnScreen:scene] &&
+        scene.activationState != UISceneActivationStateUnattached &&
+        self.window.windowScene != scene) {
         [self showSoonInScene:scene];
     }
 }
@@ -146,7 +171,22 @@ NSString *LCHomeButtonSetting(NSString *key) {
 
 - (void)showInScene:(UIWindowScene *)scene {
     @try {
-        if (![self appHasWindowInScene:scene]) return;
+        if (![self appHasWindowInScene:scene]) {
+            // The scene can become active before the app has installed its first
+            // window. Notifications are not guaranteed to repeat, so retry a few
+            // times instead of permanently giving up on the overlay.
+            if (scene.activationState != UISceneActivationStateUnattached && self.showAttempts++ < 40) {
+                __weak LCHomeButtonController *weakSelf = self;
+                __weak UIWindowScene *weakScene = scene;
+                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.1 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                    if (weakScene) {
+                        [weakSelf showInScene:weakScene];
+                    }
+                });
+            }
+            return;
+        }
+        self.showAttempts = 0;
         CGRect bounds = LCHomeSceneBounds(scene);
         if (self.window.windowScene == scene) {
             [self applyGeometry:bounds inScene:scene resetPlacement:NO];
@@ -222,8 +262,17 @@ NSString *LCHomeButtonSetting(NSString *key) {
 static const CGFloat LCHomeButtonGlobalEdgeWidth = 36;
 static const CGFloat LCHomeButtonGlobalEdgeTravel = 80;
 
+- (BOOL)sideSwipeEnabled {
+    if (self.buttonController) {
+        return self.buttonController.edgeSwipeEnabled;
+    }
+    // The overlay may not exist yet (or at all); the setting itself still
+    // decides whether the event fallback should work.
+    return [LCHomeButtonSetting(@"TDSideSwipeMode") isEqualToString:@"always"];
+}
+
 - (void)handleApplicationEvent:(UIEvent *)event {
-    if (self.isLeaving || self.globalEdgeFired || !self.buttonController.edgeSwipeEnabled) {
+    if (self.isLeaving || self.globalEdgeFired || ![self sideSwipeEnabled]) {
         return;
     }
     if (event.type != UIEventTypeTouches) return;
@@ -328,7 +377,7 @@ static const CGFloat LCHomeButtonGlobalEdgeTravel = 80;
     // 普通全屏访客退出时清理选择并通知应用保存，然后打开宿主。
     self.isLeaving = YES;
     __weak LCHomeButtonController *weakSelf = self;
-    [self.buttonController fadeOutWithCompletion:^{
+    void (^leave)(void) = ^{
         NSUserDefaults *defaults = NSUserDefaults.lcUserDefaults;
         [defaults removeObjectForKey:@"selected"];
         [defaults removeObjectForKey:@"selectedContainer"];
@@ -339,7 +388,12 @@ static const CGFloat LCHomeButtonGlobalEdgeTravel = 80;
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(LCHomeButtonSaveTime * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
             [weakSelf openZContainerWith:sharedUtils];
         });
-    }];
+    };
+    if (self.buttonController) {
+        [self.buttonController fadeOutWithCompletion:leave];
+    } else {
+        leave();
+    }
 }
 
 - (void)openZContainerWith:(Class)sharedUtils {
@@ -367,6 +421,13 @@ static const CGFloat LCHomeButtonGlobalEdgeTravel = 80;
 __attribute__((constructor))
 static void LCHomeButtonInit(void) {
     if (!NSUserDefaults.lcGuestAppId) {
+        // TweakLoader normally loads with the guest already identified, but a
+        // hot-loaded/relaunched loader can race the bootstrap globals.
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            if (NSUserDefaults.lcGuestAppId) {
+                [LCHomeButtonController.sharedController start];
+            }
+        });
         return;
     }
     // 始终注册控制器; 具体显示按键或响应侧边下滑由当前 app group 设置决定,

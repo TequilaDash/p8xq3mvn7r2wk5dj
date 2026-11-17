@@ -82,6 +82,7 @@ struct TDSideSwipeSettingsView: View {
         .onTapGesture {
             mode = value
             Self.defaults?.set(value, forKey: "TDSideSwipeMode")
+            Self.defaults?.synchronize()
         }
     }
 }

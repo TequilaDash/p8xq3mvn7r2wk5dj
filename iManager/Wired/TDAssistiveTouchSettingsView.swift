@@ -31,6 +31,7 @@ struct TDAssistiveTouchSettingsView: View {
         .onTapGesture {
             mode = value
             Self.defaults?.set(value, forKey: "TDAssistiveTouchMode")
+            Self.defaults?.synchronize()
         }
     }
 }
