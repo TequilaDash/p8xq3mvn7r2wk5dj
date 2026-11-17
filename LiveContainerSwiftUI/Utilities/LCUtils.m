@@ -141,7 +141,7 @@ static NSString* LCBundleIdentifierFromProvisioningProfileData(NSData* profileDa
         return nil;
     }
     NSData* plistData = [profileData subdataWithRange:NSMakeRange(begin.location, end.location + end.length - begin.location)];
-    NSDictionary* profile = [NSPropertyListSerialization propertyListWithData:plistData options:0 error:nil];
+    NSDictionary* profile = [NSPropertyListSerialization propertyListWithData:plistData options:0 format:NULL error:nil];
     if(![profile isKindOfClass:NSDictionary.class]) {
         return nil;
     }
