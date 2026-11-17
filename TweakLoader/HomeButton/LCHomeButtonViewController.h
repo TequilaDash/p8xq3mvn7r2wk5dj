@@ -27,6 +27,8 @@ NS_ASSUME_NONNULL_BEGIN
 
 // Reads the current app-group settings and updates button/edge visibility.
 - (void)reloadSettings;
+// 把按键强制放回默认边缘位置；只在窗口几何被修复后调用。
+- (void)resetPlacementToDefault;
 
 @end
 

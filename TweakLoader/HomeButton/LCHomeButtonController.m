@@ -12,6 +12,16 @@ static const NSTimeInterval LCHomeButtonSaveTime = 0.3;
 // How long to wait for zContainer to open before giving the app back.
 static const NSTimeInterval LCHomeButtonLeaveTimeout = 4;
 
+// scene.coordinateSpace.bounds 在场景刚激活时可能是零/极小值；用它建窗会把
+// 按钮算到 (0,0)。退化到主屏幕边界，保证窗口始终是一整屏。
+static CGRect LCHomeSceneBounds(UIWindowScene *scene) {
+    CGRect bounds = scene.coordinateSpace.bounds;
+    if (CGRectIsEmpty(bounds) || CGRectGetWidth(bounds) < 200 || CGRectGetHeight(bounds) < 200) {
+        bounds = UIScreen.mainScreen.bounds;
+    }
+    return bounds;
+}
+
 
 NSString *LCHomeButtonSetting(NSString *key) {
     Class sharedUtils = NSClassFromString(@"LCSharedUtils");
@@ -20,12 +30,16 @@ NSString *LCHomeButtonSetting(NSString *key) {
         groupID = ((NSString *(*)(id, SEL))objc_msgSend)(sharedUtils, @selector(appGroupID));
     }
     NSUserDefaults *shared = groupID ? [[NSUserDefaults alloc] initWithSuiteName:groupID] : nil;
+    // 宿主刚改完设置时，跨进程 suite 可能还留在旧缓存里。
+    [shared synchronize];
     return [shared stringForKey:key];
 }
 
 @interface LCHomeButtonController ()
 @property (nonatomic, nullable) LCHomeButtonWindow *window;
 @property (nonatomic, nullable) LCHomeButtonViewController *buttonController;
+- (void)applyGeometry:(CGRect)bounds inScene:(UIWindowScene *)scene resetPlacement:(BOOL)reset;
+- (void)scheduleGeometryCheckInScene:(UIWindowScene *)scene;
 @property (nonatomic) LCAppDeparture *departure;
 @property (nonatomic) BOOL isLeaving;
 @end
@@ -61,6 +75,9 @@ NSString *LCHomeButtonSetting(NSString *key) {
     UIWindowScene *scene = notification.object;
     if (![self isOwnScreen:scene]) return;
     [self.buttonController reloadSettings];
+    if (self.window.windowScene == scene) {
+        [self applyGeometry:LCHomeSceneBounds(scene) inScene:scene resetPlacement:NO];
+    }
     [self showSoonInScene:scene];
 }
 
@@ -111,15 +128,31 @@ NSString *LCHomeButtonSetting(NSString *key) {
     return NO;
 }
 
+- (void)applyGeometry:(CGRect)bounds inScene:(UIWindowScene *)scene resetPlacement:(BOOL)reset {
+    LCHomeButtonWindow *window = self.window;
+    if (!window || !self.buttonController) return;
+    BOOL broken = CGRectGetWidth(window.bounds) < 200 || CGRectGetHeight(window.bounds) < 200;
+    if (window.windowScene != scene) window.windowScene = scene;
+    window.frame = bounds;
+    self.buttonController.view.frame = window.bounds;
+    [self.buttonController reloadSettings];
+    if (reset || broken) [self.buttonController resetPlacementToDefault];
+    [self.buttonController.view setNeedsLayout];
+    [self.buttonController.view layoutIfNeeded];
+}
+
 - (void)showInScene:(UIWindowScene *)scene {
     @try {
-        if (self.window.windowScene == scene || ![self appHasWindowInScene:scene]) {
+        if (![self appHasWindowInScene:scene]) return;
+        CGRect bounds = LCHomeSceneBounds(scene);
+        if (self.window.windowScene == scene) {
+            [self applyGeometry:bounds inScene:scene resetPlacement:NO];
             return;
         }
         if (self.window) {
-            self.window.frame = scene.coordinateSpace.bounds;
-            self.window.windowScene = scene;
             self.window.hidden = NO;
+            [self applyGeometry:bounds inScene:scene resetPlacement:YES];
+            [self scheduleGeometryCheckInScene:scene];
             return;
         }
 
@@ -131,7 +164,7 @@ NSString *LCHomeButtonSetting(NSString *key) {
         buttonController.edgeHandler = ^{
             [weakSelf handleEdgeSwipe];
         };
-        LCHomeButtonWindow *window = [[LCHomeButtonWindow alloc] initWithFrame:scene.coordinateSpace.bounds];
+        LCHomeButtonWindow *window = [[LCHomeButtonWindow alloc] initWithFrame:bounds];
         window.windowScene = scene;
         window.windowLevel = UIWindowLevelAlert + 1;
         window.backgroundColor = UIColor.clearColor;
@@ -139,13 +172,23 @@ NSString *LCHomeButtonSetting(NSString *key) {
         self.buttonController = buttonController;
         self.window = window;
         window.hidden = NO;
-        window.frame = scene.coordinateSpace.bounds;
-        buttonController.view.frame = window.bounds;
-        [buttonController reloadSettings];
-        [buttonController.view setNeedsLayout];
-        [buttonController.view layoutIfNeeded];
+        [self applyGeometry:bounds inScene:scene resetPlacement:YES];
+        [self scheduleGeometryCheckInScene:scene];
     } @catch (NSException *exception) {
         NSLog(@"[LC] The Home button couldn't show: %@", exception);
+    }
+}
+
+- (void)scheduleGeometryCheckInScene:(UIWindowScene *)scene {
+    __weak LCHomeButtonController *weakSelf = self;
+    __weak UIWindowScene *weakScene = scene;
+    for (NSNumber *delay in @[@0.15, @0.6]) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay.doubleValue * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            LCHomeButtonController *controller = weakSelf;
+            UIWindowScene *laterScene = weakScene;
+            if (!controller || !laterScene || controller.window.windowScene != laterScene) return;
+            [controller applyGeometry:LCHomeSceneBounds(laterScene) inScene:laterScene resetPlacement:NO];
+        });
     }
 }
 

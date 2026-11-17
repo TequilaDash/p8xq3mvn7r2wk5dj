@@ -62,10 +62,19 @@ static const CGFloat LCHomeButtonFlingCarry = 0.12;
         UIView *handle = [[UIView alloc] initWithFrame:CGRectZero];
         handle.backgroundColor = UIColor.clearColor;
         handle.tag = edge.integerValue;
-        UIScreenEdgePanGestureRecognizer *pan = [[UIScreenEdgePanGestureRecognizer alloc] initWithTarget:self action:@selector(edgePanned:)];
-        pan.edges = edge.integerValue;
-        pan.delegate = self;
-        [handle addGestureRecognizer:pan];
+        // 系统边缘手势识别器 + 普通 pan 双保险；两个同时触发时由 edgeGesture 去重。
+        UIScreenEdgePanGestureRecognizer *screenPan = [[UIScreenEdgePanGestureRecognizer alloc] initWithTarget:self action:@selector(edgePanned:)];
+        screenPan.edges = edge.integerValue;
+        screenPan.delegate = self;
+        screenPan.cancelsTouchesInView = NO;
+        screenPan.delaysTouchesBegan = NO;
+        [handle addGestureRecognizer:screenPan];
+
+        UIPanGestureRecognizer *plainPan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(edgePanned:)];
+        plainPan.delegate = self;
+        plainPan.cancelsTouchesInView = NO;
+        plainPan.delaysTouchesBegan = NO;
+        [handle addGestureRecognizer:plainPan];
         [self.view insertSubview:handle belowSubview:self.button];
     }
 }
@@ -81,17 +90,19 @@ static const CGFloat LCHomeButtonFlingCarry = 0.12;
 
 - (void)edgePanned:(UIPanGestureRecognizer *)gesture {
     if (gesture.state == UIGestureRecognizerStateBegan) {
-        if (self.edgeSnapshot) return;
-        UIWindow *appWindow = self.appWindow;
-        if (!appWindow) return;
-        UIView *snapshot = [appWindow snapshotViewAfterScreenUpdates:NO];
-        if (!snapshot) return;
-        snapshot.frame = [appWindow convertRect:appWindow.bounds toView:self.view];
-        snapshot.userInteractionEnabled = NO;
-        // The button and both touch strips stay above the app's picture.
-        [self.view insertSubview:snapshot atIndex:0];
-        self.edgeSnapshot = snapshot;
+        if (self.edgeGesture && gesture != self.edgeGesture) return;
         self.edgeGesture = gesture;
+        // 快照只是视觉反馈；拿不到应用窗口时也必须让返回动作生效。
+        if (!self.edgeSnapshot) {
+            UIWindow *appWindow = self.appWindow;
+            UIView *snapshot = appWindow ? [appWindow snapshotViewAfterScreenUpdates:NO] : nil;
+            if (snapshot) {
+                snapshot.frame = [appWindow convertRect:appWindow.bounds toView:self.view];
+                snapshot.userInteractionEnabled = NO;
+                [self.view insertSubview:snapshot atIndex:0];
+                self.edgeSnapshot = snapshot;
+            }
+        }
     }
     if (gesture != self.edgeGesture) return;
 
@@ -104,11 +115,18 @@ static const CGFloat LCHomeButtonFlingCarry = 0.12;
 
     CGPoint translation = [gesture translationInView:self.view];
     CGFloat travel = MAX(0, translation.y);
-    self.edgeSnapshot.transform = CGAffineTransformMakeTranslation(0, travel);
-    self.edgeSnapshot.alpha = 1 - MIN(0.35, travel / MAX(1, self.view.bounds.size.height));
+    if (self.edgeSnapshot) {
+        self.edgeSnapshot.transform = CGAffineTransformMakeTranslation(0, travel);
+        self.edgeSnapshot.alpha = 1 - MIN(0.35, travel / MAX(1, self.view.bounds.size.height));
+    }
     if (gesture.state == UIGestureRecognizerStateEnded) {
         BOOL dismiss = travel > 80 && translation.y > fabs(translation.x);
-        [self finishEdgeSwipe:dismiss animated:YES];
+        if (!self.edgeSnapshot) {
+            self.edgeGesture = nil;
+            if (dismiss && self.edgeHandler) self.edgeHandler();
+        } else {
+            [self finishEdgeSwipe:dismiss animated:YES];
+        }
     }
 }
 
@@ -169,9 +187,18 @@ static const CGFloat LCHomeButtonFlingCarry = 0.12;
     [self.view layoutIfNeeded];
 }
 
+- (void)resetPlacementToDefault {
+    if (!self.isViewLoaded) return;
+    self.placement = [LCHomeButtonPlacement firstPlacementForInterfaceOrientation:self.currentInterfaceOrientation];
+    [self.view setNeedsLayout];
+    [self.view layoutIfNeeded];
+}
+
 - (void)viewDidLayoutSubviews {
     [super viewDidLayoutSubviews];
-    if (CGRectIsEmpty(self.view.bounds) || CGRectIsEmpty(self.view.frame)) {
+    // 窗口几何还没就绪时不要布局；否则按钮会被算到 (0,0) 并卡在状态栏。
+    if (CGRectIsEmpty(self.view.bounds) || CGRectIsEmpty(self.view.frame) ||
+        CGRectGetWidth(self.view.bounds) < 100 || CGRectGetHeight(self.view.bounds) < 100) {
         return;
     }
     if (!self.isDragging) {
