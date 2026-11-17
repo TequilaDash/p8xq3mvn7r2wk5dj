@@ -618,10 +618,10 @@ bool TDVOriginalExecutableCodeDirectoryHash(const char *callerImage, void *outHa
     uint64_t fileSize = (uint64_t)st.st_size;
     bool found = false;
     bool copied = false;
+    uint64_t imageOffset = 0;
+    uint64_t imageLimit = fileSize;
     if (fileSize >= 4) {
         uint32_t magic = *(const uint32_t *)base;
-        uint64_t imageOffset = 0;
-        uint64_t imageLimit = fileSize;
         if (magic == TDV_FAT_MAGIC_64 || magic == tdv_be32(TDV_FAT_MAGIC_64)) {
             bool swap = magic != TDV_FAT_MAGIC_64;
             uint32_t count = swap ? tdv_be32(((const uint32_t *)(base + 8))[0]) : ((const uint32_t *)(base + 8))[0];
@@ -688,9 +688,10 @@ bool TDVOriginalExecutableCodeDirectoryHash(const char *callerImage, void *outHa
                         dataOffset = tdv_be32(dataOffset);
                         dataSize = tdv_be32(dataSize);
                     }
-                    if ((uint64_t)dataOffset + 12 <= imageLimit && dataSize >= 12) {
-                        uint8_t *blob = map + dataOffset;
-                        uint8_t *blobEnd = map + imageLimit;
+                    uint64_t sliceSize = imageLimit - imageOffset;
+                    if ((uint64_t)dataOffset + 12 <= sliceSize && dataSize >= 12) {
+                        uint8_t *blob = image + dataOffset;
+                        uint8_t *blobEnd = image + sliceSize;
                         uint32_t superMagic = tdv_be32(*(const uint32_t *)blob);
                         uint32_t superLength = tdv_be32(*(const uint32_t *)(blob + 4));
                         if (superMagic == TDV_CS_EMBEDDED_SIGNATURE &&
