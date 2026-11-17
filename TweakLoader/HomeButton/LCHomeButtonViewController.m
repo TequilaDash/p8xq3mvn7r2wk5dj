@@ -35,7 +35,8 @@ static const CGFloat LCHomeButtonFlingCarry = 0.12;
 @implementation LCHomeButtonViewController
 
 - (void)loadView {
-    UIView *view = [[UIView alloc] init];
+    UIView *view = [[UIView alloc] initWithFrame:UIScreen.mainScreen.bounds];
+    view.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     view.backgroundColor = UIColor.clearColor;
     self.view = view;
 }
@@ -61,7 +62,8 @@ static const CGFloat LCHomeButtonFlingCarry = 0.12;
         UIView *handle = [[UIView alloc] initWithFrame:CGRectZero];
         handle.backgroundColor = UIColor.clearColor;
         handle.tag = edge.integerValue;
-        UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(edgePanned:)];
+        UIScreenEdgePanGestureRecognizer *pan = [[UIScreenEdgePanGestureRecognizer alloc] initWithTarget:self action:@selector(edgePanned:)];
+        pan.edges = edge.integerValue;
         pan.delegate = self;
         [handle addGestureRecognizer:pan];
         [self.view insertSubview:handle belowSubview:self.button];
@@ -169,8 +171,20 @@ static const CGFloat LCHomeButtonFlingCarry = 0.12;
 
 - (void)viewDidLayoutSubviews {
     [super viewDidLayoutSubviews];
+    if (CGRectIsEmpty(self.view.bounds) || CGRectIsEmpty(self.view.frame)) {
+        return;
+    }
     if (!self.isDragging) {
-        self.button.center = [self.currentPlacement centerInArea:self.restingArea];
+        CGRect area = self.restingArea;
+        CGPoint center = [self.currentPlacement centerInArea:area];
+        // 绝不允许按钮留在零尺寸窗口算出的 (0,0); 一旦坐标无效就强制回默认右侧.
+        if (!isfinite(center.x) || !isfinite(center.y) ||
+            center.x < CGRectGetMinX(self.view.bounds) || center.y < CGRectGetMinY(self.view.bounds) ||
+            center.x > CGRectGetMaxX(self.view.bounds) || center.y > CGRectGetMaxY(self.view.bounds)) {
+            self.placement = nil;
+            center = [self.currentPlacement centerInArea:area];
+        }
+        self.button.center = center;
     }
     for (UIView *subview in self.view.subviews) {
         if (subview == self.button || subview == self.cover) continue;

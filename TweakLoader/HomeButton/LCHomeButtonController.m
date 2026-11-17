@@ -131,7 +131,6 @@ NSString *LCHomeButtonSetting(NSString *key) {
         buttonController.edgeHandler = ^{
             [weakSelf handleEdgeSwipe];
         };
-        [buttonController reloadSettings];
         LCHomeButtonWindow *window = [[LCHomeButtonWindow alloc] initWithFrame:scene.coordinateSpace.bounds];
         window.windowScene = scene;
         window.windowLevel = UIWindowLevelAlert + 1;
@@ -140,6 +139,9 @@ NSString *LCHomeButtonSetting(NSString *key) {
         self.buttonController = buttonController;
         self.window = window;
         window.hidden = NO;
+        window.frame = scene.coordinateSpace.bounds;
+        buttonController.view.frame = window.bounds;
+        [buttonController reloadSettings];
         [buttonController.view setNeedsLayout];
         [buttonController.view layoutIfNeeded];
     } @catch (NSException *exception) {
