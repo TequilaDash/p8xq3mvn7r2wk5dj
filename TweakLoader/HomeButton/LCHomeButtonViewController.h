@@ -25,6 +25,9 @@ NS_ASSUME_NONNULL_BEGIN
 // Takes the black cover away again, when zContainer didn't open after all.
 - (void)fadeBackIn;
 
+// Reads the current app-group settings and updates button/edge visibility.
+- (void)reloadSettings;
+
 @end
 
 NS_ASSUME_NONNULL_END

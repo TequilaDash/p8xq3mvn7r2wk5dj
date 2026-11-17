@@ -3,6 +3,8 @@
 #import "LCHomeButtonView.h"
 #import <objc/message.h>
 
+NSString *LCHomeButtonSetting(NSString *key);
+
 // The space between the button and the edges of the screen's safe area.
 static const CGFloat LCHomeButtonEdgeMargin = 6;
 // How long the button stays bright after a touch before it dims, and how
@@ -48,10 +50,8 @@ static const CGFloat LCHomeButtonFlingCarry = 0.12;
     [button addTarget:self action:@selector(buttonLetGo) forControlEvents:UIControlEventTouchUpOutside | UIControlEventTouchCancel];
     [button addGestureRecognizer:[[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(buttonDragged:)]];
     [self.view addSubview:button];
-    button.hidden = self.buttonHidden;
-    if (self.edgeSwipeEnabled) {
-        [self addEdgeSwipeHandles];
-    }
+    [self addEdgeSwipeHandles];
+    [self reloadSettings];
 }
 
 // 左右边缘各一条窄热区; 只在开启侧边下滑时存在, 不影响中间区域的触摸.
@@ -70,6 +70,11 @@ static const CGFloat LCHomeButtonFlingCarry = 0.12;
 
 - (BOOL)gestureRecognizerShouldBegin:(UIGestureRecognizer *)gesture {
     return self.edgeSwipeEnabled && !self.edgeSnapshot && !self.cover && !self.isDragging;
+}
+
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)gestureRecognizer shouldRecognizeSimultaneouslyWithOtherGestureRecognizer:(UIGestureRecognizer *)otherGestureRecognizer {
+    // 边缘热区在独立窗口里; 允许应用自身手势继续工作, 我们只在满足下滑阈值时接管.
+    return YES;
 }
 
 - (void)edgePanned:(UIPanGestureRecognizer *)gesture {
@@ -141,10 +146,25 @@ static const CGFloat LCHomeButtonFlingCarry = 0.12;
 
 - (void)viewDidAppear:(BOOL)animated {
     [super viewDidAppear:animated];
+    [self reloadSettings];
     self.placement = [LCHomeButtonPlacement firstPlacementForInterfaceOrientation:self.currentInterfaceOrientation];
     [self.view setNeedsLayout];
     [self.view layoutIfNeeded];
     [self dimSoon];
+}
+
+- (void)reloadSettings {
+    self.buttonHidden = ![LCHomeButtonSetting(@"TDAssistiveTouchMode") isEqualToString:@"always"];
+    self.edgeSwipeEnabled = [LCHomeButtonSetting(@"TDSideSwipeMode") isEqualToString:@"always"];
+    self.button.hidden = self.buttonHidden;
+    for (UIView *subview in self.view.subviews) {
+        if (subview == self.button || subview == self.cover) continue;
+        if (subview.tag == UIRectEdgeLeft || subview.tag == UIRectEdgeRight) {
+            subview.hidden = !self.edgeSwipeEnabled;
+        }
+    }
+    [self.view setNeedsLayout];
+    [self.view layoutIfNeeded];
 }
 
 - (void)viewDidLayoutSubviews {
@@ -156,8 +176,10 @@ static const CGFloat LCHomeButtonFlingCarry = 0.12;
         if (subview == self.button || subview == self.cover) continue;
         if (subview.tag == UIRectEdgeLeft) {
             subview.frame = CGRectMake(0, 0, 24, self.view.bounds.size.height);
+            subview.hidden = !self.edgeSwipeEnabled;
         } else if (subview.tag == UIRectEdgeRight) {
             subview.frame = CGRectMake(self.view.bounds.size.width - 24, 0, 24, self.view.bounds.size.height);
+            subview.hidden = !self.edgeSwipeEnabled;
         }
     }
 }

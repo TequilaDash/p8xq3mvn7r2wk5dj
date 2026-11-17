@@ -13,8 +13,7 @@ static const NSTimeInterval LCHomeButtonSaveTime = 0.3;
 static const NSTimeInterval LCHomeButtonLeaveTimeout = 4;
 
 
-// 读取 app group 里的实验性设置 (TweakLoader 不链接 LiveContainerShared).
-static NSString *LCHomeButtonSetting(NSString *key) {
+NSString *LCHomeButtonSetting(NSString *key) {
     Class sharedUtils = NSClassFromString(@"LCSharedUtils");
     NSString *groupID = nil;
     if ([sharedUtils respondsToSelector:@selector(appGroupID)]) {
@@ -58,9 +57,11 @@ static NSString *LCHomeButtonSetting(NSString *key) {
 
 // The button moves to the screen the person is using.
 - (void)sceneDidActivate:(NSNotification *)notification {
-    if ([notification.object isKindOfClass:UIWindowScene.class] && [self isOwnScreen:notification.object]) {
-        [self showSoonInScene:notification.object];
-    }
+    if (![notification.object isKindOfClass:UIWindowScene.class]) return;
+    UIWindowScene *scene = notification.object;
+    if (![self isOwnScreen:scene]) return;
+    [self.buttonController reloadSettings];
+    [self showSoonInScene:scene];
 }
 
 // Whether a scene is on the iPhone's or iPad's own screen, rather than an
@@ -116,24 +117,23 @@ static NSString *LCHomeButtonSetting(NSString *key) {
             return;
         }
         if (self.window) {
+            self.window.frame = scene.coordinateSpace.bounds;
             self.window.windowScene = scene;
             self.window.hidden = NO;
             return;
         }
 
         LCHomeButtonViewController *buttonController = [[LCHomeButtonViewController alloc] init];
-        buttonController.buttonHidden = ![LCHomeButtonSetting(@"TDAssistiveTouchMode") isEqualToString:@"always"];
         __weak LCHomeButtonController *weakSelf = self;
         buttonController.pressHandler = ^{
             [weakSelf handlePress];
         };
-        if ([LCHomeButtonSetting(@"TDSideSwipeMode") isEqualToString:@"always"]) {
-            buttonController.edgeSwipeEnabled = YES;
-            buttonController.edgeHandler = ^{
-                [weakSelf handleEdgeSwipe];
-            };
-        }
-        LCHomeButtonWindow *window = [[LCHomeButtonWindow alloc] initWithWindowScene:scene];
+        buttonController.edgeHandler = ^{
+            [weakSelf handleEdgeSwipe];
+        };
+        [buttonController reloadSettings];
+        LCHomeButtonWindow *window = [[LCHomeButtonWindow alloc] initWithFrame:scene.coordinateSpace.bounds];
+        window.windowScene = scene;
         window.windowLevel = UIWindowLevelAlert + 1;
         window.backgroundColor = UIColor.clearColor;
         window.rootViewController = buttonController;
@@ -262,16 +262,7 @@ static void LCHomeButtonInit(void) {
     if (!NSUserDefaults.lcGuestAppId) {
         return;
     }
-    // 只有一个辅助触控窗口：仅“始终显示”开启时显示按键。
-    // “侧边下滑 = 全局应用”独立启动时只保留边缘手势，隐藏按键。
-    Class sharedUtils = NSClassFromString(@"LCSharedUtils");
-    NSString *groupID = nil;
-    if ([sharedUtils respondsToSelector:@selector(appGroupID)]) {
-        groupID = ((NSString *(*)(id, SEL))objc_msgSend)(sharedUtils, @selector(appGroupID));
-    }
-    NSUserDefaults *shared = groupID ? [[NSUserDefaults alloc] initWithSuiteName:groupID] : nil;
-    BOOL always = [[shared stringForKey:@"TDAssistiveTouchMode"] isEqualToString:@"always"];
-    BOOL sideSwipeAlways = [[shared stringForKey:@"TDSideSwipeMode"] isEqualToString:@"always"];
-    if (!always && !sideSwipeAlways) return;
+    // 始终注册控制器; 具体显示按键或响应侧边下滑由当前 app group 设置决定,
+    // 这样从 zContainer 改设置后回到应用不需要重启访客进程.
     [LCHomeButtonController.sharedController start];
 }
