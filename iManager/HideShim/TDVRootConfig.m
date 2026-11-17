@@ -688,22 +688,38 @@ bool TDVOriginalExecutableCodeDirectoryHash(const char *callerImage, void *outHa
                         dataOffset = tdv_be32(dataOffset);
                         dataSize = tdv_be32(dataSize);
                     }
-                    if ((uint64_t)dataOffset < imageLimit && dataSize >= 32) {
+                    if ((uint64_t)dataOffset + 12 <= imageLimit && dataSize >= 12) {
                         uint8_t *blob = map + dataOffset;
                         uint8_t *blobEnd = map + imageLimit;
-                        if (blob + 44 <= blobEnd) {
-                            uint32_t superMagic = tdv_be32(*(const uint32_t *)blob);
-                            uint32_t superLength = tdv_be32(*(const uint32_t *)(blob + 4));
-                            uint32_t cdMagic = tdv_be32(*(const uint32_t *)(blob + 12));
-                            if (superMagic == TDV_CS_EMBEDDED_SIGNATURE && cdMagic == TDV_CS_CODEDIRECTORY &&
-                                superLength >= 32 && blob + superLength <= blobEnd) {
-                                uint8_t hashSize = blob[40];
-                                uint32_t hashOffset = tdv_be32(*(const uint32_t *)(blob + 44));
-                                if (hashSize > 0 && hashSize <= 32 &&
-                                    (uint64_t)hashOffset + hashSize <= superLength) {
+                        uint32_t superMagic = tdv_be32(*(const uint32_t *)blob);
+                        uint32_t superLength = tdv_be32(*(const uint32_t *)(blob + 4));
+                        if (superMagic == TDV_CS_EMBEDDED_SIGNATURE &&
+                            superLength >= 12 && blob + superLength <= blobEnd) {
+                            uint32_t count = tdv_be32(*(const uint32_t *)(blob + 8));
+                            uint8_t *cd = NULL;
+                            if (count > 0 && (uint64_t)12 + (uint64_t)count * 8 <= superLength) {
+                                for (uint32_t i = 0; i < count; i++) {
+                                    uint8_t *entry = blob + 12 + i * 8;
+                                    uint32_t type = tdv_be32(*(const uint32_t *)entry);
+                                    uint32_t offset = tdv_be32(*(const uint32_t *)(entry + 4));
+                                    if (type == 0 && offset + 36 <= superLength) {
+                                        cd = blob + offset;
+                                        break;
+                                    }
+                                }
+                            }
+                            if (cd) {
+                                uint32_t cdMagic = tdv_be32(*(const uint32_t *)cd);
+                                uint32_t cdLength = tdv_be32(*(const uint32_t *)(cd + 4));
+                                uint8_t hashSize = cd[32];
+                                uint32_t hashOffset = tdv_be32(*(const uint32_t *)(cd + 16));
+                                if (cdMagic == TDV_CS_CODEDIRECTORY && cdLength >= 36 &&
+                                    hashSize > 0 && hashSize <= 32 &&
+                                    (uint64_t)hashOffset + hashSize <= cdLength &&
+                                    cd + cdLength <= blobEnd) {
                                     size_t copy = hashSize < outSize ? hashSize : outSize;
-                                    if (blob + hashOffset + copy <= blobEnd) {
-                                        memcpy(outHash, blob + hashOffset, copy);
+                                    if (cd + hashOffset + copy <= cd + cdLength) {
+                                        memcpy(outHash, cd + hashOffset, copy);
                                         if (copy < outSize) {
                                             memset((uint8_t *)outHash + copy, 0, outSize - copy);
                                         }
