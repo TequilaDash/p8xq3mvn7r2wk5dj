@@ -202,13 +202,18 @@ static const CGFloat LCHomeButtonFlingCarry = 0.12;
         return;
     }
     if (!self.isDragging) {
+        // Keep the button's own size fixed even if a stale zero frame survived
+        // from a previous layout pass.
+        self.button.bounds = CGRectMake(0, 0, LCHomeButtonView.diameter, LCHomeButtonView.diameter);
         CGRect area = self.restingArea;
         CGPoint center = [self.currentPlacement centerInArea:area];
-        // 绝不允许按钮留在零尺寸窗口算出的 (0,0); 一旦坐标无效就强制回默认右侧.
+        // A near-zero center is just as broken as (0,0): the button lands under
+        // the status bar and cannot be tapped. Reset to the default right edge.
         if (!isfinite(center.x) || !isfinite(center.y) ||
-            center.x < CGRectGetMinX(self.view.bounds) || center.y < CGRectGetMinY(self.view.bounds) ||
-            center.x > CGRectGetMaxX(self.view.bounds) || center.y > CGRectGetMaxY(self.view.bounds)) {
-            self.placement = nil;
+            center.x < 1 || center.y < 1 ||
+            center.x > CGRectGetMaxX(self.view.bounds) - 1 ||
+            center.y > CGRectGetMaxY(self.view.bounds) - 1) {
+            self.placement = [LCHomeButtonPlacement firstPlacementForInterfaceOrientation:self.currentInterfaceOrientation];
             center = [self.currentPlacement centerInArea:area];
         }
         self.button.center = center;

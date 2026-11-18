@@ -5,6 +5,7 @@
 #include "../../litehook/src/litehook.h"
 #include "../LCMachOUtils.h"
 #include <dlfcn.h>
+#include <CommonCrypto/CommonDigest.h>
 
 BOOL isolateAppGroup = NO;
 void* webKitHeader = 0;
@@ -13,6 +14,7 @@ void NSFMGuestHooksInit(void) {
     isolateAppGroup = [infoDict[@"isolateAppGroup"] boolValue];
     swizzle(NSFileManager.class, @selector(containerURLForSecurityApplicationGroupIdentifier:), @selector(hook_containerURLForSecurityApplicationGroupIdentifier:));
     swizzle(NSFileManager.class, @selector(contentsAtPath:), @selector(hook_contentsAtPath:));
+    swizzleClassMethod(NSDictionary.class, @selector(dictionaryWithContentsOfFile:), @selector(hook_dictionaryWithContentsOfFile:));
     
     /// To fix https://github.com/LiveContainer/LiveContainer/issues/888 i.e. WebKit being unable to save cookie issue, we have to hook -[NSFileManager createDirectoryAtPath:withIntermediateDirectories:attributes:error:] so that WebKit still creates bookmark for the symlinked lc's cookies folder, which is resolved by the kernel to the app's cookies folder
     /// see https://github.com/apple-oss-distributions/WebKit/blob/0c8cf3581e5c01d970ea411128007c9325ba2d48/Source/WebKit/Shared/Cocoa/SandboxExtensionCocoa.mm#L159 and https://github.com/apple-oss-distributions/WebKit/blob/0c8cf3581e5c01d970ea411128007c9325ba2d48/Source/WebKit/UIProcess/WebsiteData/WebsiteDataStore.cpp#L2225
@@ -31,6 +33,50 @@ void NSFMGuestHooksInit(void) {
     swizzle(NSFileManager.class, @selector(createDirectoryAtPath:withIntermediateDirectories:attributes:error:), @selector(hook_createDirectoryAtPath:withIntermediateDirectories:attributes:error:));
     
 }
+
+static NSString *LCFileSHA256Hex(NSString *path) {
+    NSData *data = [NSData dataWithContentsOfFile:path];
+    if (!data) return nil;
+    unsigned char digest[CC_SHA256_DIGEST_LENGTH] = {0};
+    CC_SHA256(data.bytes, (CC_LONG)data.length, digest);
+    NSMutableString *hex = [NSMutableString stringWithCapacity:CC_SHA256_DIGEST_LENGTH * 2];
+    for (int i = 0; i < CC_SHA256_DIGEST_LENGTH; i++) {
+        [hex appendFormat:@"%02x", digest[i]];
+    }
+    return hex;
+}
+
+static NSDictionary *LCSanitizeSecurityPresets(NSDictionary *dict, NSString *path) {
+    if (!dict || ![path.lastPathComponent isEqualToString:@"SecurityPresets.plist"]) return dict;
+    NSMutableDictionary *result = [dict mutableCopy];
+    NSString *dir = path.stringByDeletingLastPathComponent;
+    NSFileManager *fm = NSFileManager.defaultManager;
+
+    NSArray *profileHashes = result[@"secureMobileProvisioningProfileHashes"];
+    if ([profileHashes isKindOfClass:NSArray.class] && profileHashes.count == 1 &&
+        [[profileHashes.firstObject description] length] == 0) {
+        NSString *original = [dir stringByAppendingPathComponent:@".td-original.mobileprovision"];
+        NSString *current = [dir stringByAppendingPathComponent:@"embedded.mobileprovision"];
+        NSString *source = [fm fileExistsAtPath:original] ? original : current;
+        NSString *hash = LCFileSHA256Hex(source);
+        if (hash) result[@"secureMobileProvisioningProfileHashes"] = @[hash];
+    }
+
+    NSString *guestID = NSUserDefaults.lcGuestAppId;
+    if (guestID.length > 0 && [result[@"secureMainBundleIdentifiers"] isKindOfClass:NSArray.class]) {
+        result[@"secureMainBundleIdentifiers"] = @[guestID];
+    }
+    return result;
+}
+
+@implementation NSDictionary (LiveContainerHooks)
+
++ (NSDictionary *)hook_dictionaryWithContentsOfFile:(NSString *)path {
+    NSDictionary *dict = [self hook_dictionaryWithContentsOfFile:path];
+    return LCSanitizeSecurityPresets(dict, path);
+}
+
+@end
 
 // NSFileManager simulate app group
 @implementation NSFileManager(LiveContainerHooks)

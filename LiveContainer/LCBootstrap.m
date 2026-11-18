@@ -444,11 +444,16 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
     overwriteExecPath(appExecPath);
     
     // Overwrite NSUserDefaults
-    if([guestAppInfo[@"doUseLCBundleId"] boolValue]) {
-        lcGuestAppId = guestAppInfo[@"LCOrignalBundleIdentifier"];
+    NSString *recordedGuestId = guestAppInfo[@"LCOrignalBundleIdentifier"];
+    if (![recordedGuestId isKindOfClass:NSString.class] || recordedGuestId.length == 0) {
+        recordedGuestId = guestAppInfo[@"TDOriginalBundleIdentifier"];
+    }
+    if ([recordedGuestId isKindOfClass:NSString.class] && recordedGuestId.length > 0) {
+        lcGuestAppId = recordedGuestId;
+    } else if ([guestAppInfo[@"doUseLCBundleId"] boolValue]) {
+        lcGuestAppId = appBundle.bundleIdentifier;
     } else {
         lcGuestAppId = appBundle.bundleIdentifier;
-        
     }
     NSBundleGuestHooksInit();
 

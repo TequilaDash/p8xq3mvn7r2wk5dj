@@ -319,6 +319,19 @@ static void tdv_hide_image_if_needed(const struct mach_header *header) {
 }
 
 void* hook_dlsym(void * __handle, const char * __symbol) {
+    // Detectors such as Reveil resolve csops through dlsym(RTLD_DEFAULT, ...),
+    // which bypasses __DATA,__interpose. Route that lookup to TweakLoader's
+    // exported replacement when the csops spoof gate is enabled.
+    if (__handle == (void*)RTLD_DEFAULT && __symbol && getenv("TD_CSOPS_SPOOF") &&
+        getenv("TD_CSOPS_SPOOF")[0] == '1') {
+        if (strcmp(__symbol, "csops") == 0) {
+            void *replacement = orig_dlsym(RTLD_DEFAULT, "TDVReplacementCsops");
+            if (replacement) return replacement;
+        } else if (strcmp(__symbol, "csops_audittoken") == 0) {
+            void *replacement = orig_dlsym(RTLD_DEFAULT, "TDVReplacementCsopsAuditToken");
+            if (replacement) return replacement;
+        }
+    }
     if(__handle == (void*)RTLD_MAIN_ONLY) {
         if(strcmp(__symbol, MH_EXECUTE_SYM) == 0) {
             if(!appExecutableFileTypeOverwritten) {

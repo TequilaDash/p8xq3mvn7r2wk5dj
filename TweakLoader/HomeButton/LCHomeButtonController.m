@@ -328,15 +328,8 @@ static const CGFloat LCHomeButtonGlobalEdgeTravel = 80;
 }
 
 - (void)handleEdgeSwipe {
-    Class sharedUtils = NSClassFromString(@"LCSharedUtils");
-    NSString *groupID = nil;
-    if ([sharedUtils respondsToSelector:@selector(appGroupID)]) {
-        groupID = ((NSString *(*)(id, SEL))objc_msgSend)(sharedUtils, @selector(appGroupID));
-    }
-    NSUserDefaults *shared = groupID ? [[NSUserDefaults alloc] initWithSuiteName:groupID] : nil;
-    [shared setBool:YES forKey:@"TDPendingOpenSettings"];
-    CFNotificationCenterRef center = CFNotificationCenterGetDarwinNotifyCenter();
-    CFNotificationCenterPostNotification(center, CFSTR("com.kdt.livecontainer.openSettings"), NULL, NULL, true);
+    // “全局应用”只要求返回 zContainer；设置页跳转必须来自设置入口，
+    // 不能在这里写 TDPendingOpenSettings / post openSettings 通知。
     [self goBackToZContainer];
 }
 - (void)handlePress {

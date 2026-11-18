@@ -1,3 +1,11 @@
+20261118-131020 1.1.43 Update：
+1. 侧边下滑“全局应用”不再写 TDPendingOpenSettings，也不再 post openSettings 通知，只返回 zContainer 主界面。
+2. 悬浮窗布局加强：固定按钮 52pt bounds，近零/越界坐标一律回到右侧默认，避免左上角不可点击。
+3. 访客 bundle id 优先取原始记录，修复旧安装下 Reveil 读到宿主 ID。
+4. 对 dlsym(RTLD_DEFAULT,"csops"/"csops_audittoken") 返回伪值实现，绕过 interpose 被 dlsym 跳过的检测路径。
+5. 对 SecurityPresets.plist 的空 profile 哈希与 bundle id 基线做通用修正，基于 IPA Ghidra 反编译结果。
+6. 版本号升至 1.1.43。
+
 20261118-121148 1.1.42 Update：
 1. 回退跨进程保存的悬浮窗位置：每次启动强制回到右侧默认位置，避免坏存档把按钮钉在左上角且无法点击。
 2. 悬浮窗创建时强制重置布局，窗口显示与布局顺序恢复原有可靠流程。

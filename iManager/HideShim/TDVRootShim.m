@@ -684,6 +684,20 @@ static int tdv_csops_audittoken_impl(int pid, unsigned int ops, void *useraddr,
     return tdv_csops_apply(ops, useraddr, usersize, rc, __builtin_return_address(0));
 }
 
+// Exported for hook_dlsym(): some detectors call dlsym(RTLD_DEFAULT, "csops")
+// and therefore bypass __DATA,__interpose. Returning this address from dlsym
+// makes the same spoofing logic apply to that API path too.
+__attribute__((visibility("default")))
+int TDVReplacementCsops(int pid, unsigned int ops, void *useraddr, size_t usersize) {
+    return tdv_csops_impl(pid, ops, useraddr, usersize);
+}
+
+__attribute__((visibility("default")))
+int TDVReplacementCsopsAuditToken(int pid, unsigned int ops, void *useraddr,
+                                  size_t usersize, void *token) {
+    return tdv_csops_audittoken_impl(pid, ops, useraddr, usersize, token);
+}
+
 #pragma mark - proc 族伪值 (TD_PROC_SPOOF)
 
 #include <mach/mach.h>
