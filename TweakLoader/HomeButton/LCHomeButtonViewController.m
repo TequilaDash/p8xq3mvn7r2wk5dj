@@ -46,6 +46,14 @@ static const CGFloat LCHomeButtonFlingCarry = 0.12;
     self.placement = [LCHomeButtonPlacement firstPlacementForInterfaceOrientation:UIApplication.sharedApplication.statusBarOrientation];
 
     LCHomeButtonView *button = [[LCHomeButtonView alloc] initWithFrame:CGRectZero];
+    // The view may not get a valid layout pass before the first touch. Give the
+    // button its real size and right-edge default immediately instead of
+    // leaving it at CGRectZero in the status bar.
+    CGPoint defaultCenter = [self.placement centerInArea:self.restingArea];
+    button.frame = CGRectMake(defaultCenter.x - LCHomeButtonView.diameter / 2,
+                              defaultCenter.y - LCHomeButtonView.diameter / 2,
+                              LCHomeButtonView.diameter,
+                              LCHomeButtonView.diameter);
     [button addTarget:self action:@selector(buttonTouchedDown) forControlEvents:UIControlEventTouchDown];
     [button addTarget:self action:@selector(buttonPressed) forControlEvents:UIControlEventTouchUpInside];
     [button addTarget:self action:@selector(buttonLetGo) forControlEvents:UIControlEventTouchUpOutside | UIControlEventTouchCancel];

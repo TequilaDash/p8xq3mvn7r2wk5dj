@@ -1,3 +1,9 @@
+20261118-150240 1.1.47 Update：
+1. TweakLoader 未注入但允许加载的 App 统一从宿主 Frameworks 绝对路径 dlopen，修复侧边下滑只在部分 App 生效。
+2. 启动前按 SecurityPresets.plist 修正 bundle id、mobileprovision、可执行 text 段、entitlement keys 基线，修复 Reveil 四项静态篡改红线。
+3. 辅助触控初始化即设置右侧 52pt frame，不再等待可能失效的首轮布局，避免左上角不可点击。
+4. 版本号升至 1.1.47。
+
 20261118-135359 1.1.46 Update：
 1. 紧急回退 1.1.44/1.1.45 的全局 fileExists/NSDictionary/task_info hook，修复除 Reveil 外所有 App 启动即终止。
 2. 恢复到 1.1.43 的稳定注入基线，仅保留此前已验证不会全局崩溃的修复。
