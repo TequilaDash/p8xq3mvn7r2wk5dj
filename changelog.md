@@ -1,3 +1,7 @@
+20261118-133938 1.1.45 Update：
+1. 根据 全能签 IPA 的 Ghidra 反编译，hook task_info(TASK_DYLD_INFO)，隐藏 dyld image 数组，覆盖 task_info 注入库检测旁路。
+2. 版本号升至 1.1.45。
+
 20261118-133211 1.1.44 Update：
 1. 清理旧版本残留的 TDPendingOpenSettings，避免侧边下滑返回后被带到设置页。
 2. 补上 NSDictionary -initWithContentsOfFile: hook，覆盖 Swift plist 加载路径。
