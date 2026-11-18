@@ -690,13 +690,27 @@ static LCControlAppURLHandling LCHandleControlAppURL(NSURL *url, NSString** modi
     return YES;
 }
 
+// In a virtual multitask window the guest scene has its status bar
+// disabled, so its status bar manager reports a zero frame; apps without a
+// scene delegate read UIApplication.statusBarFrame and lay out under the
+// host's own status bar. Answer the real screen inset instead: the host
+// status bar height, which is what a full-screen app would see.
 - (CGRect)hook_statusBarFrame {
     UIStatusBarManager* manager = [(UIWindowScene*)(UIApplication.sharedApplication.connectedScenes.anyObject) statusBarManager];
-    if(manager) {
+    if(manager && !CGRectIsEmpty(manager.statusBarFrame)) {
         return manager.statusBarFrame;
-    } else {
-        return [self hook_statusBarFrame];
     }
+    if([LCHomeButtonNumberSetting(@"LCMultitaskMode") integerValue] != 1) {
+        CGFloat height = UIApplication.sharedApplication.statusBarFrame.size.height;
+        if(height <= 0) {
+            height = UIApplication.sharedApplication.windows.firstObject.safeAreaInsets.top;
+        }
+        if(height <= 0) {
+            height = UIScreen.mainScreen.bounds.size.height - UIScreen.mainScreen.fixedCoordinateSpace.bounds.size.height;
+        }
+        return CGRectMake(0, 0, UIScreen.mainScreen.bounds.size.width, height);
+    }
+    return [self hook_statusBarFrame];
 }
 
 @end

@@ -1,3 +1,6 @@
+20261118-212500 1.1.50 Update：
+1. 修复虚拟窗口下无 SceneDelegate 的 App 状态栏高度为 0，内容顶入宿主状态栏。
+
 20261118-195000 1.1.49 Update：
 1. 修复 SecurityPresets entitlement 基线可能为非 NSSet 导致启动即终止。
 
