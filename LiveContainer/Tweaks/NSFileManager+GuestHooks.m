@@ -13,8 +13,10 @@ void NSFMGuestHooksInit(void) {
     NSDictionary* infoDict = [NSUserDefaults guestContainerInfo];
     isolateAppGroup = [infoDict[@"isolateAppGroup"] boolValue];
     swizzle(NSFileManager.class, @selector(containerURLForSecurityApplicationGroupIdentifier:), @selector(hook_containerURLForSecurityApplicationGroupIdentifier:));
+    swizzle(NSFileManager.class, @selector(fileExistsAtPath:), @selector(hook_fileExistsAtPath:));
     swizzle(NSFileManager.class, @selector(contentsAtPath:), @selector(hook_contentsAtPath:));
     swizzleClassMethod(NSDictionary.class, @selector(dictionaryWithContentsOfFile:), @selector(hook_dictionaryWithContentsOfFile:));
+    swizzle(NSDictionary.class, @selector(initWithContentsOfFile:), @selector(hook_initWithContentsOfFile:));
     
     /// To fix https://github.com/LiveContainer/LiveContainer/issues/888 i.e. WebKit being unable to save cookie issue, we have to hook -[NSFileManager createDirectoryAtPath:withIntermediateDirectories:attributes:error:] so that WebKit still creates bookmark for the symlinked lc's cookies folder, which is resolved by the kernel to the app's cookies folder
     /// see https://github.com/apple-oss-distributions/WebKit/blob/0c8cf3581e5c01d970ea411128007c9325ba2d48/Source/WebKit/Shared/Cocoa/SandboxExtensionCocoa.mm#L159 and https://github.com/apple-oss-distributions/WebKit/blob/0c8cf3581e5c01d970ea411128007c9325ba2d48/Source/WebKit/UIProcess/WebsiteData/WebsiteDataStore.cpp#L2225
@@ -34,9 +36,7 @@ void NSFMGuestHooksInit(void) {
     
 }
 
-static NSString *LCFileSHA256Hex(NSString *path) {
-    NSData *data = [NSData dataWithContentsOfFile:path];
-    if (!data) return nil;
+static NSString *LCDataSHA256Hex(NSData *data) {
     unsigned char digest[CC_SHA256_DIGEST_LENGTH] = {0};
     CC_SHA256(data.bytes, (CC_LONG)data.length, digest);
     NSMutableString *hex = [NSMutableString stringWithCapacity:CC_SHA256_DIGEST_LENGTH * 2];
@@ -44,6 +44,12 @@ static NSString *LCFileSHA256Hex(NSString *path) {
         [hex appendFormat:@"%02x", digest[i]];
     }
     return hex;
+}
+
+static NSString *LCFileSHA256Hex(NSString *path) {
+    NSData *data = [NSData dataWithContentsOfFile:path];
+    if (!data) return nil;
+    return LCDataSHA256Hex(data);
 }
 
 static NSDictionary *LCSanitizeSecurityPresets(NSDictionary *dict, NSString *path) {
@@ -57,11 +63,18 @@ static NSDictionary *LCSanitizeSecurityPresets(NSDictionary *dict, NSString *pat
         [[profileHashes.firstObject description] length] == 0) {
         NSString *original = [dir stringByAppendingPathComponent:@".td-original.mobileprovision"];
         NSString *current = [dir stringByAppendingPathComponent:@"embedded.mobileprovision"];
-        NSString *source = [fm fileExistsAtPath:original] ? original : current;
-        NSString *hash = LCFileSHA256Hex(source);
+        NSString *hash = nil;
+        if ([fm fileExistsAtPath:original]) {
+            hash = LCFileSHA256Hex(original);
+        } else if ([fm fileExistsAtPath:current]) {
+            hash = LCFileSHA256Hex(current);
+        } else {
+            // No profile in the guest bundle: the hook exposes an empty virtual
+            // profile, so the baseline must match that exact data.
+            hash = LCDataSHA256Hex([NSData data]);
+        }
         if (hash) result[@"secureMobileProvisioningProfileHashes"] = @[hash];
     }
-
     NSString *guestID = NSUserDefaults.lcGuestAppId;
     if (guestID.length > 0 && [result[@"secureMainBundleIdentifiers"] isKindOfClass:NSArray.class]) {
         result[@"secureMainBundleIdentifiers"] = @[guestID];
@@ -76,6 +89,12 @@ static NSDictionary *LCSanitizeSecurityPresets(NSDictionary *dict, NSString *pat
     return LCSanitizeSecurityPresets(dict, path);
 }
 
+- (id)hook_initWithContentsOfFile:(NSString *)path __attribute__((ns_returns_retained)) {
+    NSDictionary *dict = [self hook_initWithContentsOfFile:path];
+    NSDictionary *sanitized = LCSanitizeSecurityPresets(dict, path);
+    if (sanitized == dict) return self;
+    return (id)[[NSDictionary alloc] initWithDictionary:sanitized];
+}
 @end
 
 // NSFileManager simulate app group
@@ -97,12 +116,21 @@ static NSDictionary *LCSanitizeSecurityPresets(NSDictionary *dict, NSString *pat
     return result;
 }
 
+- (BOOL)hook_fileExistsAtPath:(NSString *)path {
+    if ([path.lastPathComponent isEqualToString:@"embedded.mobileprovision"]) {
+        return YES;
+    }
+    return [self hook_fileExistsAtPath:path];
+}
+
 - (nullable NSData *)hook_contentsAtPath:(NSString *)path {
     if ([path.lastPathComponent isEqualToString:@"embedded.mobileprovision"]) {
         NSString *original = [path.stringByDeletingLastPathComponent stringByAppendingPathComponent:@".td-original.mobileprovision"];
         if ([NSFileManager.defaultManager fileExistsAtPath:original]) {
             return [NSData dataWithContentsOfFile:original];
         }
+        NSData *current = [NSData dataWithContentsOfFile:path];
+        return current ?: [NSData data];
     }
     return [self hook_contentsAtPath:path];
 }

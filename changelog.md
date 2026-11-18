@@ -1,3 +1,9 @@
+20261118-133211 1.1.44 Update：
+1. 清理旧版本残留的 TDPendingOpenSettings，避免侧边下滑返回后被带到设置页。
+2. 补上 NSDictionary -initWithContentsOfFile: hook，覆盖 Swift plist 加载路径。
+3. 虚拟 embedded.mobileprovision 文件：无真实 profile 时返回与 plist 基线一致的空数据哈希，修复 patched Reveil 的描述文件红项。
+4. 版本号升至 1.1.44。
+
 20261118-131020 1.1.43 Update：
 1. 侧边下滑“全局应用”不再写 TDPendingOpenSettings，也不再 post openSettings 通知，只返回 zContainer 主界面。
 2. 悬浮窗布局加强：固定按钮 52pt bounds，近零/越界坐标一律回到右侧默认，避免左上角不可点击。
