@@ -16,10 +16,6 @@ private func TDOpenSettingsDarwinCallback(
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? ) -> Bool {
         application.shortcutItems = nil
         UserDefaults.standard.removeObject(forKey: "LCNeedToAcquireJIT")
-        // Old releases could leave this key set. It must not survive a host
-        // launch, or any later openSettings notification jumps to Settings
-        // even after side-swipe stopped writing it.
-        LCUtils.appGroupUserDefault.removeObject(forKey: "TDPendingOpenSettings")
         
         NotificationCenter.default.addObserver(forName: UIApplication.willTerminateNotification, object: nil, queue: .main) { _ in
             // Fix launching app if user opens JIT waiting dialog and kills the app. Won't trigger normally.

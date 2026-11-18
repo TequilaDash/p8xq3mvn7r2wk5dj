@@ -1,3 +1,8 @@
+20261118-135359 1.1.46 Update：
+1. 紧急回退 1.1.44/1.1.45 的全局 fileExists/NSDictionary/task_info hook，修复除 Reveil 外所有 App 启动即终止。
+2. 恢复到 1.1.43 的稳定注入基线，仅保留此前已验证不会全局崩溃的修复。
+3. 版本号升至 1.1.46。
+
 20261118-133938 1.1.45 Update：
 1. 根据 全能签 IPA 的 Ghidra 反编译，hook task_info(TASK_DYLD_INFO)，隐藏 dyld image 数组，覆盖 task_info 注入库检测旁路。
 2. 版本号升至 1.1.45。

@@ -13,11 +13,6 @@
 #include "mach_excServer.h"
 #import "../utils.h"
 #import "../dyld_bypass_validation.h"
-#include <mach/task_info.h>
-#include <mach-o/dyld_images.h>
-#ifndef TASK_DYLD_INFO
-#define TASK_DYLD_INFO 17
-#endif
 @import Darwin;
 @import Foundation;
 @import MachO;
@@ -50,7 +45,6 @@ const struct mach_header* (*orig_dyld_get_image_header)(uint32_t image_index) = 
 intptr_t (*orig_dyld_get_image_vmaddr_slide)(uint32_t image_index) = _dyld_get_image_vmaddr_slide;
 const char* (*orig_dyld_get_image_name)(uint32_t image_index) = _dyld_get_image_name;
 int (*orig_fcntl)(int fildes, int cmd, void *param) = 0;
-kern_return_t (*orig_task_info)(task_name_t, task_flavor_t, task_info_t, mach_msg_type_number_t *) = task_info;
 
 uint32_t guestAppSdkVersion = 0;
 uint32_t guestAppSdkVersionSet = 0;
@@ -322,26 +316,6 @@ static void tdv_hide_image_if_needed(const struct mach_header *header) {
             return;
         }
     }
-}
-
-static struct dyld_all_image_infos gEmptyDyldAllImageInfos = {0};
-
-static kern_return_t hook_task_info(task_name_t task, task_flavor_t flavor,
-                                    task_info_t info, mach_msg_type_number_t *count) {
-    kern_return_t kr = orig_task_info(task, flavor, info, count);
-    if (kr == KERN_SUCCESS && gTDVRemapEnabled && task == mach_task_self() &&
-        flavor == TASK_DYLD_INFO && info && count) {
-        // NSKSign reads dyld_all_image_infos via TASK_DYLD_INFO. Point it at
-        // an empty image table so it cannot enumerate TweakLoader/LC dylibs.
-        gEmptyDyldAllImageInfos.version = 1;
-        gEmptyDyldAllImageInfos.infoArrayCount = 0;
-        gEmptyDyldAllImageInfos.infoArray = NULL;
-        struct task_dyld_info *dyldInfo = (struct task_dyld_info *)info;
-        dyldInfo->all_image_info_addr = (mach_vm_address_t)&gEmptyDyldAllImageInfos;
-        dyldInfo->all_image_info_size = sizeof(gEmptyDyldAllImageInfos);
-        dyldInfo->all_image_info_format = TASK_DYLD_ALL_IMAGE_INFO_64;
-    }
-    return kr;
 }
 
 void* hook_dlsym(void * __handle, const char * __symbol) {
@@ -674,7 +648,6 @@ void DyldHooksInit(bool hideLiveContainer, bool hookDlopen, uint32_t spoofSDKVer
     // 捕获真实实现；上一次隐藏启动可能已把该符号重绑到 hook，这里再取一次会把
     // orig 指回 hook 自身，递归调用直接爆栈（表现为访客被终止）。
     
-    litehook_rebind_symbol(LITEHOOK_REBIND_GLOBAL, task_info, hook_task_info, nil);
     // hook dlsym to solve RTLD_MAIN_ONLY, hook other functions to hide LiveContainer itself
     litehook_rebind_symbol(LITEHOOK_REBIND_GLOBAL, dlsym, hook_dlsym, nil);
     // 所有进程统一裁剪注入面 (TweakLoader / Documents/Tweaks)；隐藏开关只决定
