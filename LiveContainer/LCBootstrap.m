@@ -378,7 +378,15 @@ static void LCAdaptSecurityPresets(NSString *bundlePath, NSString *guestId, NSSt
 
     // 基线必须覆盖“已有允许项 + 原包 entitlements + 当前包 entitlements”，
     // 因为 Reveil 用当前可执行路径读取值集合；只写原包会漏掉迁移中新增的键。
-    NSMutableSet *entitlementKeys = [NSMutableSet setWithSet:presets[@"secureEntitlementKeys"] ?: @[]];
+    // `presets[@"secureEntitlementKeys"]` 可能是 NSArray/字符串/空值；不能直接
+    // 交给 setWithSet，否则会抛 "set argument is not an NSSet"。
+    NSMutableSet *entitlementKeys = [NSMutableSet set];
+    id existingKeys = presets[@"secureEntitlementKeys"];
+    if ([existingKeys isKindOfClass:NSArray.class] || [existingKeys isKindOfClass:NSSet.class]) {
+        for (id key in existingKeys) {
+            if ([key isKindOfClass:NSString.class]) [entitlementKeys addObject:key];
+        }
+    }
     NSArray *originalEntitlementKeys = LCCollectExecutableEntitlementKeys(originalExec);
     if (originalEntitlementKeys) {
         [entitlementKeys addObjectsFromArray:originalEntitlementKeys];
