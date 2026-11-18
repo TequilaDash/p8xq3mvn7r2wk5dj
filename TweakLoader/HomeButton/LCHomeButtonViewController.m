@@ -43,8 +43,7 @@ static const CGFloat LCHomeButtonFlingCarry = 0.12;
 
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.placement = [LCHomeButtonPlacement savedPlacement] ?:
-            [LCHomeButtonPlacement firstPlacementForInterfaceOrientation:UIApplication.sharedApplication.statusBarOrientation];
+    self.placement = [LCHomeButtonPlacement firstPlacementForInterfaceOrientation:UIApplication.sharedApplication.statusBarOrientation];
 
     LCHomeButtonView *button = [[LCHomeButtonView alloc] initWithFrame:CGRectZero];
     [button addTarget:self action:@selector(buttonTouchedDown) forControlEvents:UIControlEventTouchDown];
@@ -168,6 +167,7 @@ static const CGFloat LCHomeButtonFlingCarry = 0.12;
 - (void)viewDidAppear:(BOOL)animated {
     [super viewDidAppear:animated];
     [self reloadSettings];
+    self.placement = [LCHomeButtonPlacement firstPlacementForInterfaceOrientation:self.currentInterfaceOrientation];
     [self.view setNeedsLayout];
     [self.view layoutIfNeeded];
     [self dimSoon];
@@ -189,8 +189,7 @@ static const CGFloat LCHomeButtonFlingCarry = 0.12;
 
 - (void)resetPlacementToDefault {
     if (!self.isViewLoaded) return;
-    [LCHomeButtonPlacement removeSavedPlacement];
-    self.placement = nil;
+    self.placement = [LCHomeButtonPlacement firstPlacementForInterfaceOrientation:self.currentInterfaceOrientation];
     [self.view setNeedsLayout];
     [self.view layoutIfNeeded];
 }

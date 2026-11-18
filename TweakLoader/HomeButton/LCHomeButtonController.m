@@ -194,7 +194,7 @@ NSString *LCHomeButtonSetting(NSString *key) {
         }
         if (self.window) {
             self.window.hidden = NO;
-            [self applyGeometry:bounds inScene:scene resetPlacement:NO];
+            [self applyGeometry:bounds inScene:scene resetPlacement:YES];
             [self scheduleGeometryCheckInScene:scene];
             return;
         }
@@ -215,7 +215,7 @@ NSString *LCHomeButtonSetting(NSString *key) {
         self.buttonController = buttonController;
         self.window = window;
         window.hidden = NO;
-        [self applyGeometry:bounds inScene:scene resetPlacement:NO];
+        [self applyGeometry:bounds inScene:scene resetPlacement:YES];
         [self scheduleGeometryCheckInScene:scene];
     } @catch (NSException *exception) {
         NSLog(@"[LC] The Home button couldn't show: %@", exception);
