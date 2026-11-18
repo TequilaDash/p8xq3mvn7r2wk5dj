@@ -24,11 +24,15 @@ struct HomePillRow: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.homeButtonEdge) private var homeButtonEdge
     @GestureState private var isScrubbing = false
+    @AppStorage("TDAssistiveTouchMode", store: LCUtils.appGroupUserDefault)
+    private var assistiveTouchMode = "default"
 
     var body: some View {
         // On an iPad turned so its Home button isn't below the screen, the
         // button stands beside the screen instead, as HomeEdgeButton.
-        let content = model.pillContent(homeButtonInRow: homeButtonEdge == .bottom)
+        let content: HomePillContent = assistiveTouchMode == "always"
+            ? .search
+            : model.pillContent(homeButtonInRow: homeButtonEdge == .bottom)
 
         ZStack {
             if content == .homeButton {

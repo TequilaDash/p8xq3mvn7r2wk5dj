@@ -32,6 +32,8 @@ struct HomeSearchView: View {
     /// keyboard is up. As search opens it waits a moment for the keyboard,
     /// so it doesn't flash, and shows if the keyboard never came.
     @State private var showsHomeButton = false
+    @AppStorage("TDAssistiveTouchMode", store: LCUtils.appGroupUserDefault)
+    private var assistiveTouchMode = "default"
     /// Whether an on-screen keyboard is up: the field widens over it, as
     /// Spotlight's does, and on iPad the Home button goes.
     @State private var isKeyboardUp = false
@@ -50,7 +52,7 @@ struct HomeSearchView: View {
         // On an iPad turned so its Home button is beside the screen, or above
         // it, the Home button stands against that edge instead.
         .overlay(alignment: edgeAlignment) {
-            if showsHomeButton && homeButtonEdge != .bottom {
+            if showsHomeButton && homeButtonEdge != .bottom && assistiveTouchMode != "always" {
                 HomeButton(action: model.goHome)
                     .padding(HomeDesign.homeButtonBarPadding)
                     .transition(.opacity)
@@ -128,7 +130,7 @@ struct HomeSearchView: View {
 
                 // In the row above the dock, as on the Home Screen's other
                 // pages, which search leaves in sight.
-                if showsHomeButton && homeButtonEdge == .bottom {
+                if showsHomeButton && homeButtonEdge == .bottom && assistiveTouchMode != "always" {
                     HomeButton(action: model.goHome)
                         .scaleEffect(metrics.pillButtonScale)
                         .position(metrics.pillCenter)
@@ -213,7 +215,7 @@ struct HomeSearchView: View {
 
             // The keyboard covers the bottom of the screen while it's up, so
             // the Home button shows under the field once it goes away.
-            if showsHomeButton && homeButtonEdge == .bottom {
+            if showsHomeButton && homeButtonEdge == .bottom && assistiveTouchMode != "always" {
                 HomeButton(action: model.goHome)
                     .padding(.bottom, HomeDesign.homeButtonBarPadding)
                     .transition(.opacity)

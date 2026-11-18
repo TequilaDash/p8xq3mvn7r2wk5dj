@@ -23,7 +23,7 @@ static CGRect LCHomeSceneBounds(UIWindowScene *scene) {
 }
 
 
-NSString *LCHomeButtonSetting(NSString *key) {
+static id LCHomeButtonSettingObject(NSString *key) {
     Class sharedUtils = NSClassFromString(@"LCSharedUtils");
     NSString *groupID = nil;
     if ([sharedUtils respondsToSelector:@selector(appGroupID)]) {
@@ -31,8 +31,31 @@ NSString *LCHomeButtonSetting(NSString *key) {
     }
     NSUserDefaults *shared = groupID ? [[NSUserDefaults alloc] initWithSuiteName:groupID] : nil;
     // 宿主刚改完设置时，跨进程 suite 可能还留在旧缓存里。
-    [shared synchronize];
-    return [shared stringForKey:key];
+    if (shared) [shared synchronize];
+    id value = shared ? [shared objectForKey:key] : nil;
+    if (value != nil) return value;
+    // Suite may be unavailable or a pre-hook redirected it; the shared
+    // defaults singleton is what iManager itself writes and reads.
+    return [NSUserDefaults.lcSharedDefaults objectForKey:key];
+}
+
+NSString *LCHomeButtonSetting(NSString *key) {
+    id value = LCHomeButtonSettingObject(key);
+    if ([value isKindOfClass:NSString.class]) return value;
+    if ([value isKindOfClass:NSNumber.class]) return [value stringValue];
+    return nil;
+}
+
+NSNumber *LCHomeButtonNumberSetting(NSString *key) {
+    id value = LCHomeButtonSettingObject(key);
+    if ([value isKindOfClass:NSNumber.class]) return value;
+    if ([value isKindOfClass:NSString.class]) return @([value doubleValue]);
+    return nil;
+}
+
+BOOL LCHomeButtonBoolSetting(NSString *key, BOOL fallback) {
+    NSNumber *value = LCHomeButtonNumberSetting(key);
+    return value ? value.boolValue : fallback;
 }
 
 @interface LCHomeButtonController ()
@@ -48,6 +71,10 @@ NSString *LCHomeButtonSetting(NSString *key) {
 @property (nonatomic, weak, nullable) UITouch *globalEdgeTouch;
 @property (nonatomic) CGPoint globalEdgeStart;
 @property (nonatomic) BOOL globalEdgeFired;
+// Caches the setting between touch events; refreshed when a screen becomes
+// active or the overlay is shown, so edge detection doesn't reopen a suite
+// and synchronize for every touch.
+@property (nonatomic, copy) NSString *sideSwipeSetting;
 @end
 
 @implementation LCHomeButtonController
@@ -102,6 +129,7 @@ NSString *LCHomeButtonSetting(NSString *key) {
     UIWindowScene *scene = notification.object;
     if (![self isOwnScreen:scene]) return;
     [self.buttonController reloadSettings];
+    [self refreshSideSwipeSetting];
     if (self.window.windowScene == scene) {
         [self applyGeometry:LCHomeSceneBounds(scene) inScene:scene resetPlacement:NO];
     }
@@ -267,8 +295,16 @@ static const CGFloat LCHomeButtonGlobalEdgeTravel = 80;
         return self.buttonController.edgeSwipeEnabled;
     }
     // The overlay may not exist yet (or at all); the setting itself still
-    // decides whether the event fallback should work.
-    return [LCHomeButtonSetting(@"TDSideSwipeMode") isEqualToString:@"always"];
+    // decides whether the event fallback should work. Cache it instead of
+    // reopening and synchronizing the suite for every touch event.
+    if (!self.sideSwipeSetting) {
+        self.sideSwipeSetting = LCHomeButtonSetting(@"TDSideSwipeMode");
+    }
+    return [self.sideSwipeSetting isEqualToString:@"always"];
+}
+
+- (void)refreshSideSwipeSetting {
+    self.sideSwipeSetting = LCHomeButtonSetting(@"TDSideSwipeMode");
 }
 
 - (void)handleApplicationEvent:(UIEvent *)event {
@@ -333,20 +369,7 @@ static const CGFloat LCHomeButtonGlobalEdgeTravel = 80;
     [self goBackToZContainer];
 }
 - (void)handlePress {
-    BOOL always = [LCHomeButtonSetting(@"TDAssistiveTouchMode") isEqualToString:@"always"];
-    // 全局显示模式下, 普通全屏启动的应用单击后先确认是否退出.
-    if (always && !NSUserDefaults.isLiveProcess) {
-        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"退出应用"
-                                                                       message:@"退出当前应用并返回 zContainer 主界面？"
-                                                                preferredStyle:UIAlertControllerStyleAlert];
-        [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
-        __weak LCHomeButtonController *weakSelf = self;
-        [alert addAction:[UIAlertAction actionWithTitle:@"退出" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *action) {
-            [weakSelf goBackToZContainer];
-        }]];
-        [self.buttonController presentViewController:alert animated:YES completion:nil];
-        return;
-    }
+    // “始终显示”只有单击回到主界面这一个功能；不再弹确认框。
     [self goBackToZContainer];
 }
 
@@ -415,11 +438,21 @@ __attribute__((constructor))
 static void LCHomeButtonInit(void) {
     if (!NSUserDefaults.lcGuestAppId) {
         // TweakLoader normally loads with the guest already identified, but a
-        // hot-loaded/relaunched loader can race the bootstrap globals.
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            if (NSUserDefaults.lcGuestAppId) {
-                [LCHomeButtonController.sharedController start];
-            }
+        // hot-loaded/relaunched loader can race the bootstrap globals. Poll a
+        // bounded number of times instead of giving up after one attempt.
+        __block NSUInteger attempts = 0;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            __block void (^tryAgain)(void) = ^{
+                if (NSUserDefaults.lcGuestAppId) {
+                    [LCHomeButtonController.sharedController start];
+                    return;
+                }
+                attempts += 1;
+                if (attempts >= 10) return;
+                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)),
+                               dispatch_get_main_queue(), tryAgain);
+            };
+            tryAgain();
         });
         return;
     }

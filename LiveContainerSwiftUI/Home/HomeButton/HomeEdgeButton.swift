@@ -18,9 +18,11 @@ struct HomeEdgeButton: View {
 
     @Environment(HomeScreenModel.self) private var model
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @AppStorage("TDAssistiveTouchMode", store: LCUtils.appGroupUserDefault)
+    private var assistiveTouchMode = "default"
 
     var body: some View {
-        let isShown = model.homeButtonDoesSomething
+        let isShown = model.homeButtonDoesSomething && assistiveTouchMode != "always"
 
         ZStack {
             if isShown {

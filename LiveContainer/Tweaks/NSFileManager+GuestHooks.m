@@ -73,7 +73,17 @@ static NSDictionary *LCSanitizeSecurityPresets(NSDictionary *dict, NSString *pat
 
 + (NSDictionary *)hook_dictionaryWithContentsOfFile:(NSString *)path {
     NSDictionary *dict = [self hook_dictionaryWithContentsOfFile:path];
-    return LCSanitizeSecurityPresets(dict, path);
+    // Patcher/other host code may rewrite SecurityPresets; guest-visible reads
+    // must stay untouched so host-side writes cannot re-enter this swizzle.
+    if ([path.lastPathComponent isEqualToString:@"SecurityPresets.plist"] && dict[@"liveContainerHooks"] == nil) {
+        static int sanitizeDepth = 0;
+        if (sanitizeDepth++ == 0) {
+            NSDictionary *result = LCSanitizeSecurityPresets(dict, path);
+            sanitizeDepth--;
+            return result;
+        }
+    }
+    return dict;
 }
 
 @end

@@ -4,6 +4,8 @@
 #import <objc/message.h>
 
 NSString *LCHomeButtonSetting(NSString *key);
+NSNumber *LCHomeButtonNumberSetting(NSString *key);
+BOOL LCHomeButtonBoolSetting(NSString *key, BOOL fallback);
 
 // The space between the button and the edges of the screen's safe area.
 static const CGFloat LCHomeButtonEdgeMargin = 6;
@@ -26,6 +28,9 @@ static const CGFloat LCHomeButtonFlingCarry = 0.12;
 @property (nonatomic) CGPoint dragOffset;
 // Counts touches, so a dimming planned before the last touch doesn't happen.
 @property (nonatomic) NSUInteger dimmingGeneration;
+// Idle dimming is optional and its final opacity is user-configurable.
+@property (nonatomic) BOOL dimEnabled;
+@property (nonatomic) CGFloat dimAlpha;
 // 侧边下滑时跟随手指的整屏快照.
 @property (nonatomic, nullable) UIView *edgeSnapshot;
 @property (nonatomic, weak, nullable) UIPanGestureRecognizer *edgeGesture;
@@ -45,7 +50,8 @@ static const CGFloat LCHomeButtonFlingCarry = 0.12;
     [super viewDidLoad];
     self.placement = [LCHomeButtonPlacement firstPlacementForInterfaceOrientation:UIApplication.sharedApplication.statusBarOrientation];
 
-    LCHomeButtonView *button = [[LCHomeButtonView alloc] initWithFrame:CGRectZero];
+    self.button = [[LCHomeButtonView alloc] initWithFrame:CGRectZero];
+    LCHomeButtonView *button = self.button;
     // The view may not get a valid layout pass before the first touch. Give the
     // button its real size and right-edge default immediately instead of
     // leaving it at CGRectZero in the status bar.
@@ -182,9 +188,17 @@ static const CGFloat LCHomeButtonFlingCarry = 0.12;
 }
 
 - (void)reloadSettings {
-    self.buttonHidden = ![LCHomeButtonSetting(@"TDAssistiveTouchMode") isEqualToString:@"always"];
+    NSString *mode = LCHomeButtonSetting(@"TDAssistiveTouchMode");
+    BOOL always = [mode isEqualToString:@"always"];
+    BOOL legacyShow = getenv("TD_SHOW_HOME_BUTTON_IN_APPS") && atoi(getenv("TD_SHOW_HOME_BUTTON_IN_APPS")) == 1;
+    // “保持现状”沿用原有主屏按键开关；只有“始终显示”才无视原有开关。
+    self.buttonHidden = always ? NO : !legacyShow;
     self.edgeSwipeEnabled = [LCHomeButtonSetting(@"TDSideSwipeMode") isEqualToString:@"always"];
+    self.dimEnabled = LCHomeButtonBoolSetting(@"TDAssistiveTouchIdleDim", YES);
+    NSNumber *alpha = LCHomeButtonNumberSetting(@"TDAssistiveTouchIdleAlpha");
+    self.dimAlpha = alpha ? MAX(0.15, MIN(1.0, alpha.doubleValue)) : 0.4;
     self.button.hidden = self.buttonHidden;
+    if (!self.dimEnabled) self.button.alpha = 1;
     for (UIView *subview in self.view.subviews) {
         if (subview == self.button || subview == self.cover) continue;
         if (subview.tag == UIRectEdgeLeft || subview.tag == UIRectEdgeRight) {
@@ -358,6 +372,10 @@ static const CGFloat LCHomeButtonFlingCarry = 0.12;
 }
 
 - (void)dimSoon {
+    if (!self.dimEnabled) {
+        self.button.alpha = 1;
+        return;
+    }
     NSUInteger generation = ++self.dimmingGeneration;
     __weak LCHomeButtonViewController *weakSelf = self;
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(LCHomeButtonDimDelay * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
@@ -369,7 +387,7 @@ static const CGFloat LCHomeButtonFlingCarry = 0.12;
                               delay:0
                             options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction
                          animations:^{
-            controller.button.alpha = LCHomeButtonDimmedAlpha;
+            controller.button.alpha = controller.dimAlpha;
         } completion:nil];
     });
 }

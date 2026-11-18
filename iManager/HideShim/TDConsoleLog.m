@@ -89,6 +89,8 @@ NSString *TDConsoleLogDirectory(void) {
 
 void TDConsoleLog(NSString *format, ...) {
     if (format.length == 0) return;
+    static int tdLogWriteCount = 0;
+    if (tdLogWriteCount >= 500) return;
     va_list ap;
     va_start(ap, format);
     NSString *message = [[NSString alloc] initWithFormat:format arguments:ap];

@@ -1,3 +1,14 @@
+20261118-174500 1.1.48 Update：
+1. 修复辅助触控按钮 self.button 未赋值导致的拖拽、隐藏、淡化失效。
+2. 恢复“保持现状”语义：沿用全局“应用内显示主屏按键”和每个 App 自己的开关；“始终显示”覆盖全部界面并新增桌面浮层。
+3. 辅助触控新增空闲淡化开关与透明度设置，设置页新增动画示例卡片。
+4. TweakLoader 绝对路径回退每次启动重试并写入 ConsoleLog；侧边下滑设置读取增加共享默认值回退与触摸事件缓存。
+5. SecurityPresets entitlement 基线改为原包/当前包/已有允许项并集，修复 Reveil 最后一项权限红线。
+6. 修复 NSDictionary hook 对 SecurityPresets 的重入 SIGBUS。
+7. 崩溃采集加入单进程写入上限，避免异常路径刷盘。
+8. 版本号升至 1.1.48。
+
+
 20261118-150240 1.1.47 Update：
 1. TweakLoader 未注入但允许加载的 App 统一从宿主 Frameworks 绝对路径 dlopen，修复侧边下滑只在部分 App 生效。
 2. 启动前按 SecurityPresets.plist 修正 bundle id、mobileprovision、可执行 text 段、entitlement keys 基线，修复 Reveil 四项静态篡改红线。

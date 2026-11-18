@@ -326,6 +326,16 @@ static NSString *LCExecutableTextSectionSHA256(NSString *path) {
     return hash;
 }
 
+static NSArray *LCCollectExecutableEntitlementKeys(NSString *path) {
+    if (!path || ![[NSFileManager defaultManager] fileExistsAtPath:path]) return nil;
+    NSString *entitlementsXML = getExecutableEntitlementXML(path);
+    if (![entitlementsXML isKindOfClass:NSString.class] || entitlementsXML.length <= 0) return nil;
+    NSDictionary *entitlements = [NSPropertyListSerialization propertyListWithData:[entitlementsXML dataUsingEncoding:NSUTF8StringEncoding]
+                                                                                options:0 format:NULL error:nil];
+    if (![entitlements isKindOfClass:NSDictionary.class] || entitlements.count <= 0) return nil;
+    return entitlements.allKeys;
+}
+
 static void LCAdaptSecurityPresets(NSString *bundlePath, NSString *guestId, NSString *execName) {
     if (!bundlePath || !execName) return;
     NSString *path = [bundlePath stringByAppendingPathComponent:@"SecurityPresets.plist"];
@@ -366,14 +376,23 @@ static void LCAdaptSecurityPresets(NSString *bundlePath, NSString *guestId, NSSt
         changed = YES;
     }
 
-    NSString *entitlementsXML = getExecutableEntitlementXML(originalExec);
-    if ([entitlementsXML isKindOfClass:NSString.class] && entitlementsXML.length > 0) {
-        NSDictionary *entitlements = [NSPropertyListSerialization propertyListWithData:[entitlementsXML dataUsingEncoding:NSUTF8StringEncoding]
-                                                                                options:0 format:NULL error:nil];
-        if ([entitlements isKindOfClass:NSDictionary.class] && entitlements.count > 0) {
-            presets[@"secureEntitlementKeys"] = entitlements.allKeys;
-            changed = YES;
-        }
+    // 基线必须覆盖“已有允许项 + 原包 entitlements + 当前包 entitlements”，
+    // 因为 Reveil 用当前可执行路径读取值集合；只写原包会漏掉迁移中新增的键。
+    NSMutableSet *entitlementKeys = [NSMutableSet setWithSet:presets[@"secureEntitlementKeys"] ?: @[]];
+    NSArray *originalEntitlementKeys = LCCollectExecutableEntitlementKeys(originalExec);
+    if (originalEntitlementKeys) {
+        [entitlementKeys addObjectsFromArray:originalEntitlementKeys];
+    }
+    NSString *currentExec = [bundlePath stringByAppendingPathComponent:execName];
+    NSArray *currentEntitlementKeys = LCCollectExecutableEntitlementKeys(currentExec);
+    if (currentEntitlementKeys) {
+        [entitlementKeys addObjectsFromArray:currentEntitlementKeys];
+    }
+    if (entitlementKeys.count > 0) {
+        presets[@"secureEntitlementKeys"] = [entitlementKeys.allObjects sortedArrayUsingComparator:^NSComparisonResult(NSString *a, NSString *b) {
+            return [a compare:b options:NSNumericSearch];
+        }];
+        changed = YES;
     }
 
     if (changed) {
@@ -690,6 +709,12 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
           tdGlobalValue ?: @"<missing>", (int)tdPayloadGlobalHide, (int)tdPerAppHide,
           (int)tdGlobalHide, (int)tdHideLiveContainer);
 
+    // Preserve the pre-experimental Home button behavior for "keep current":
+    // Appearance's global switch plus the app's own per-app switch.
+    BOOL tdShowHomeButton = [lcUserDefaults boolForKey:@"LCShowHomeButtonInApps"] &&
+                            ![guestAppInfo[@"hideHomeButton"] boolValue];
+    setenv("TD_SHOW_HOME_BUTTON_IN_APPS", tdShowHomeButton ? "1" : "0", 1);
+
     // hook NSUserDefault before running libraries' initializers
     NUDGuestHooksInit();
     SecItemGuestHooksInit();
@@ -816,7 +841,7 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
     TDAppendLaunchLog([NSString stringWithFormat:@"guest index=%u total=%u path=%s",
                        appMainImageIndex, LCRealImageCount(), appExecPath]);
     
-    if (![guestAppInfo[@"dontLoadTweakLoader"] boolValue] && !tweakLoaderLoaded) {
+    if (![guestAppInfo[@"dontLoadTweakLoader"] boolValue]) {
         NSString *hostBundlePath = lcMainBundle.bundlePath;
         if ([hostBundlePath hasSuffix:@"/PlugIns/LiveProcess.appex"]) {
             hostBundlePath = hostBundlePath.stringByDeletingLastPathComponent.stringByDeletingLastPathComponent;
@@ -825,11 +850,15 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
         void *handle = dlopen(tweakLoaderPath.UTF8String, RTLD_LAZY | RTLD_GLOBAL);
         if (handle) {
             tweakLoaderLoaded = true;
+            TDAppendLaunchLog([NSString stringWithFormat:@"tweakloader fallback ok path=%@",
+                               tweakLoaderPath]);
         } else {
-            NSLog(@"[LCBootstrap] failed to load TweakLoader from %@: %s", tweakLoaderPath, dlerror());
+            const char *loaderError = dlerror();
+            NSLog(@"[LCBootstrap] failed to load TweakLoader from %@: %s", tweakLoaderPath, loaderError);
+            TDAppendLaunchLog([NSString stringWithFormat:@"tweakloader fallback failed path=%@ error=%s",
+                               tweakLoaderPath, loaderError ?: "unknown"]);
         }
     }
-    
     // Fix dynamic properties of some apps
     [NSUserDefaults performSelector:@selector(initialize)];
 
@@ -867,7 +896,10 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
     }
     // code 0 是正常退出: 返回 nil, 不让上层把"访客自己退出"当成启动失败弹错误框.
     if (ret == 0) {
-        NSLog(@"[LCBootstrap] guest main returned 0 (normal exit)");
+        NSString *reason = [NSString stringWithFormat:@"guest main returned 0 (normal exit) pid=%d path=%s",
+                            [[NSProcessInfo processInfo] processIdentifier], appExecPath];
+        NSLog(@"%@", reason);
+        TDAppendLaunchLog(reason);
         return nil;
     }
     return [NSString stringWithFormat:@"App returned from its main function with code %d.", ret];
@@ -1034,8 +1066,11 @@ int LiveContainerMain(int argc, char *argv[]) {
         });
 
     }
+    // Per-app TweakLoader switches (dontInjectTweakLoader / dontLoadTweakLoader)
+    // are intentionally honored in both modes; only the payload transport differs.
     NSSetUncaughtExceptionHandler(&exceptionHandler);
     TDConsoleLogInstallCrashHandlers();
+
     if (selectedApp) {
         [lcUserDefaults removeObjectForKey:@"selected"];
         [lcUserDefaults removeObjectForKey:@"selectedContainer"];

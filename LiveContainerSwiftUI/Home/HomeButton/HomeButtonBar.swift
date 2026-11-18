@@ -19,10 +19,12 @@ struct HomeButtonBar: View {
     var isVertical = false
 
     @State private var isKeyboardShowing = false
+    @AppStorage("TDAssistiveTouchMode", store: LCUtils.appGroupUserDefault)
+    private var assistiveTouchMode = "default"
 
     var body: some View {
         ZStack {
-            if !isKeyboardShowing {
+            if !isKeyboardShowing && assistiveTouchMode != "always" {
                 HomeButton(action: action)
                     .padding(isVertical ? .horizontal : .vertical, HomeDesign.homeButtonBarPadding)
                     .transition(.opacity)

@@ -32,5 +32,7 @@ NS_ASSUME_NONNULL_BEGIN
 // Reads an experimental setting from the app group; used by the button
 // controller and the button view so settings apply when the window appears.
 NSString *LCHomeButtonSetting(NSString *key);
+NSNumber *LCHomeButtonNumberSetting(NSString *key);
+BOOL LCHomeButtonBoolSetting(NSString *key, BOOL fallback);
 
 NS_ASSUME_NONNULL_END
