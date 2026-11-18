@@ -1,3 +1,8 @@
+20261118-223000 1.1.51 Update：
+1. 修复 SecurityPresets 读改写导致小红书递归爆栈（guest 读磁盘原样返回）。
+2. 侧边下滑退出动画改用宿主 minimizeWindow 官方 Dock 飞入，删除自创快照动画。
+3. "主可执行文件被篡改"改为对比 .td-original.executable 原始副本，删除首次运行基线。
+
 20261118-212500 1.1.50 Update：
 1. 修复虚拟窗口下无 SceneDelegate 的 App 状态栏高度为 0，内容顶入宿主状态栏。
 

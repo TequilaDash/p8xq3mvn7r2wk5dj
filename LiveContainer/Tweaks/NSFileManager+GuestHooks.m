@@ -5,7 +5,6 @@
 #include "../../litehook/src/litehook.h"
 #include "../LCMachOUtils.h"
 #include <dlfcn.h>
-#include <CommonCrypto/CommonDigest.h>
 
 BOOL isolateAppGroup = NO;
 void* webKitHeader = 0;
@@ -34,56 +33,18 @@ void NSFMGuestHooksInit(void) {
     
 }
 
-static NSString *LCFileSHA256Hex(NSString *path) {
-    NSData *data = [NSData dataWithContentsOfFile:path];
-    if (!data) return nil;
-    unsigned char digest[CC_SHA256_DIGEST_LENGTH] = {0};
-    CC_SHA256(data.bytes, (CC_LONG)data.length, digest);
-    NSMutableString *hex = [NSMutableString stringWithCapacity:CC_SHA256_DIGEST_LENGTH * 2];
-    for (int i = 0; i < CC_SHA256_DIGEST_LENGTH; i++) {
-        [hex appendFormat:@"%02x", digest[i]];
-    }
-    return hex;
-}
-
-static NSDictionary *LCSanitizeSecurityPresets(NSDictionary *dict, NSString *path) {
-    if (!dict || ![path.lastPathComponent isEqualToString:@"SecurityPresets.plist"]) return dict;
-    NSMutableDictionary *result = [dict mutableCopy];
-    NSString *dir = path.stringByDeletingLastPathComponent;
-    NSFileManager *fm = NSFileManager.defaultManager;
-
-    NSArray *profileHashes = result[@"secureMobileProvisioningProfileHashes"];
-    if ([profileHashes isKindOfClass:NSArray.class] && profileHashes.count == 1 &&
-        [[profileHashes.firstObject description] length] == 0) {
-        NSString *original = [dir stringByAppendingPathComponent:@".td-original.mobileprovision"];
-        NSString *current = [dir stringByAppendingPathComponent:@"embedded.mobileprovision"];
-        NSString *source = [fm fileExistsAtPath:original] ? original : current;
-        NSString *hash = LCFileSHA256Hex(source);
-        if (hash) result[@"secureMobileProvisioningProfileHashes"] = @[hash];
-    }
-
-    NSString *guestID = NSUserDefaults.lcGuestAppId;
-    if (guestID.length > 0 && [result[@"secureMainBundleIdentifiers"] isKindOfClass:NSArray.class]) {
-        result[@"secureMainBundleIdentifiers"] = @[guestID];
-    }
-    return result;
-}
 
 @implementation NSDictionary (LiveContainerHooks)
 
+// No SecurityPresets special-casing here. The only writer is
+// LCAdaptSecurityPresets, which runs in invokeAppMain BEFORE this swizzle is
+// installed, so guests read the already-adapted file from disk. Rewriting the
+// dictionary again on every read changed what guest apps see versus the file
+// on disk and crashed at least xiaohongshu (discover), whose plist-parsing
+// loop recursed through the modified dictionary (SIGBUS stack overflow,
+// LiveProcess-2026-11-18-211701.ips).
 + (NSDictionary *)hook_dictionaryWithContentsOfFile:(NSString *)path {
-    NSDictionary *dict = [self hook_dictionaryWithContentsOfFile:path];
-    // Patcher/other host code may rewrite SecurityPresets; guest-visible reads
-    // must stay untouched so host-side writes cannot re-enter this swizzle.
-    if ([path.lastPathComponent isEqualToString:@"SecurityPresets.plist"] && dict[@"liveContainerHooks"] == nil) {
-        static int sanitizeDepth = 0;
-        if (sanitizeDepth++ == 0) {
-            NSDictionary *result = LCSanitizeSecurityPresets(dict, path);
-            sanitizeDepth--;
-            return result;
-        }
-    }
-    return dict;
+    return [self hook_dictionaryWithContentsOfFile:path];
 }
 
 @end

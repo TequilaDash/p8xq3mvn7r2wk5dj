@@ -346,37 +346,40 @@ enum SecurityScanner {
 // MARK: 13. 主可执行文件完整性（Reveil amITampered 思路 + Presets secureMainExecutableMachOHashes）
 
 extension SecurityScanner {
-    /// 检查主可执行 Mach-O 完整性 —— 计算自身可执行文件的 SHA256 并与安装时基线对比
-    /// （若被越狱注入/重签篡改则哈希变化）.基线存 UserDefaults（首次记录）.
+    /// 检查主可执行 Mach-O 完整性 —— 对比当前可执行与原始安装副本（.td-original.executable）
+    /// 的 SHA256. 原始副本由容器在重签前保存，永远代表"装进容器时的原样"；
+    /// 因此重签/注入会立刻现形，而版本更新（同副本替换）不会误报.
+    /// 不再用 UserDefaults 首次运行值当基线：那会把"第一次运行的被篡改状态"固化成基线.
     static func checkMainExecutableIntegrity() -> SecurityCheckResult {
         guard let mainPath = Bundle.main.executablePath else {
             return SecurityCheckResult(id: "mainExe", title: "主可执行文件",
                 detail: "无法定位主可执行文件", passed: true, warn: true)
         }
-        guard let data = try? Data(contentsOf: URL(fileURLWithPath: mainPath)) else {
+        let dir = (mainPath as NSString).deletingLastPathComponent
+        let execName = (mainPath as NSString).lastPathComponent
+        let originalPath = (dir as NSString).appendingPathComponent(execName + ".td-original.executable")
+        guard FileManager.default.fileExists(atPath: originalPath) else {
             return SecurityCheckResult(id: "mainExe", title: "主可执行文件",
-                detail: "无法读取主可执行文件", passed: true, warn: true)
+                detail: "无原始副本（.td-original.executable）可对比，跳过完整性检查", passed: true, warn: true)
         }
-        // SHA256
-        var hash = [UInt8](repeating: 0, count: Int(CC_SHA256_DIGEST_LENGTH))
-        data.withUnsafeBytes { buf in
-            _ = CC_SHA256(buf.baseAddress, CC_LONG(data.count), &hash)
+        func sha256Hex(_ path: String) -> String? {
+            guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)) else { return nil }
+            var hash = [UInt8](repeating: 0, count: Int(CC_SHA256_DIGEST_LENGTH))
+            data.withUnsafeBytes { buf in
+                _ = CC_SHA256(buf.baseAddress, CC_LONG(data.count), &hash)
+            }
+            return hash.map { String(format: "%02x", $0) }.joined()
         }
-        let hex = hash.map { String(format: "%02x", $0) }.joined()
-        let baselineKey = "SecurityMainExeHash"
-        let previous = UserDefaults.standard.string(forKey: baselineKey)
-        if previous == nil {
-            UserDefaults.standard.set(hex, forKey: baselineKey)
+        guard let current = sha256Hex(mainPath), let original = sha256Hex(originalPath) else {
             return SecurityCheckResult(id: "mainExe", title: "主可执行文件",
-                detail: "首次运行，已记录可执行文件哈希基线（\(hex.prefix(12))…）",
-                passed: true, warn: false)
+                detail: "无法读取可执行文件", passed: true, warn: true)
         }
-        if previous == hex {
+        if current == original {
             return SecurityCheckResult(id: "mainExe", title: "主可执行文件",
-                detail: "主可执行文件未被篡改（哈希与基线一致）", passed: true, warn: false)
+                detail: "主可执行文件未被篡改（与原始安装副本一致）", passed: true, warn: false)
         }
         return SecurityCheckResult(id: "mainExe", title: "主可执行文件",
-            detail: "主可执行文件哈希与基线不一致——可能被重签或篡改", passed: false, warn: false)
+            detail: "主可执行文件与原始安装副本不一致——可能被重签或篡改", passed: false, warn: false)
     }
 }
 
