@@ -362,15 +362,23 @@ static void LCAdaptSecurityPresets(NSString *bundlePath, NSString *guestId, NSSt
         [[NSData data] writeToFile:profileCurrent atomically:YES];
         [[NSData data] writeToFile:profileBackup atomically:YES];
     }
-    NSString *profileSource = [fm fileExistsAtPath:profileBackup] ? profileBackup : profileCurrent;
+    // Baseline MUST equal what the guest actually reads at runtime, byte for
+    // byte. Reveil hashes the CURRENT embedded.mobileprovision and the CURRENT
+    // main executable from disk, then compares against this plist. Writing the
+    // .td-original hashes here made the check fail ("权限配置文件被篡改")
+    // whenever the guest-visible file differs from the original — which is
+    // exactly the patched-and-re-signed state every guest runs in.
+    // The NSFileManager contentsAtPath hook serves the same current bytes, so
+    // both read paths agree on the file below.
+    NSString *profileSource = profileCurrent;
     NSString *profileHash = LCDataSHA256Hex([NSData dataWithContentsOfFile:profileSource]);
     if (profileHash) {
         presets[@"secureMobileProvisioningProfileHashes"] = @[profileHash];
         changed = YES;
     }
 
-    NSString *originalExec = [bundlePath stringByAppendingPathComponent:[execName stringByAppendingString:@".td-original.executable"]];
-    NSString *execHash = LCExecutableTextSectionSHA256(originalExec);
+    NSString *currentExec = [bundlePath stringByAppendingPathComponent:execName];
+    NSString *execHash = LCExecutableTextSectionSHA256(currentExec);
     if (execHash) {
         presets[@"secureMainExecutableMachOHashes"] = @[execHash];
         changed = YES;
@@ -387,11 +395,6 @@ static void LCAdaptSecurityPresets(NSString *bundlePath, NSString *guestId, NSSt
             if ([key isKindOfClass:NSString.class]) [entitlementKeys addObject:key];
         }
     }
-    NSArray *originalEntitlementKeys = LCCollectExecutableEntitlementKeys(originalExec);
-    if (originalEntitlementKeys) {
-        [entitlementKeys addObjectsFromArray:originalEntitlementKeys];
-    }
-    NSString *currentExec = [bundlePath stringByAppendingPathComponent:execName];
     NSArray *currentEntitlementKeys = LCCollectExecutableEntitlementKeys(currentExec);
     if (currentEntitlementKeys) {
         [entitlementKeys addObjectsFromArray:currentEntitlementKeys];
@@ -1105,8 +1108,20 @@ int LiveContainerMain(int argc, char *argv[]) {
     }
     
     if(isLiveProcess) {
-        NSLog(@"LiveProcess should not launch lcui!");
-        return 0;
+        // The extension process must never return from its main: libxpc
+        // aborts _xpc_objc_uimain with SIGTRAP when it does ("Bug in
+        // libxpc: _xpc_objc_uimain() is not supposed to return"). A guest
+        // whose main() exits lands here on the second pass, because the
+        // fake UIApplicationMain re-enters LiveProcessMain and no second
+        // extension request ever arrives. Park the main runloop on a
+        // never-firing source instead: FrontBoard tears the extension down
+        // when its scene closes, which kills us without us returning.
+        NSLog(@"LiveProcess guest finished; parking main runloop to keep _xpc_objc_uimain alive");
+        dispatch_source_t keepAlive = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
+        dispatch_source_set_timer(keepAlive, DISPATCH_TIME_FOREVER, DISPATCH_TIME_FOREVER, 0);
+        dispatch_source_set_event_handler(keepAlive, ^{});
+        dispatch_resume(keepAlive); // keeps the main runloop busy forever
+        for (;;) CFRunLoopRun(); // never returns; the system kills us
     }
     
     // put back cookies

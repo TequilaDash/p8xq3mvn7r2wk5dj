@@ -69,15 +69,12 @@ void NSFMGuestHooksInit(void) {
 }
 
 - (nullable NSData *)hook_contentsAtPath:(NSString *)path {
-    if ([path.lastPathComponent isEqualToString:@"embedded.mobileprovision"]) {
-        NSString *original = [path.stringByDeletingLastPathComponent stringByAppendingPathComponent:@".td-original.mobileprovision"];
-        if ([NSFileManager.defaultManager fileExistsAtPath:original]) {
-            return [NSData dataWithContentsOfFile:original];
-        }
-    }
+    // Serve the same bytes the SecurityPresets baseline was computed from:
+    // the CURRENT embedded.mobileprovision on disk. Diverging between the two
+    // read paths (hook -> original file, plain read -> current file) is what
+    // made baked-baseline checks disagree with themselves.
     return [self hook_contentsAtPath:path];
 }
-
 - (bool)hook_createDirectoryAtPath:(NSString *)path withIntermediateDirectories:(BOOL)createIntermediates attributes:(NSDictionary<NSFileAttributeKey,id> *)attributes error:(NSError *__autoreleasing  _Nullable *)error {
     bool ans = [self hook_createDirectoryAtPath:path withIntermediateDirectories:createIntermediates attributes:attributes error:error];
     void* callerAddr = __builtin_return_address(0);

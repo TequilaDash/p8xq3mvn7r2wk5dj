@@ -1,3 +1,8 @@
+20261119-130000 1.1.52 Update：
+1. SecurityPresets 基线改为当前可见文件哈希，profile/可执行读路径字节一致（修"权限配置文件被篡改"）。
+2. 删除侧滑边缘热区窗口，手势统一走 sendEvent 通路（修右缘滚动拖不动）。
+3. 扩展进程退出后保活主 runloop，永不返回（修退出时 uimain SIGTRAP/被误判"已终止"）。
+
 20261118-223000 1.1.51 Update：
 1. 修复 SecurityPresets 读改写导致小红书递归爆栈（guest 读磁盘原样返回）。
 2. 侧边下滑退出动画改用宿主 minimizeWindow 官方 Dock 飞入，删除自创快照动画。

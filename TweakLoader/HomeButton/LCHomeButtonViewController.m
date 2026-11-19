@@ -16,7 +16,7 @@ static const CGFloat LCHomeButtonDimmedAlpha = 0.4;
 // How far a flung button carries on, in seconds of its speed when let go.
 static const CGFloat LCHomeButtonFlingCarry = 0.12;
 
-@interface LCHomeButtonViewController () <UIGestureRecognizerDelegate>
+@interface LCHomeButtonViewController ()
 @property (nonatomic) LCHomeButtonView *button;
 // Where the button was moved to, or nil while it rests in its first place,
 // which follows an iPad as it's turned.
@@ -31,8 +31,6 @@ static const CGFloat LCHomeButtonFlingCarry = 0.12;
 // Idle dimming is optional and its final opacity is user-configurable.
 @property (nonatomic) BOOL dimEnabled;
 @property (nonatomic) CGFloat dimAlpha;
-// 侧边下滑手势（判定与阈值在 edgePanned；退出动画由宿主 minimizeWindow 播放）.
-@property (nonatomic, weak, nullable) UIPanGestureRecognizer *edgeGesture;
 - (nullable UIWindow *)appWindow;
 @end
 
@@ -64,58 +62,12 @@ static const CGFloat LCHomeButtonFlingCarry = 0.12;
     [button addTarget:self action:@selector(buttonLetGo) forControlEvents:UIControlEventTouchUpOutside | UIControlEventTouchCancel];
     [button addGestureRecognizer:[[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(buttonDragged:)]];
     [self.view addSubview:button];
-    [self addEdgeSwipeHandles];
     [self reloadSettings];
 }
 
-// 左右边缘各一条窄热区; 只在开启侧边下滑时存在, 不影响中间区域的触摸.
-- (void)addEdgeSwipeHandles {
-    if (self.view.subviews.count > 1) return;
-    for (NSNumber *edge in @[@(UIRectEdgeLeft), @(UIRectEdgeRight)]) {
-        UIView *handle = [[UIView alloc] initWithFrame:CGRectZero];
-        handle.backgroundColor = UIColor.clearColor;
-        handle.tag = edge.integerValue;
-        // 系统边缘手势识别器 + 普通 pan 双保险；两个同时触发时由 edgeGesture 去重。
-        UIScreenEdgePanGestureRecognizer *screenPan = [[UIScreenEdgePanGestureRecognizer alloc] initWithTarget:self action:@selector(edgePanned:)];
-        screenPan.edges = edge.integerValue;
-        screenPan.delegate = self;
-        screenPan.cancelsTouchesInView = NO;
-        screenPan.delaysTouchesBegan = NO;
-        [handle addGestureRecognizer:screenPan];
 
-        UIPanGestureRecognizer *plainPan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(edgePanned:)];
-        plainPan.delegate = self;
-        plainPan.cancelsTouchesInView = NO;
-        plainPan.delaysTouchesBegan = NO;
-        [handle addGestureRecognizer:plainPan];
-        [self.view insertSubview:handle belowSubview:self.button];
-    }
-}
 
-- (BOOL)gestureRecognizerShouldBegin:(UIGestureRecognizer *)gesture {
-    return self.edgeSwipeEnabled && !self.cover && !self.isDragging;
-}
-
-- (BOOL)gestureRecognizer:(UIGestureRecognizer *)gestureRecognizer shouldRecognizeSimultaneouslyWithOtherGestureRecognizer:(UIGestureRecognizer *)otherGestureRecognizer {
-    // 边缘热区在独立窗口里; 允许应用自身手势继续工作, 我们只在满足下滑阈值时接管.
-    return YES;
-}
-
-- (void)edgePanned:(UIPanGestureRecognizer *)gesture {
-    // Same exit as zContainer's own minimize: no local snapshot animation.
-    // The host's DecoratedAppSceneViewController plays the dock-fly
-    // (minimizeWindow) when it receives minimizeAll; playing anything here
-    // would be a second, different style on top of it.
-    if (self.edgeGesture && gesture != self.edgeGesture) return;
-    if (gesture.state == UIGestureRecognizerStateEnded) {
-        CGPoint translation = [gesture translationInView:self.view];
-        BOOL dismiss = translation.y > 80 && translation.y > fabs(translation.x);
-        self.edgeGesture = nil;
-        if (dismiss && self.edgeHandler) self.edgeHandler();
-    }
-}
 - (void)viewWillDisappear:(BOOL)animated {
-    self.edgeGesture = nil;
     [super viewWillDisappear:animated];
 }
 
@@ -140,12 +92,6 @@ static const CGFloat LCHomeButtonFlingCarry = 0.12;
     self.dimAlpha = alpha ? MAX(0.15, MIN(1.0, alpha.doubleValue)) : 0.4;
     self.button.hidden = self.buttonHidden;
     if (!self.dimEnabled) self.button.alpha = 1;
-    for (UIView *subview in self.view.subviews) {
-        if (subview == self.button || subview == self.cover) continue;
-        if (subview.tag == UIRectEdgeLeft || subview.tag == UIRectEdgeRight) {
-            subview.hidden = !self.edgeSwipeEnabled;
-        }
-    }
     [self.view setNeedsLayout];
     [self.view layoutIfNeeded];
 }
@@ -180,16 +126,6 @@ static const CGFloat LCHomeButtonFlingCarry = 0.12;
             center = [self.currentPlacement centerInArea:area];
         }
         self.button.center = center;
-    }
-    for (UIView *subview in self.view.subviews) {
-        if (subview == self.button || subview == self.cover) continue;
-        if (subview.tag == UIRectEdgeLeft) {
-            subview.frame = CGRectMake(0, 0, 24, self.view.bounds.size.height);
-            subview.hidden = !self.edgeSwipeEnabled;
-        } else if (subview.tag == UIRectEdgeRight) {
-            subview.frame = CGRectMake(self.view.bounds.size.width - 24, 0, 24, self.view.bounds.size.height);
-            subview.hidden = !self.edgeSwipeEnabled;
-        }
     }
 }
 
