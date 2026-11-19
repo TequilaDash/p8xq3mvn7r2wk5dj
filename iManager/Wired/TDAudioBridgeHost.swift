@@ -1,5 +1,5 @@
 import Foundation
-
+import AVFoundation
 /// 实验 → 修复音频输入：宿主侧桥。guest（LiveProcess 扩展）没有麦克风 TCC
 /// 权限与前台 scene，控制面（AVAudioSession 激活/麦克风授权）由宿主代答；
 /// 结果写回 app group。数据面不动。
@@ -9,29 +9,23 @@ enum TDAudioBridgeHost {
     }
 
     /// 在宿主 App 启动时装一次；iManager 初始化时调用。
-    private static func observerCallback(_ center: CFNotificationCenter?, _ observer: UnsafeMutableRawPointer?, _ name: CFString?, _ object: UnsafeRawPointer?, _ userInfo: CFDictionary?) {
-        guard let name = name as String? else { return }
-        DispatchQueue.main.async {
-            if name == "com.td.audioBridge.request" {
-                handleRequests()
-            } else if name == "com.td.audioBridge.requestMic" {
-                handleMicRequest()
-            }
-        }
-    }
-
     static func install() {
-        let center = CFNotificationCenterGetDarwinNotifyCenter()
-        CFNotificationCenterAddObserver(center, nil,
-                                        { center, observer, name, object, userInfo in
-                                            observerCallback(center, observer, name, object, userInfo)
-                                        },
-                                        "com.td.audioBridge.request" as CFString, nil, .deliverImmediately)
-        CFNotificationCenterAddObserver(center, nil,
-                                        { center, observer, name, object, userInfo in
-                                            observerCallback(center, observer, name, object, userInfo)
-                                        },
-                                        "com.td.audioBridge.requestMic" as CFString, nil, .deliverImmediately)
+        CFNotificationCenterAddObserver(
+            CFNotificationCenterGetDarwinNotifyCenter(),
+            nil,
+            TDAudioBridgeDarwinCallback,
+            "com.td.audioBridge.request" as CFString,
+            nil,
+            .deliverImmediately
+        )
+        CFNotificationCenterAddObserver(
+            CFNotificationCenterGetDarwinNotifyCenter(),
+            nil,
+            TDAudioBridgeDarwinCallback,
+            "com.td.audioBridge.requestMic" as CFString,
+            nil,
+            .deliverImmediately
+        )
     }
 
     private static func handleRequests() {
@@ -52,6 +46,23 @@ enum TDAudioBridgeHost {
         defaults.removeObject(forKey: "TDAudioBridgeRequestMic")
         AVAudioSession.sharedInstance().requestRecordPermission { granted in
             defaults.set(granted, forKey: "TDAudioBridgeMicGranted")
+        }
+    }
+}
+
+private func TDAudioBridgeDarwinCallback(
+    _ center: CFNotificationCenter?,
+    _ observer: UnsafeMutableRawPointer?,
+    _ name: CFNotificationName?,
+    _ object: UnsafeRawPointer?,
+    _ userInfo: CFDictionary?
+) {
+    guard let name = name else { return }
+    DispatchQueue.main.async {
+        switch name.rawValue {
+        case "com.td.audioBridge.request" as CFString: TDAudioBridgeHost.handleRequests()
+        case "com.td.audioBridge.requestMic" as CFString: TDAudioBridgeHost.handleMicRequest()
+        default: break
         }
     }
 }
