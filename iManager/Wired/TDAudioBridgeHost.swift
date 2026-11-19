@@ -28,7 +28,7 @@ enum TDAudioBridgeHost {
         )
     }
 
-    private static func handleRequests() {
+    static func handleRequests() {
         guard let defaults = defaults, let request = defaults.object(forKey: "TDAudioBridgeRequest") as? [String: Any] else { return }
         defaults.removeObject(forKey: "TDAudioBridgeRequest")
         let session = AVAudioSession.sharedInstance()
@@ -41,7 +41,7 @@ enum TDAudioBridgeHost {
         defaults.set(ok, forKey: "TDAudioBridgeResult")
     }
 
-    private static func handleMicRequest() {
+    static func handleMicRequest() {
         guard let defaults = defaults else { return }
         defaults.removeObject(forKey: "TDAudioBridgeRequestMic")
         AVAudioSession.sharedInstance().requestRecordPermission { granted in
