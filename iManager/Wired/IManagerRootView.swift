@@ -67,6 +67,11 @@ struct IManagerRootView: View {
                 } label: {
                     Label("侧边下滑", systemImage: "hand.draw")
                 }
+                NavigationLink {
+                    TDAudioInputSettingsView()
+                } label: {
+                    Label("修复音频输入", systemImage: "mic.badge.plus")
+                }
             } header: {
                 Text("实验性")
             } footer: {
@@ -89,11 +94,11 @@ struct IManagerRootView: View {
                 NSLog("[TDGlobalHide] write=%d path=%@ error=%@", nv, flagPath, error.localizedDescription)
             }
         }
-        .onChange(of: envSpoof) { nv in
-            Self.sharedDefaults?.set(nv, forKey: "TDEnvSpoof")
-        }
         .onChange(of: crashSignals) { nv in
             Self.sharedDefaults?.set(nv, forKey: "TDConsoleSignals")
+        }
+        .onAppear {
+            TDAudioBridgeHost.install()
         }
         .navigationTitle("iManager")
         .navigationBarTitleDisplayMode(.inline)

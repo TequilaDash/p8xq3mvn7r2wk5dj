@@ -197,6 +197,7 @@
 		174140F52D9C1C9B00F3F928 /* PBXFileSystemSynchronizedBuildFileExceptionSet */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
+				AudioInputBridge.m,
 				DocumentPicker.m,
 				HomeButton/LCAppDeparture.m,
 				HomeButton/LCHomeButtonController.m,
