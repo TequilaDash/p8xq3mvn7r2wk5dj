@@ -9,18 +9,29 @@ enum TDAudioBridgeHost {
     }
 
     /// 在宿主 App 启动时装一次；iManager 初始化时调用。
-    static func install() {
-        let center = CFNotificationCenterGetDarwinNotifyCenter()
-        CFNotificationCenterAddObserver(center, nil, { _, _, _, _, _ in
-            DispatchQueue.main.async {
+    private static func observerCallback(_ center: CFNotificationCenter?, _ observer: UnsafeMutableRawPointer?, _ name: CFString?, _ object: UnsafeRawPointer?, _ userInfo: CFDictionary?) {
+        guard let name = name as String? else { return }
+        DispatchQueue.main.async {
+            if name == "com.td.audioBridge.request" {
                 handleRequests()
-            }
-        }, "com.td.audioBridge.request" as CFString, nil, .deliverImmediately)
-        CFNotificationCenterAddObserver(center, nil, { _, _, _, _, _ in
-            DispatchQueue.main.async {
+            } else if name == "com.td.audioBridge.requestMic" {
                 handleMicRequest()
             }
-        }, "com.td.audioBridge.requestMic" as CFString, nil, .deliverImmediately)
+        }
+    }
+
+    static func install() {
+        let center = CFNotificationCenterGetDarwinNotifyCenter()
+        CFNotificationCenterAddObserver(center, nil,
+                                        { center, observer, name, object, userInfo in
+                                            observerCallback(center, observer, name, object, userInfo)
+                                        },
+                                        "com.td.audioBridge.request" as CFString, nil, .deliverImmediately)
+        CFNotificationCenterAddObserver(center, nil,
+                                        { center, observer, name, object, userInfo in
+                                            observerCallback(center, observer, name, object, userInfo)
+                                        },
+                                        "com.td.audioBridge.requestMic" as CFString, nil, .deliverImmediately)
     }
 
     private static func handleRequests() {
