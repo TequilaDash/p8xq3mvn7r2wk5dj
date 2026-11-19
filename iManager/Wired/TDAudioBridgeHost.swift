@@ -58,10 +58,11 @@ private func TDAudioBridgeDarwinCallback(
     _ userInfo: CFDictionary?
 ) {
     guard let name = name else { return }
+    let raw = name.rawValue as String?
     DispatchQueue.main.async {
-        switch name.rawValue {
-        case "com.td.audioBridge.request" as CFString: TDAudioBridgeHost.handleRequests()
-        case "com.td.audioBridge.requestMic" as CFString: TDAudioBridgeHost.handleMicRequest()
+        switch raw {
+        case "com.td.audioBridge.request": TDAudioBridgeHost.handleRequests()
+        case "com.td.audioBridge.requestMic": TDAudioBridgeHost.handleMicRequest()
         default: break
         }
     }
