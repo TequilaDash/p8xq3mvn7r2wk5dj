@@ -26,7 +26,8 @@ struct TDAudioInputSettingsView: View {
                         Self.defaults?.set(value, forKey: "TDAudioInputBridge")
                         Self.defaults?.synchronize()
                         CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),
-                                                             CFNotificationName("com.td.audioBridge.settingChanged" as CFString), nil, true)
+                                                             CFNotificationName("com.td.audioBridge.settingChanged" as CFString),
+                                                             nil, nil, true)
                     }
             }
         }
@@ -110,7 +111,7 @@ struct TDAudioBridgeLogView: View {
 
     private static var logURL: URL? {
         guard let groupID = LCSharedUtils.appGroupID() as String?,
-              let groupURL = FileManager.default.containerURLForSecurityApplicationGroupIdentifier(groupID) else { return nil }
+              let groupURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: groupID) else { return nil }
         let dir = groupURL.appendingPathComponent("TDAudioBridge", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir.appendingPathComponent("bridge.log")
