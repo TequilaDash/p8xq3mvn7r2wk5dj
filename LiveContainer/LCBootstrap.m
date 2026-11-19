@@ -362,20 +362,13 @@ static void LCAdaptSecurityPresets(NSString *bundlePath, NSString *guestId, NSSt
         [[NSData data] writeToFile:profileCurrent atomically:YES];
         [[NSData data] writeToFile:profileBackup atomically:YES];
     }
-    // Baseline MUST equal what the guest actually reads at runtime, byte for
-    // byte. Reveil hashes the CURRENT embedded.mobileprovision and the CURRENT
-    // main executable from disk, then compares against this plist. Writing the
-    // .td-original hashes here made the check fail ("权限配置文件被篡改")
-    // whenever the guest-visible file differs from the original — which is
-    // exactly the patched-and-re-signed state every guest runs in.
-    // The NSFileManager contentsAtPath hook serves the same current bytes, so
-    // both read paths agree on the file below.
-    NSString *profileSource = profileCurrent;
-    NSString *profileHash = LCDataSHA256Hex([NSData dataWithContentsOfFile:profileSource]);
-    if (profileHash) {
-        presets[@"secureMobileProvisioningProfileHashes"] = @[profileHash];
-        changed = YES;
-    }
+    // The shipped baseline for secureMobileProvisioningProfileHashes is an
+    // empty string: detectors treat an empty baseline as "no expectation,
+    // trust the profile". Rewriting it with a file hash activates the check
+    // and the hash Reveil computes (over the profile blob in the code
+    // signature, which zsign does not embed) never matches the file hash —
+    // the check then reports "tampered". Leave the key untouched, matching
+    // upstream LiveContainer, which never modifies it.
 
     NSString *currentExec = [bundlePath stringByAppendingPathComponent:execName];
     NSString *execHash = LCExecutableTextSectionSHA256(currentExec);
@@ -408,7 +401,7 @@ static void LCAdaptSecurityPresets(NSString *bundlePath, NSString *guestId, NSSt
 
     if (changed) {
         [presets writeToFile:path atomically:YES];
-        NSLog(@"[LC] adapted SecurityPresets baseline guest=%@ profile=%@ exec=%@", guestId, profileHash, execHash);
+        NSLog(@"[LC] adapted SecurityPresets baseline guest=%@ exec=%@", guestId, execHash);
     }
 }
 static void LCEnsureOriginalInfoPlistBackup(NSString* bundlePath,

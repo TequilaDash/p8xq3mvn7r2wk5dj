@@ -206,7 +206,7 @@ static bool gTDVCsopsSpoof = false;
 static bool gTDVCsopsKeepDebugged = false;
 
 // proc 族伪值数据源: TD_PROC_SPOOF env (launcher 透传 per-app procSpoof).
-static bool gTDVProcSpoof = false;
+static _Atomic bool gTDVProcSpoof = false;
 
 static void tdv_init_once(void);
 
@@ -820,8 +820,16 @@ static void tdv_init_locked(void) {
     // csops 伪 CS flags 独立于 vroot: TD_CSOPS_SPOOF (+ TD_CSOPS_KEEP_DEBUGGED).
     gTDVCsopsSpoof = getenv("TD_CSOPS_SPOOF") && getenv("TD_CSOPS_SPOOF")[0] == '1';
     gTDVCsopsKeepDebugged = getenv("TD_CSOPS_KEEP_DEBUGGED") && getenv("TD_CSOPS_KEEP_DEBUGGED")[0] == '1';
-    // proc 族伪值独立于 vroot: TD_PROC_SPOOF.
-    gTDVProcSpoof = getenv("TD_PROC_SPOOF") && getenv("TD_PROC_SPOOF")[0] == '1';
+    // proc 族伪值独立于 vroot: TD_PROC_SPOOF. Re-read live: the resident
+    // fullscreen host process initializes this shim before LCBootstrap sets
+    // the per-launch env, and the cached 0 then never caught up — the guest
+    // in fullscreen kept reporting "task port referenced extra". getenv on
+    // a known-name key is a table lookup next to each mach call.
+    {
+        const char *rawProc = getenv("TD_PROC_SPOOF");
+        bool procSpoofNow = rawProc && rawProc[0] == '1';
+        gTDVProcSpoof = procSpoofNow;
+    }
     gTDVRootMode = TDVRootModeOff;
     gTDVRootRoot[0] = '\0';
 

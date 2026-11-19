@@ -291,15 +291,11 @@ static const CGFloat LCHomeButtonGlobalEdgeWidth = 36;
 static const CGFloat LCHomeButtonGlobalEdgeTravel = 80;
 
 - (BOOL)sideSwipeEnabled {
-    if (self.buttonController) {
-        return self.buttonController.edgeSwipeEnabled;
-    }
-    // The overlay may not exist yet (or at all); the setting itself still
-    // decides whether the event fallback should work. Cache it instead of
-    // reopening and synchronizing the suite for every touch event.
-    if (!self.sideSwipeSetting) {
-        self.sideSwipeSetting = LCHomeButtonSetting(@"TDSideSwipeMode");
-    }
+    // Always re-read live: a cached value went stale when the toggle was
+    // flipped in iManager without a scene deactivate following it, and the
+    // swipe then silently did nothing. The suite read is cheap next to the
+    // gesture itself.
+    self.sideSwipeSetting = LCHomeButtonSetting(@"TDSideSwipeMode");
     return [self.sideSwipeSetting isEqualToString:@"always"];
 }
 

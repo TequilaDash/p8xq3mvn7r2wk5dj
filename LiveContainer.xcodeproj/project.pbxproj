@@ -1027,7 +1027,7 @@
 					"@executable_path/Frameworks",
 					"@loader_path/Frameworks",
 				);
-                MARKETING_VERSION = 1.1.53;
+                MARKETING_VERSION = 1.1.54;
 				MODULE_VERIFIER_SUPPORTED_LANGUAGES = "objective-c objective-c++";
 				MODULE_VERIFIER_SUPPORTED_LANGUAGE_STANDARDS = "gnu17 gnu++20";
 				OTHER_CFLAGS = (
@@ -1070,7 +1070,7 @@
 					"@executable_path/Frameworks",
 					"@loader_path/Frameworks",
 				);
-                MARKETING_VERSION = 1.1.53;
+                MARKETING_VERSION = 1.1.54;
 				MODULE_VERIFIER_SUPPORTED_LANGUAGES = "objective-c objective-c++";
 				MODULE_VERIFIER_SUPPORTED_LANGUAGE_STANDARDS = "gnu17 gnu++20";
 				OTHER_CFLAGS = (
@@ -1243,7 +1243,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-                MARKETING_VERSION = 1.1.53;
+                MARKETING_VERSION = 1.1.54;
 				OTHER_LDFLAGS = "";
 				PRODUCT_BUNDLE_IDENTIFIER = "$(PRODUCT_BUNDLE_IDENTIFIER)";
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -1279,7 +1279,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-                MARKETING_VERSION = 1.1.53;
+                MARKETING_VERSION = 1.1.54;
 				OTHER_LDFLAGS = "";
 				PRODUCT_BUNDLE_IDENTIFIER = "$(PRODUCT_BUNDLE_IDENTIFIER)";
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -1542,7 +1542,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-                MARKETING_VERSION = 1.1.53;
+                MARKETING_VERSION = 1.1.54;
 				OTHER_LDFLAGS = "";
 				PRODUCT_BUNDLE_IDENTIFIER = "$(PRODUCT_BUNDLE_IDENTIFIER)";
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -1580,7 +1580,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-                MARKETING_VERSION = 1.1.53;
+                MARKETING_VERSION = 1.1.54;
 				OTHER_LDFLAGS = "";
 				PRODUCT_BUNDLE_IDENTIFIER = "$(PRODUCT_BUNDLE_IDENTIFIER)";
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -1651,7 +1651,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-                MARKETING_VERSION = 1.1.53;
+                MARKETING_VERSION = 1.1.54;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(PRODUCT_BUNDLE_IDENTIFIER)";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
@@ -1718,7 +1718,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-                MARKETING_VERSION = 1.1.53;
+                MARKETING_VERSION = 1.1.54;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(PRODUCT_BUNDLE_IDENTIFIER)";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
@@ -1752,7 +1752,7 @@
 					"@executable_path/Frameworks",
 					"@loader_path/Frameworks",
 				);
-                MARKETING_VERSION = 1.1.53;
+                MARKETING_VERSION = 1.1.54;
 				MODULE_VERIFIER_SUPPORTED_LANGUAGES = "objective-c objective-c++";
 				MODULE_VERIFIER_SUPPORTED_LANGUAGE_STANDARDS = "gnu17 gnu++20";
 				OTHER_CFLAGS = "-fcommon";
@@ -1794,7 +1794,7 @@
 					"@executable_path/Frameworks",
 					"@loader_path/Frameworks",
 				);
-                MARKETING_VERSION = 1.1.53;
+                MARKETING_VERSION = 1.1.54;
 				MODULE_VERIFIER_SUPPORTED_LANGUAGES = "objective-c objective-c++";
 				MODULE_VERIFIER_SUPPORTED_LANGUAGE_STANDARDS = "gnu17 gnu++20";
 				OTHER_CFLAGS = "-fcommon";

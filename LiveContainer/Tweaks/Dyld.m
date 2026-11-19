@@ -383,10 +383,23 @@ intptr_t hook_dyld_get_image_vmaddr_slide(uint32_t image_index) {
     return orig_dyld_get_image_vmaddr_slide(real_index);
 }
 
+// Detectors (Reveil-class) treat any image outside the system directories as
+// injected. A guest's own executable and frameworks live under
+// Documents/Applications/<folder>/, so they all match unless the reported
+// name is masked. Rewrite it to the shape a normal install has:
+// /var/containers/Bundle/Application/<uuid>/<bundle-id>.app/<image>.
+// The real path keeps working for everything that stats the file: dyld's
+// own tables still carry it, and file reads go through the kernel path.
+const char *guestExecutableMaskedName(const char *realName);
+
 const char* hook_dyld_get_image_name(uint32_t image_index) {
     uint32_t real_index = 0;
     if (!tdv_map_image_index(image_index, &real_index)) return NULL;
-    return orig_dyld_get_image_name(real_index);
+    const char *name = orig_dyld_get_image_name(real_index);
+    if (name && strstr(name, "/Documents/Applications/")) {
+        return guestExecutableMaskedName(name);
+    }
+    return name;
 }
 
 void TDRefreshDyldImageRemap(void) {
@@ -1052,4 +1065,20 @@ kern_return_t catch_mach_exception_raise(mach_port_t exception_port, mach_port_t
 
 kern_return_t catch_mach_exception_raise_state_identity(mach_port_t exception_port, mach_port_t thread, mach_port_t task, exception_type_t exception, mach_exception_data_t code, mach_msg_type_number_t codeCnt, int *flavor, thread_state_t old_state, mach_msg_type_number_t old_stateCnt, thread_state_t new_state, mach_msg_type_number_t *new_stateCnt) {
     abort();
+}
+
+// Masked image name for guests: one process-lifetime buffer, rewritten on
+// demand. The bundle id comes from the guest's own identity, so the fake
+// path reads as "<bundle-id>.app" exactly like a normal install.
+const char *guestExecutableMaskedName(const char *realName) {
+    static char masked[PATH_MAX];
+    if (!realName || !realName[0]) return realName;
+    NSString *guestId = NSUserDefaults.lcGuestAppId;
+    if (!guestId.length) return realName;
+    const char *lastSlash = strrchr(realName, '/');
+    if (!lastSlash) return realName;
+    snprintf(masked, sizeof(masked),
+             "/var/containers/Bundle/Application/00000000-0000-0000-0000-000000000000/%s.app%s",
+             guestId.UTF8String, lastSlash);
+    return masked;
 }

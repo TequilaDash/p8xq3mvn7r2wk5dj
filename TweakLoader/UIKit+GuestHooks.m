@@ -693,24 +693,22 @@ static LCControlAppURLHandling LCHandleControlAppURL(NSURL *url, NSString** modi
 // In a virtual multitask window the guest scene has its status bar
 // disabled, so its status bar manager reports a zero frame; apps without a
 // scene delegate read UIApplication.statusBarFrame and lay out under the
-// host's own status bar. Answer the real screen inset instead: the host
-// status bar height, which is what a full-screen app would see.
+// host's own status bar. Answer the real screen inset instead, WITHOUT
+// calling anything that re-enters this swizzle:
+//   UIApplication.statusBarFrame IS this hooked method — calling it here
+//   recursed 10k deep (LiveProcess-2026-11-19-161900.ips, RCT createView).
+//   The screen-geometry fallback below reads no UserDefaults and no window
+//   state, so it cannot re-enter.
 - (CGRect)hook_statusBarFrame {
     UIStatusBarManager* manager = [(UIWindowScene*)(UIApplication.sharedApplication.connectedScenes.anyObject) statusBarManager];
     if(manager && !CGRectIsEmpty(manager.statusBarFrame)) {
         return manager.statusBarFrame;
     }
-    if([LCHomeButtonNumberSetting(@"LCMultitaskMode") integerValue] != 1) {
-        CGFloat height = UIApplication.sharedApplication.statusBarFrame.size.height;
-        if(height <= 0) {
-            height = UIApplication.sharedApplication.windows.firstObject.safeAreaInsets.top;
-        }
-        if(height <= 0) {
-            height = UIScreen.mainScreen.bounds.size.height - UIScreen.mainScreen.fixedCoordinateSpace.bounds.size.height;
-        }
-        return CGRectMake(0, 0, UIScreen.mainScreen.bounds.size.width, height);
+    CGFloat height = UIScreen.mainScreen.bounds.size.height - UIScreen.mainScreen.fixedCoordinateSpace.bounds.size.height;
+    if(height <= 0) {
+        height = 20;
     }
-    return [self hook_statusBarFrame];
+    return CGRectMake(0, 0, UIScreen.mainScreen.bounds.size.width, height);
 }
 
 @end
