@@ -75,6 +75,9 @@ BOOL LCHomeButtonBoolSetting(NSString *key, BOOL fallback) {
 // active or the overlay is shown, so edge detection doesn't reopen a suite
 // and synchronize for every touch.
 @property (nonatomic, copy) NSString *sideSwipeSetting;
+// True while a touch gesture is in flight: the setting is read once per
+// gesture instead of once per UIEvent.
+@property (nonatomic) BOOL sideSwipeTouchActive;
 @end
 
 @implementation LCHomeButtonController
@@ -291,11 +294,16 @@ static const CGFloat LCHomeButtonGlobalEdgeWidth = 36;
 static const CGFloat LCHomeButtonGlobalEdgeTravel = 80;
 
 - (BOOL)sideSwipeEnabled {
-    // Always re-read live: a cached value went stale when the toggle was
-    // flipped in iManager without a scene deactivate following it, and the
-    // swipe then silently did nothing. The suite read is cheap next to the
-    // gesture itself.
-    self.sideSwipeSetting = LCHomeButtonSetting(@"TDSideSwipeMode");
+    // Re-read live, but not per event: handleApplicationEvent runs for every
+    // UIEvent (moves included), and a suite read per event — each one a
+    // cross-process CFPrefs fetch plus a synchronize() disk flush — starved
+    // the main thread and the edge swipe stopped responding (user-reported
+    // after 1.1.55). Re-read when a new touch begins instead: that is once
+    // per gesture, so a toggle flipped in iManager still takes effect on the
+    // next swipe without paying per event.
+    if (!self.sideSwipeTouchActive) {
+        self.sideSwipeSetting = LCHomeButtonSetting(@"TDSideSwipeMode");
+    }
     return [self.sideSwipeSetting isEqualToString:@"always"];
 }
 
@@ -324,6 +332,8 @@ static const CGFloat LCHomeButtonGlobalEdgeTravel = 80;
         CGFloat width = window.bounds.size.width;
         switch (touch.phase) {
             case UITouchPhaseBegan:
+                // The setting is read once per gesture, on its first touch.
+                self.sideSwipeTouchActive = YES;
                 if (self.globalEdgeTouch || (location.x > LCHomeButtonGlobalEdgeWidth &&
                                              location.x < width - LCHomeButtonGlobalEdgeWidth)) {
                     break;
@@ -352,6 +362,7 @@ static const CGFloat LCHomeButtonGlobalEdgeTravel = 80;
                 if (touch == self.globalEdgeTouch) {
                     self.globalEdgeTouch = nil;
                 }
+                self.sideSwipeTouchActive = NO;
                 break;
             default:
                 break;

@@ -78,6 +78,33 @@
     // 本仓功能 (M22): 多任务走扩展进程，环境变量不会从宿主继承，
     // 必须经 userInfo 传「禁止联网」标记（扩展 main.m 读到后 setenv TD_NET_BLOCK）。
     userInfo[@"tdNetBlock"] = @([NSUserDefaults.standardUserDefaults boolForKey:@"TDGuestNetBlock"]);
+
+    // 多任务访客与全屏访客必须拿到**同一组**门控值. 过去 userInfo 只带了
+    // tdNetBlock, hideLiveContainer / 四个伪值开关都没传 -> 扩展进程里的
+    // gateMap 全部取不到值(恒 nil), 多任务访客与全屏访客环境因此不一致
+    // (用户实测"多任务与全屏检测结果不一样"、"隐藏开了和不开一样").
+    // 这里从访客自己的 LCAppInfo.plist 取 per-app 值, 与 LCBootstrap 全屏
+    // 路径读的是同一个文件, 两边自然一致.
+    {
+        bool isSharedApp = false;
+        NSBundle *infoBundle = [LCSharedUtils findBundleWithBundleId:bundleId isSharedAppOut:&isSharedApp];
+        NSString *infoPath = [infoBundle.bundlePath stringByAppendingPathComponent:@"LCAppInfo.plist"];
+        NSDictionary *perApp = [NSDictionary dictionaryWithContentsOfFile:infoPath];
+        if (perApp) {
+            for (NSString *key in @[@"hideLiveContainer", @"sysctlSpoof", @"secTaskSpoof",
+                                     @"csopsSpoof", @"procSpoof", @"csopsKeepDebugged"]) {
+                id value = perApp[key];
+                if (value) {
+                    userInfo[key] = value;
+                }
+            }
+        }
+        // 全局隐藏住在 app group defaults (宿主与扩展都能读).
+        NSString *groupID = [LCSharedUtils appGroupID];
+        NSUserDefaults *shared = groupID ? [[NSUserDefaults alloc] initWithSuiteName:groupID] : nil;
+        BOOL globalHide = [shared boolForKey:@"TDGlobalHide"];
+        userInfo[@"tdGlobalHide"] = @(globalHide);
+    }
     
     NSString* launchAppUrlScheme = [NSUserDefaults.standardUserDefaults stringForKey:@"launchAppUrlScheme"];
     [NSUserDefaults.lcUserDefaults removeObjectForKey:@"launchAppUrlScheme"];

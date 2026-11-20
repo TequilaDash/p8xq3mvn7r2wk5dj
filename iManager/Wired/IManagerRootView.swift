@@ -79,6 +79,10 @@ struct IManagerRootView: View {
             }
         }
         .onChange(of: globalHide) { nv in
+            // app group 是宿主与 LiveProcess 扩展**都能**读到的地方. Documents
+            // 标志文件只有宿主进程能读到 (扩展进程的 HOME 是扩展沙盒), 多任务
+            // 访客因此永远读到"未开启全局隐藏" —— 用户实测"开了和不开一样".
+            Self.sharedDefaults?.set(nv, forKey: "TDGlobalHide")
             guard let flagPath else {
                 NSLog("[TDGlobalHide] cannot resolve host Documents path")
                 return

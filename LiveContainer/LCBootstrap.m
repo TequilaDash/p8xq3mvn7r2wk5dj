@@ -358,22 +358,17 @@ static void LCAdaptSecurityPresets(NSString *bundlePath, NSString *guestId, NSSt
     if (![fm fileExistsAtPath:profileCurrent] && [fm fileExistsAtPath:profileBackup]) {
         [fm copyItemAtPath:profileBackup toPath:profileCurrent error:nil];
     }
-    if (![fm fileExistsAtPath:profileCurrent] && ![fm fileExistsAtPath:profileBackup]) {
-        [[NSData data] writeToFile:profileCurrent atomically:YES];
-        [[NSData data] writeToFile:profileBackup atomically:YES];
-    }
-    // The shipped baseline for secureMobileProvisioningProfileHashes is an
-    // empty string: detectors treat an empty baseline as "no expectation,
-    // trust the profile". 1.1.53 builds rewrote this key to a file hash and
-    // the value persisted inside SecurityPresets.plist across updates, so
-    // every 1.1.54 launch still saw the stale expectation and Reveil kept
-    // reporting "profile tampered" even though this function no longer
-    // writes it (user-visible red persisted in both fullscreen and
-    // multitask). Reset the key to the shipped [""] baseline here so any
-    // dirty value from an older build is cleaned on next launch, then leave
-    // it alone — matching upstream LiveContainer, which never modifies it.
-    if (presets[@"secureMobileProvisioningProfileHashes"] == nil ||
-        ![presets[@"secureMobileProvisioningProfileHashes"] isEqual:@[@""]]) {
+    // 不再伪造 0 字节 embedded.mobileprovision: 上游 LiveContainer 从不碰这个文件,
+    // 而我们造的"空描述文件"与代码签名里的真实描述文件对不上, 检测器据此判
+    // "应用程序分发配置文件被篡改"(用户 1.1.55 实测多任务+隐藏下新增此红项).
+    // 缺文件就让它缺着 —— 与上游一致, 也与 zsign 重签后的实际产物一致.
+    //
+    // secureMobileProvisioningProfileHashes 必须与原包出厂基线一致. 爱思/Reveil
+    // 的出厂值就是单个空串条目 [""] (见 iManager/TequilaDash/Engine/SecurityPresets.swift
+    // 自动生成的同名常量): 空串 = "无期望, 信任该描述文件". 1.1.47-1.1.53 把这里
+    // 改写成文件哈希, 检测器算的是代码签名里 profile blob 的哈希, 两者永不相等
+    // -> 判篡改 (用户实测红). 1.1.55 写回 [""] 恢复出厂基线.
+    if (![presets[@"secureMobileProvisioningProfileHashes"] isEqual:@[@""]]) {
         presets[@"secureMobileProvisioningProfileHashes"] = @[@""];
         changed = YES;
     }
@@ -712,12 +707,17 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
     NSString *tdFlagPath = tdHostDocuments ? [tdHostDocuments stringByAppendingPathComponent:@"TDGlobalHide"] : nil;
     NSString *tdGlobalValue = tdFlagPath ? [NSString stringWithContentsOfFile:tdFlagPath encoding:NSUTF8StringEncoding error:nil] : nil;
     BOOL tdFileGlobalHide = [tdGlobalValue isEqualToString:@"1"];
+    // app group defaults 是宿主与 LiveProcess 扩展都能读到的地方. Documents
+    // 标志文件只存在于宿主沙盒: 多任务访客跑在扩展进程里, HOME 是扩展沙盒,
+    // 构造函数捕获到的 Documents 路径里没有 TDGlobalHide -> 全局隐藏对多任务
+    // 永远读到 false (用户实测"开了和不开一样"、"多任务与全屏环境不一致").
+    BOOL tdSharedGlobalHide = [lcSharedDefaults boolForKey:@"TDGlobalHide"];
     BOOL tdPayloadGlobalHide = getenv("TD_GLOBAL_HIDE") && getenv("TD_GLOBAL_HIDE")[0] == '1';
-    BOOL tdGlobalHide = tdFileGlobalHide || tdPayloadGlobalHide;
+    BOOL tdGlobalHide = tdFileGlobalHide || tdSharedGlobalHide || tdPayloadGlobalHide;
     BOOL tdPerAppHide = [guestAppInfo[@"hideLiveContainer"] boolValue];
     BOOL tdHideLiveContainer = tdGlobalHide || tdPerAppHide;
-    NSLog(@"[TDGlobalHide] path=%@ value=%@ payload=%d guest=%d global=%d hide=%d pre-NUD", tdFlagPath,
-          tdGlobalValue ?: @"<missing>", (int)tdPayloadGlobalHide, (int)tdPerAppHide,
+    NSLog(@"[TDGlobalHide] path=%@ value=%@ shared=%d payload=%d guest=%d global=%d hide=%d pre-NUD", tdFlagPath,
+          tdGlobalValue ?: @"<missing>", (int)tdSharedGlobalHide, (int)tdPayloadGlobalHide, (int)tdPerAppHide,
           (int)tdGlobalHide, (int)tdHideLiveContainer);
 
     // Preserve the pre-experimental Home button behavior for "keep current":
@@ -754,6 +754,10 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
     setenv("TD_SECTASK_SPOOF", tdSecTaskSpoof ? "1" : "0", 1);
     setenv("TD_CSOPS_SPOOF", tdCsopsSpoof ? "1" : "0", 1);
     setenv("TD_PROC_SPOOF", tdProcSpoof ? "1" : "0", 1);
+    // TD_DYLD_TRIM 此前只有读端 (HideShim 的 TDVDyldTrimEnabled), 从未有人写:
+    // 隐藏开关对 dyld 裁剪实际完全无效 (用户实测"开了和不开一样"). 这里按
+    // per-app 隐藏开关透传, 与其它门控同一生命周期.
+    setenv("TD_DYLD_TRIM", tdHideLiveContainer ? "1" : "0", 1);
     if (![guestAppInfo[@"csopsKeepDebugged"] boolValue] || tdGlobalHide) {
         setenv("TD_CSOPS_KEEP_DEBUGGED", "0", 1);
     } else {

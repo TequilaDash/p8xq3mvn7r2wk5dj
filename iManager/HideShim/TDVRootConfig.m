@@ -210,19 +210,30 @@ static _Atomic bool gTDVProcSpoof = false;
 
 static void tdv_init_once(void);
 
+// 门控一律 live 读 env: 这些值由 launcher 按**每次启动** setenv, 而
+// tdv_init_once 在常驻宿主进程里只跑一次 —— 首读之后 env 再变也不会被看到.
+// (TD_PROC_SPOOF 在 1.1.55 已改为 live 读; 其余门控同样处理.)
+static bool tdv_gate_live(const char *key) {
+    const char *raw = getenv(key);
+    return raw && raw[0] == '1';
+}
+
 bool TDVDyldTrimEnabled(void) {
-    tdv_init_once();
-    return gTDVDyldTrim;
+    bool enabled = tdv_gate_live("TD_DYLD_TRIM");
+    gTDVDyldTrim = enabled;
+    return enabled;
 }
 
 bool TDVSysctlSpoofEnabled(void) {
-    tdv_init_once();
-    return gTDVSysctlSpoof;
+    bool enabled = tdv_gate_live("TD_SYSCTL_SPOOF");
+    gTDVSysctlSpoof = enabled;
+    return enabled;
 }
 
 bool TDVSecTaskSpoofEnabled(void) {
-    tdv_init_once();
-    return gTDVSecTaskSpoof;
+    bool enabled = tdv_gate_live("TD_SECTASK_SPOOF");
+    gTDVSecTaskSpoof = enabled;
+    return enabled;
 }
 
 bool TDVSecTaskHideEntitlement(const char *entitlement) {
@@ -541,8 +552,9 @@ void *TDVSecTaskReplacementForEntitlement(const char *entitlement, const char *c
 }
 
 bool TDVCsopsSpoofEnabled(void) {
-    tdv_init_once();
-    return gTDVCsopsSpoof;
+    bool enabled = tdv_gate_live("TD_CSOPS_SPOOF");
+    gTDVCsopsSpoof = enabled;
+    return enabled;
 }
 
 // CS_OPS_STATUS 的相关位 (XNU bsd/sys/codesign.h, 与 Reveil CsOps.swift 一致):
@@ -562,7 +574,8 @@ bool TDVCsopsSpoofLookup(unsigned int flagsIn, unsigned int *flagsOut) {
     }
     unsigned int v = flagsIn;
     v |= TDV_CS_REQUIRE_LV;
-    if (!gTDVCsopsKeepDebugged) {
+    // 同样 live 读: 保留调试位是 per-app 键, 与其它门控同生命周期.
+    if (!tdv_gate_live("TD_CSOPS_KEEP_DEBUGGED")) {
         v &= ~TDV_CS_DEBUGGED;
     }
     *flagsOut = v;

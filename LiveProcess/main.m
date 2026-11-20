@@ -9,6 +9,7 @@
 #import <UIKit/UIKit.h>
 #import <mach-o/dyld.h>
 #import "../LiveContainer/utils.h"
+#import "../LiveContainer/LCSharedUtils.h"
 #import <objc/message.h>
 #import "../LiveContainer/Tweaks/Tweaks.h"
 
@@ -73,7 +74,14 @@ int LiveProcessMain(int argc, char *argv[]) {
     
     NSLog(@"Retrieved app info: %@", appInfo);
     // Carry per-app environment gates into the separate extension process.
-    BOOL tdGlobalHide = [appInfo[@"tdGlobalHide"] boolValue];
+    // 全局隐藏开关住在 app group defaults 里 (宿主与扩展都能读); appInfo 里的
+    // tdGlobalHide 从未被写入, 过去这里恒为 NO -> 多任务访客永远拿到"未开启
+    // 全局隐藏", 与全屏访客环境不一致 (用户实测"开了和不开一样").
+    NSUserDefaults *lcShared = [[NSUserDefaults alloc] initWithSuiteName:[LCSharedUtils appGroupID]];
+    BOOL tdGlobalHide = [appInfo[@"tdGlobalHide"] boolValue] || [lcShared boolForKey:@"TDGlobalHide"];
+    // "环境伪值"总闸: 宿主 iManager 的开关住在 app group 里, 扩展进程同样读得到.
+    NSNumber *envSpoofValue = [lcShared objectForKey:@"TDEnvSpoof"];
+    BOOL tdEnvSpoofGlobal = envSpoofValue ? envSpoofValue.boolValue : YES;
     if (tdGlobalHide) {
         setenv("TD_GLOBAL_HIDE", "1", 1);
     } else {
@@ -94,7 +102,25 @@ int LiveProcessMain(int argc, char *argv[]) {
         } else {
             enabled = tdGlobalHide || (value ? value.boolValue : YES);
         }
+        // "环境伪值"总闸在 app group 里 (宿主与扩展都能读): 关掉时四个伪值门控
+        // 全部关闭, 与 LCBootstrap 全屏路径的 gTDEnvSpoofGlobal 语义一致.
+        if (!tdEnvSpoofGlobal) {
+            enabled = NO;
+        }
         setenv(gateMap[i].envKey, enabled ? "1" : "0", 1);
+    }
+    // per-app 隐藏开关同样没进 appInfo 的门控表: 多任务访客的 dyld 裁剪因此
+    // 与全屏不一致. LCSharedUtils 里 hideLiveContainer 由 LCBootstrap 直接读
+    // 访客 bundle 的 LCAppInfo.plist, 这里只需要把裁剪总闸传到访客进程.
+    {
+        NSNumber *hideNumber = [appInfo[@"hideLiveContainer"] isKindOfClass:NSNumber.class] ? appInfo[@"hideLiveContainer"] : nil;
+        BOOL hide = hideNumber ? hideNumber.boolValue : NO;
+        if (!hide) {
+            // appInfo 里没有该键时, 用 app group 里宿主写入的值兜底.
+            NSNumber *sharedHide = [lcShared objectForKey:@"TDHideLiveContainer"];
+            hide = sharedHide ? sharedHide.boolValue : NO;
+        }
+        setenv("TD_DYLD_TRIM", hide ? "1" : "0", 1);
     }
     setenv("LP_HOME_PATH", getenv("HOME"), 1);
     const char *overrideHomePath = [appInfo[@"lcHomePath"] fileSystemRepresentation];
