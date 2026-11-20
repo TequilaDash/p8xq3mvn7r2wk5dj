@@ -98,7 +98,10 @@ struct IManagerRootView: View {
             Self.sharedDefaults?.set(nv, forKey: "TDConsoleSignals")
         }
         .onAppear {
-            TDAudioBridgeHost.install()
+            // TDAudioBridgeHost removed in 1.1.55: the guest (LiveProcess
+            // extension) now authorizes its own audio session directly
+            // (has a foreground scene in multitask windows). Host replay
+            // only interrupted other apps' playback.
         }
         .navigationTitle("iManager")
         .navigationBarTitleDisplayMode(.inline)

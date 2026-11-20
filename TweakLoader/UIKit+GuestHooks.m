@@ -693,22 +693,46 @@ static LCControlAppURLHandling LCHandleControlAppURL(NSURL *url, NSString** modi
 // In a virtual multitask window the guest scene has its status bar
 // disabled, so its status bar manager reports a zero frame; apps without a
 // scene delegate read UIApplication.statusBarFrame and lay out under the
-// host's own status bar. Answer the real screen inset instead, WITHOUT
+// host's own status bar. Answer the real device inset instead, WITHOUT
 // calling anything that re-enters this swizzle:
 //   UIApplication.statusBarFrame IS this hooked method — calling it here
 //   recursed 10k deep (LiveProcess-2026-11-19-161900.ips, RCT createView).
-//   The screen-geometry fallback below reads no UserDefaults and no window
-//   state, so it cannot re-enter.
+// Fallback: the key window's safe-area top inset, which is the real status
+// bar height (59pt on modern devices). The 1.1.54 screen-geometry variant
+// (bounds minus fixedCoordinateSpace) is identically zero on iOS 26 and
+// collapsed to the 20pt constant, which mislaid Via's whole layout.
+// safeAreaInsets does not route back through UIApplication.statusBarFrame,
+// but a re-entrancy guard is kept so any exotic layout feedback loop
+// degrades to a zero frame instead of another 10k-frame overflow.
+static BOOL gHookStatusBarFrameEntered = NO;
 - (CGRect)hook_statusBarFrame {
+    if (gHookStatusBarFrameEntered) {
+        return CGRectZero;
+    }
+    gHookStatusBarFrameEntered = YES;
+    CGRect result = CGRectZero;
+    @try {
     UIStatusBarManager* manager = [(UIWindowScene*)(UIApplication.sharedApplication.connectedScenes.anyObject) statusBarManager];
     if(manager && !CGRectIsEmpty(manager.statusBarFrame)) {
-        return manager.statusBarFrame;
+        result = manager.statusBarFrame;
+        return result;
     }
-    CGFloat height = UIScreen.mainScreen.bounds.size.height - UIScreen.mainScreen.fixedCoordinateSpace.bounds.size.height;
+    UIWindow *keyWin = nil;
+    for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
+        if ([scene isKindOfClass:UIWindowScene.class] && scene.activationState == UISceneActivationStateForegroundActive) {
+            keyWin = ((UIWindowScene *)scene).keyWindow;
+            if (keyWin) break;
+        }
+    }
+    CGFloat height = keyWin ? keyWin.safeAreaInsets.top : 0;
     if(height <= 0) {
         height = 20;
     }
-    return CGRectMake(0, 0, UIScreen.mainScreen.bounds.size.width, height);
+    result = CGRectMake(0, 0, UIScreen.mainScreen.bounds.size.width, height);
+    return result;
+    } @finally {
+        gHookStatusBarFrameEntered = NO;
+    }
 }
 
 @end

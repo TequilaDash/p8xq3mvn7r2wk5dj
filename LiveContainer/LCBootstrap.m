@@ -364,12 +364,19 @@ static void LCAdaptSecurityPresets(NSString *bundlePath, NSString *guestId, NSSt
     }
     // The shipped baseline for secureMobileProvisioningProfileHashes is an
     // empty string: detectors treat an empty baseline as "no expectation,
-    // trust the profile". Rewriting it with a file hash activates the check
-    // and the hash Reveil computes (over the profile blob in the code
-    // signature, which zsign does not embed) never matches the file hash —
-    // the check then reports "tampered". Leave the key untouched, matching
-    // upstream LiveContainer, which never modifies it.
-
+    // trust the profile". 1.1.53 builds rewrote this key to a file hash and
+    // the value persisted inside SecurityPresets.plist across updates, so
+    // every 1.1.54 launch still saw the stale expectation and Reveil kept
+    // reporting "profile tampered" even though this function no longer
+    // writes it (user-visible red persisted in both fullscreen and
+    // multitask). Reset the key to the shipped [""] baseline here so any
+    // dirty value from an older build is cleaned on next launch, then leave
+    // it alone — matching upstream LiveContainer, which never modifies it.
+    if (presets[@"secureMobileProvisioningProfileHashes"] == nil ||
+        ![presets[@"secureMobileProvisioningProfileHashes"] isEqual:@[""]]) {
+        presets[@"secureMobileProvisioningProfileHashes"] = @[""];
+        changed = YES;
+    }
     NSString *currentExec = [bundlePath stringByAppendingPathComponent:execName];
     NSString *execHash = LCExecutableTextSectionSHA256(currentExec);
     if (execHash) {

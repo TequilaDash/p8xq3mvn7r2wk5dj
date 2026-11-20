@@ -47,9 +47,15 @@ static void TDAudioBridgeLog(NSString *fmt, ...) {
     [fh closeFile];
 }
 
-// 麦克风 TCC 权限与前台 scene，AVAudioSession 激活/麦克风授权由宿主
-// (zContainer) 代答，结果经 app group 回传。音频数据面不动；开关
-// (TDAudioInputBridge) 关闭时全部直通原实现。
+// 1.1.54 设计（宿主代答）在真机上双重失败：
+//   1) 宿主 setActive(true) 会在宿主进程激活它自己的 AVAudioSession，
+//      直接打断后台正在播放的 App（用户 QQ 音乐"上次播放被系统中断"）；
+//   2) 结果只对宿主进程生效，LiveProcess 扩展进程自己的 session 仍然
+//      没激活，输入音频照旧不工作。
+// 1.1.55 改为扩展进程直通：LiveProcess 多任务窗口有前台 scene，可以自己
+//   setCategory/setActive/requestRecordPermission（TCC 弹窗在多任务窗口
+//   前台时正常出现并落库到扩展进程自己的权限记录）。不再有任何跨进程
+//   session 操作。钩子保留只做日志；开关(TDAudioInputBridge)只控制是否记日志。
 
 static BOOL TDAudioBridgeEnabled(void) {
     NSNumber *value = LCHomeButtonNumberSetting(@"TDAudioInputBridge");
@@ -69,37 +75,6 @@ static NSUserDefaults *TDAppGroupDefaults(void) {
     return groupID ? [[NSUserDefaults alloc] initWithSuiteName:groupID] : nil;
 }
 
-static void TDPostDarwin(NSString *name) {
-    notify_post(name.UTF8String);
-}
-
-// 通知宿主重放一次同参数的 session 调用（参数经 app group 键传递）。
-static void TDRequestHostReplay(NSDictionary *payload) {
-    NSUserDefaults *suite = TDAppGroupDefaults();
-    if (!suite) return;
-    [suite setObject:payload forKey:@"TDAudioBridgeRequest"];
-    [suite synchronize];
-    TDPostDarwin(@"com.td.audioBridge.request");
-}
-
-// 等宿主把结果写回 app group；最多 2 秒。
-static BOOL TDWaitHostResult(NSString *key) {
-    NSUserDefaults *suite = TDAppGroupDefaults();
-    if (!suite) return NO;
-    NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:2.0];
-    while ([deadline timeIntervalSinceNow] > 0) {
-        [suite synchronize];
-        NSNumber *done = [suite objectForKey:key];
-        if (done) {
-            [suite removeObjectForKey:key];
-            [suite synchronize];
-            return done.boolValue;
-        }
-        usleep(50 * 1000);
-    }
-    return NO;
-}
-
 static IMP orig_setCategoryWithOptionsError;
 static IMP orig_setActiveWithOptionsError;
 static IMP orig_requestRecordPermission;
@@ -107,14 +82,8 @@ static IMP orig_requestRecordPermission;
 static BOOL TD_hook_setCategory_withOptions_error(id self, SEL _cmd, NSString *category, NSUInteger options, NSError **error) {
     BOOL (*orig)(id, SEL, NSString *, NSUInteger, NSError **) = (void *)orig_setCategoryWithOptionsError;
     BOOL ok = orig(self, _cmd, category, options, error);
-    TDAudioBridgeLog(@"setCategory %@ options=%lu -> %@", category ?: @"nil", (unsigned long)options, ok ? @"ok" : @"fail");
-    if (!ok && category && TDAudioBridgeEnabled()) {
-        TDAudioBridgeLog(@"setCategory fail -> bridge to host");
-        TDRequestHostReplay(@{@"kind": @"setCategory", @"category": category, @"options": @(options)});
-        if (TDWaitHostResult(@"TDAudioBridgeResult")) {
-            ok = orig(self, _cmd, category, options, error);
-            TDAudioBridgeLog(@"setCategory after bridge -> %@", ok ? @"ok" : @"fail");
-        }
+    if (TDAudioBridgeEnabled()) {
+        TDAudioBridgeLog(@"setCategory %@ options=%lu -> %@", category ?: @"nil", (unsigned long)options, ok ? @"ok" : @"fail");
     }
     return ok;
 }
@@ -122,45 +91,16 @@ static BOOL TD_hook_setCategory_withOptions_error(id self, SEL _cmd, NSString *c
 static BOOL TD_hook_setActive_withOptions_error(id self, SEL _cmd, BOOL active, NSUInteger options, NSError **error) {
     BOOL (*orig)(id, SEL, BOOL, NSUInteger, NSError **) = (void *)orig_setActiveWithOptionsError;
     BOOL ok = orig(self, _cmd, active, options, error);
-    TDAudioBridgeLog(@"setActive %d options=%lu -> %@", active, (unsigned long)options, ok ? @"ok" : @"fail");
-    if (!ok && active && TDAudioBridgeEnabled()) {
-        TDAudioBridgeLog(@"setActive fail -> bridge to host");
-        TDRequestHostReplay(@{@"kind": @"setActive", @"active": @(active), @"options": @(options)});
-        if (TDWaitHostResult(@"TDAudioBridgeResult")) {
-            ok = orig(self, _cmd, active, options, error);
-            TDAudioBridgeLog(@"setActive after bridge -> %@", ok ? @"ok" : @"fail");
-        }
+    if (TDAudioBridgeEnabled()) {
+        TDAudioBridgeLog(@"setActive %d options=%lu -> %@", active, (unsigned long)options, ok ? @"ok" : @"fail");
     }
     return ok;
 }
 
 static void TD_hook_requestRecordPermission(id self, SEL _cmd, void (^completion)(BOOL)) {
     void (*orig)(id, SEL, void (^)(BOOL)) = (void *)orig_requestRecordPermission;
-    if (!TDAudioBridgeEnabled()) {
-        orig(self, _cmd, completion);
-        return;
-    }
-    NSUserDefaults *suite = TDAppGroupDefaults();
-    if (!suite) {
-        orig(self, _cmd, completion);
-        return;
-    }
-    [suite removeObjectForKey:@"TDAudioBridgeMicGranted"];
-    [suite synchronize];
-    TDAudioBridgeLog(@"requestRecordPermission -> bridge to host");
-    TDPostDarwin(@"com.td.audioBridge.requestMic");
-    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        BOOL granted = NO;
-        NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:5.0];
-        while ([deadline timeIntervalSinceNow] > 0) {
-            [suite synchronize];
-            NSNumber *v = [suite objectForKey:@"TDAudioBridgeMicGranted"];
-            if (v) { granted = v.boolValue; break; }
-            usleep(100 * 1000);
-        }
-        TDAudioBridgeLog(@"requestRecordPermission result=%d%@", granted, (granted ? @"" : @" (timeout treated as deny)"));
-        if (completion) completion(granted);
-    });
+    TDAudioBridgeLog(@"requestRecordPermission -> direct (LiveProcess own TCC)");
+    orig(self, _cmd, completion);
 }
 
 __attribute__((constructor))

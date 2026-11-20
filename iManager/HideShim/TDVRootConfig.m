@@ -741,8 +741,17 @@ bool TDVOriginalExecutableCodeDirectoryHash(const char *callerImage, void *outHa
 }
 
 bool TDVProcSpoofEnabled(void) {
-    tdv_init_once();
-    return gTDVProcSpoof;
+    // True live read, bypassing tdv_init_once entirely: the resident
+    // fullscreen host process runs this shim's initializers long before
+    // LCBootstrap per-launch setenv, so the init-once cache (even refreshed
+    // inside tdv_init_locked) freezes the pre-launch value forever. Every
+    // mach_port_get_refs call then answered "spoof off" and Reveil kept
+    // reporting the task port as externally referenced. getenv on a fixed
+    // name is a cheap table walk next to each mach call.
+    const char *raw = getenv("TD_PROC_SPOOF");
+    bool enabled = raw && raw[0] == '1';
+    __atomic_store_n(&gTDVProcSpoof, enabled, __ATOMIC_RELAXED);
+    return enabled;
 }
 
 int TDVProcFilterPids(pid_t *pids, int count) {
