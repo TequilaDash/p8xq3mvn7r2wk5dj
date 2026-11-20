@@ -373,8 +373,8 @@ static void LCAdaptSecurityPresets(NSString *bundlePath, NSString *guestId, NSSt
     // dirty value from an older build is cleaned on next launch, then leave
     // it alone — matching upstream LiveContainer, which never modifies it.
     if (presets[@"secureMobileProvisioningProfileHashes"] == nil ||
-        ![presets[@"secureMobileProvisioningProfileHashes"] isEqual:@[""]]) {
-        presets[@"secureMobileProvisioningProfileHashes"] = @[""];
+        ![presets[@"secureMobileProvisioningProfileHashes"] isEqual:@[@""]]) {
+        presets[@"secureMobileProvisioningProfileHashes"] = @[@""];
         changed = YES;
     }
     NSString *currentExec = [bundlePath stringByAppendingPathComponent:execName];
