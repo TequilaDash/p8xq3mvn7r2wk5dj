@@ -638,7 +638,7 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
     // (扩展进程在 LiveProcess/main.m 里自己设). 镜像清单按此标签落盘, 便于
     // 直接对比两种模式下访客看到的镜像差异 (用户实测两种模式环境不一致).
     setenv("TD_LAUNCH_MODE", isLiveProcess ? "multitask" : "fullscreen", 1);
-    NSString *tdHostDocuments = TDHostDocumentsDir();
+    NSString *tdHostDocuments = TDHostHomeDocumentsDir();
     NSString *tdFlagPath = tdHostDocuments ? [tdHostDocuments stringByAppendingPathComponent:@"TDGlobalHide"] : nil;
     NSString *tdGlobalValue = tdFlagPath ? [NSString stringWithContentsOfFile:tdFlagPath encoding:NSUTF8StringEncoding error:nil] : nil;
     BOOL tdFileGlobalHide = [tdGlobalValue isEqualToString:@"1"];
