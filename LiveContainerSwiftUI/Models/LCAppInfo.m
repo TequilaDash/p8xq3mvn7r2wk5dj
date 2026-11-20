@@ -471,6 +471,26 @@ static NSDictionary* LCFileIdentity(NSString* path) {
     return nil;
 }
 
+// SecurityPresets.plist 是**签名资源**: 改写它就会与代码签名里的资源哈希不符,
+// 检测器据此判"权限配置文件被篡改". 但历史上只有两条路, 都是死路:
+//   · 读盘时改写字典 (1.1.50 及以前) -> 小红书 discover 的 plist 解析循环递归爆栈
+//     (LiveProcess-2026-11-18-211701.ips, 与 2026-11-20-170705.ips 同型)
+//   · 写盘时改写 (1.1.47 以后) -> 直接被判篡改
+// 正确做法: 装 App 时把原始 SecurityPresets.plist 备份成 .td-original.SecurityPresets.plist,
+// 之后**不改写**这个文件, 由访客读到原件. 这里做备份.
+- (void)ensureOriginalSecurityPresetsBackupForBundlePath:(NSString*)bundlePath {
+    NSFileManager* fm = [NSFileManager defaultManager];
+    NSString* plistPath = [bundlePath stringByAppendingPathComponent:@"SecurityPresets.plist"];
+    NSString* backupPath = [bundlePath stringByAppendingPathComponent:@".td-original.SecurityPresets.plist"];
+    if([fm fileExistsAtPath:backupPath]) {
+        return;
+    }
+    if(![fm fileExistsAtPath:plistPath]) {
+        return;
+    }
+    [fm copyItemAtPath:plistPath toPath:backupPath error:nil];
+}
+
 // Copies Info.plist before `doUseLCBundleId` or LCBootstrap rewrites its
 // bundle identifier. Existing backups may predate this feature (or be made
 // after a previous host rewrite), so a known original identifier is repaired
@@ -584,6 +604,9 @@ static NSDictionary* LCFileIdentity(NSString* path) {
             [self ensureOriginalExecutableBackupForPath:execPath];
             [self ensureOriginalInfoPlistBackupForBundlePath:appPath
                                                 knownGuestId:_infoPlist[@"CFBundleIdentifier"]];
+            // SecurityPresets.plist 是签名资源, 改写即判篡改: 先留原件, 之后由
+            // 访客读到原件而不是我们改写过的版本.
+            [self ensureOriginalSecurityPresetsBackupForBundlePath:appPath];
             (void)[self originalBundleIdentifierForSigning];
             [self ensureOriginalInfoPlistBackupForBundlePath:appPath
                                                 knownGuestId:_info[@"TDOriginalBundleIdentifier"]];

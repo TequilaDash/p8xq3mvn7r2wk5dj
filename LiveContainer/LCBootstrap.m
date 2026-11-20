@@ -278,132 +278,63 @@ static void *getAppEntryPoint(void *handle) {
 }
 
 
-static NSString *LCDataSHA256Hex(NSData *data) {
-    if (!data) return nil;
-    unsigned char digest[CC_SHA256_DIGEST_LENGTH] = {0};
-    CC_SHA256(data.bytes, (CC_LONG)data.length, digest);
-    NSMutableString *hex = [NSMutableString stringWithCapacity:CC_SHA256_DIGEST_LENGTH * 2];
-    for (int i = 0; i < CC_SHA256_DIGEST_LENGTH; i++) [hex appendFormat:@"%02x", digest[i]];
-    return hex;
-}
-
-static NSString *LCExecutableTextSectionSHA256(NSString *path) {
-    if (![[NSFileManager defaultManager] fileExistsAtPath:path]) return nil;
-    __block NSString *hash = nil;
-    LCParseMachO(path.UTF8String, true, ^(const char *slicePath, struct mach_header_64 *header, int fd, void *filePtr) {
-        if (!header || header->magic != MH_MAGIC_64) return;
-        struct stat st = {0};
-        if (fstat(fd, &st) != 0) return;
-        uint64_t sliceOffset = (uint8_t *)header - (uint8_t *)filePtr;
-        uint8_t *cursor = (uint8_t *)header + sizeof(struct mach_header_64);
-        for (uint32_t i = 0; i < header->ncmds; i++) {
-            struct load_command lc = {0};
-            if ((uint8_t *)cursor + sizeof(lc) > (uint8_t *)filePtr + st.st_size) return;
-            memcpy(&lc, cursor, sizeof(lc));
-            if (lc.cmdsize < sizeof(lc)) return;
-            if (lc.cmd == LC_SEGMENT_64 && lc.cmdsize >= sizeof(struct segment_command_64)) {
-                struct segment_command_64 seg = {0};
-                memcpy(&seg, cursor, sizeof(seg));
-                if (strncmp(seg.segname, "__TEXT", sizeof(seg.segname)) == 0) {
-                    uint8_t *sectCursor = cursor + sizeof(struct segment_command_64);
-                    for (uint32_t j = 0; j < seg.nsects; j++) {
-                        struct section_64 sect = {0};
-                        memcpy(&sect, sectCursor, sizeof(sect));
-                        uint64_t fileOffset = sliceOffset + sect.offset;
-                        if (strncmp(sect.sectname, "__text", sizeof(sect.sectname)) == 0 &&
-                            sect.size > 0 && fileOffset + sect.size <= (uint64_t)st.st_size) {
-                            NSData *text = [NSData dataWithBytes:(uint8_t *)filePtr + fileOffset length:(NSUInteger)sect.size];
-                            hash = LCDataSHA256Hex(text);
-                            return;
-                        }
-                        sectCursor += sizeof(struct section_64);
-                    }
-                }
-            }
-            cursor += lc.cmdsize;
-        }
-    });
-    return hash;
-}
-
-static NSArray *LCCollectExecutableEntitlementKeys(NSString *path) {
-    if (!path || ![[NSFileManager defaultManager] fileExistsAtPath:path]) return nil;
-    NSString *entitlementsXML = getExecutableEntitlementXML(path);
-    if (![entitlementsXML isKindOfClass:NSString.class] || entitlementsXML.length <= 0) return nil;
-    NSDictionary *entitlements = [NSPropertyListSerialization propertyListWithData:[entitlementsXML dataUsingEncoding:NSUTF8StringEncoding]
-                                                                                options:0 format:NULL error:nil];
-    if (![entitlements isKindOfClass:NSDictionary.class] || entitlements.count <= 0) return nil;
-    return entitlements.allKeys;
-}
-
+// SecurityPresets.plist 是**签名资源**: 改写它就与代码签名里的资源哈希不符,
+// 检测器据此判"权限配置文件被篡改". 历史上两条路都是死路:
+//   · 读盘时改写字典 (1.1.50 及以前) -> 小红书 discover 的 plist 解析循环递归爆栈
+//     (LiveProcess-2026-11-18-211701.ips, 与 2026-11-20-170705.ips 同型)
+//   · 写盘时改写 (1.1.47-1.1.55) -> 直接被判篡改 (用户实测红项一直存在)
+// 现在: **不碰这个文件**. 装 App 时宿主已把原件备份成
+// .td-original.SecurityPresets.plist; 这里若发现文件被旧版本改写过, 就用原件
+// 覆盖回去, 让访客读到出厂原样. 上游 LiveContainer 也从不改写它.
+// 代价: secureMainBundleIdentifiers / secureMainExecutableMachOHashes /
+// secureEntitlementKeys 这三项基线不再被我们调整 —— 它们由 App 自己的出厂
+// plist 提供, 与上游行为一致.
 static void LCAdaptSecurityPresets(NSString *bundlePath, NSString *guestId, NSString *execName) {
-    if (!bundlePath || !execName) return;
+    (void)guestId;
+    (void)execName;
+    if (!bundlePath) return;
+    NSFileManager *fm = NSFileManager.defaultManager;
     NSString *path = [bundlePath stringByAppendingPathComponent:@"SecurityPresets.plist"];
-    if (![[NSFileManager defaultManager] fileExistsAtPath:path]) return;
-    NSMutableDictionary *presets = [NSMutableDictionary dictionaryWithContentsOfFile:path];
-    if (!presets) return;
-    BOOL changed = NO;
+    NSString *backup = [bundlePath stringByAppendingPathComponent:@".td-original.SecurityPresets.plist"];
 
-    if (guestId.length > 0) {
-        presets[@"secureMainBundleIdentifiers"] = @[guestId];
-        changed = YES;
+    // 1) 还原被旧版本改写的 SecurityPresets.plist
+    if ([fm fileExistsAtPath:backup] && [fm fileExistsAtPath:path]) {
+        NSData *orig = [NSData dataWithContentsOfFile:backup];
+        NSData *cur = [NSData dataWithContentsOfFile:path];
+        if (orig && cur && ![orig isEqualToData:cur]) {
+            if ([orig writeToFile:path atomically:YES]) {
+                NSLog(@"[LC] restored original SecurityPresets.plist (was modified by an older build)");
+            }
+        }
     }
 
+    // 2) 修复 1.1.47-1.1.55 留下的损坏: 那几个版本在"原件与当前都缺失"时会伪造一个
+    // 0 字节 embedded.mobileprovision, 并把 0 字节副本存成 .td-original. 设备上
+    // 这些文件还在, 检测器读到 0 字节的描述文件 -> 判"应用程序分发配置文件被篡改".
+    // 现在: 当前文件为空但备份有内容时, 用备份覆盖回去(恢复真实描述文件);
+    // 两者都空时把当前删掉, 让它回到"没有描述文件"的出厂状态, 与上游一致.
     NSString *profileBackup = [bundlePath stringByAppendingPathComponent:@".td-original.mobileprovision"];
     NSString *profileCurrent = [bundlePath stringByAppendingPathComponent:@"embedded.mobileprovision"];
-    NSFileManager *fm = NSFileManager.defaultManager;
     if (![fm fileExistsAtPath:profileBackup] && [fm fileExistsAtPath:profileCurrent]) {
         [fm copyItemAtPath:profileCurrent toPath:profileBackup error:nil];
     }
     if (![fm fileExistsAtPath:profileCurrent] && [fm fileExistsAtPath:profileBackup]) {
         [fm copyItemAtPath:profileBackup toPath:profileCurrent error:nil];
     }
-    // 不再伪造 0 字节 embedded.mobileprovision: 上游 LiveContainer 从不碰这个文件,
-    // 而我们造的"空描述文件"与代码签名里的真实描述文件对不上, 检测器据此判
-    // "应用程序分发配置文件被篡改"(用户 1.1.55 实测多任务+隐藏下新增此红项).
-    // 缺文件就让它缺着 —— 与上游一致, 也与 zsign 重签后的实际产物一致.
-    //
-    // secureMobileProvisioningProfileHashes 必须与原包出厂基线一致. 爱思/Reveil
-    // 的出厂值就是单个空串条目 [""] (见 iManager/TequilaDash/Engine/SecurityPresets.swift
-    // 自动生成的同名常量): 空串 = "无期望, 信任该描述文件". 1.1.47-1.1.53 把这里
-    // 改写成文件哈希, 检测器算的是代码签名里 profile blob 的哈希, 两者永不相等
-    // -> 判篡改 (用户实测红). 1.1.55 写回 [""] 恢复出厂基线.
-    if (![presets[@"secureMobileProvisioningProfileHashes"] isEqual:@[@""]]) {
-        presets[@"secureMobileProvisioningProfileHashes"] = @[@""];
-        changed = YES;
-    }
-    NSString *currentExec = [bundlePath stringByAppendingPathComponent:execName];
-    NSString *execHash = LCExecutableTextSectionSHA256(currentExec);
-    if (execHash) {
-        presets[@"secureMainExecutableMachOHashes"] = @[execHash];
-        changed = YES;
-    }
-
-    // 基线必须覆盖“已有允许项 + 原包 entitlements + 当前包 entitlements”，
-    // 因为 Reveil 用当前可执行路径读取值集合；只写原包会漏掉迁移中新增的键。
-    // `presets[@"secureEntitlementKeys"]` 可能是 NSArray/字符串/空值；不能直接
-    // 交给 setWithSet，否则会抛 "set argument is not an NSSet"。
-    NSMutableSet *entitlementKeys = [NSMutableSet set];
-    id existingKeys = presets[@"secureEntitlementKeys"];
-    if ([existingKeys isKindOfClass:NSArray.class] || [existingKeys isKindOfClass:NSSet.class]) {
-        for (id key in existingKeys) {
-            if ([key isKindOfClass:NSString.class]) [entitlementKeys addObject:key];
+    if ([fm fileExistsAtPath:profileCurrent]) {
+        NSDictionary *curAttr = [fm attributesOfItemAtPath:profileCurrent error:nil];
+        unsigned long long curSize = [curAttr fileSize];
+        NSDictionary *bakAttr = [fm attributesOfItemAtPath:profileBackup error:nil];
+        unsigned long long bakSize = [bakAttr fileSize];
+        if (curSize == 0 && bakSize > 0) {
+            [fm removeItemAtPath:profileCurrent error:nil];
+            [fm copyItemAtPath:profileBackup toPath:profileCurrent error:nil];
+            NSLog(@"[LC] restored empty embedded.mobileprovision from backup (size=%llu)", bakSize);
+        } else if (curSize == 0 && bakSize == 0) {
+            [fm removeItemAtPath:profileCurrent error:nil];
+            [fm removeItemAtPath:profileBackup error:nil];
+            NSLog(@"[LC] removed fabricated empty embedded.mobileprovision");
         }
-    }
-    NSArray *currentEntitlementKeys = LCCollectExecutableEntitlementKeys(currentExec);
-    if (currentEntitlementKeys) {
-        [entitlementKeys addObjectsFromArray:currentEntitlementKeys];
-    }
-    if (entitlementKeys.count > 0) {
-        presets[@"secureEntitlementKeys"] = [entitlementKeys.allObjects sortedArrayUsingComparator:^NSComparisonResult(NSString *a, NSString *b) {
-            return [a compare:b options:NSNumericSearch];
-        }];
-        changed = YES;
-    }
-
-    if (changed) {
-        [presets writeToFile:path atomically:YES];
-        NSLog(@"[LC] adapted SecurityPresets baseline guest=%@ exec=%@", guestId, execHash);
     }
 }
 static void LCEnsureOriginalInfoPlistBackup(NSString* bundlePath,
