@@ -262,6 +262,7 @@
 				MultitaskAppWindow.swift,
 				MultitaskDockView.swift,
 				MultitaskManager.swift,
+				MultitaskStackView.swift,
 				PiPManager.h,
 				PiPManager.m,
 				ResizeHandleView.h,
