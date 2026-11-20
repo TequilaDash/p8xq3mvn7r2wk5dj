@@ -278,14 +278,40 @@ static int tdv_open_nocancel(const char *path, int flags, ...) {
     return TDV_REAL(open_nocancel)(use, flags);
 }
 
+// stat/access 类查询的路径语义:
+// 映射 (访客 bundle 内原件) 只对**读取内容**有意义 —— 访客 stat 自己请求的
+// 路径时, 必须得到那个路径自己的元数据. 之前 tdv_stat/tdv_lstat 也走了
+// tdv_mapped_for_caller, 于是 stat(主可执行) 返回的是 .td-original.executable
+// 的 inode, 与访客请求的路径不符 -> 访客侧 (sqlite3 / NSFileManager) 判定
+// "文件被替换", 反复重试 -> LiveProcess 爆栈 (2026-11-20 170705.ips:
+// sqlite3 -> tdv_lstat -> discover 递归). 上游 LiveContainer 根本没有这套
+// interpose, 原版不触发.
+// 因此: 元数据查询只做"隐藏"判定 (返回 ENOENT), 路径映射交给 open/read.
+static inline const char *tdv_meta_path_for_caller(const char *path, char *buf, size_t bufSize,
+                                                    void *caller) {
+    if (!path || path[0] != '/') {
+        return path;
+    }
+    Dl_info info = {0};
+    const char *callerImage = caller && dladdr(caller, &info) ? info.dli_fname : NULL;
+    char scratch[PATH_MAX];
+    if (TDVGuestMapBundleFile(path, callerImage, scratch, sizeof(scratch)) == TDVGuestFileMapHidden) {
+        errno = ENOENT;
+        return NULL;
+    }
+    // vroot 映射只影响内容路径, 元数据仍查真实路径.
+    (void)buf;
+    (void)bufSize;
+    return path;
+}
+
 static int tdv_stat(const char *path, struct stat *sb) {
     if (tdv_hide_tweaks(path, __builtin_return_address(0))) {
         tdv_log_tweaks_hit("stat", path);
         errno = ENOENT;
         return -1;
     }
-    char buf[PATH_MAX];
-    const char *use = tdv_mapped_for_caller(path, buf, sizeof(buf), __builtin_return_address(0));
+    const char *use = tdv_meta_path_for_caller(path, NULL, 0, __builtin_return_address(0));
     if (tdv_hidden_path_result(use)) return -1;
     return TDV_REAL(stat)(use, sb);
 }
@@ -296,8 +322,7 @@ static int tdv_lstat(const char *path, struct stat *sb) {
         errno = ENOENT;
         return -1;
     }
-    char buf[PATH_MAX];
-    const char *use = tdv_mapped_for_caller(path, buf, sizeof(buf), __builtin_return_address(0));
+    const char *use = tdv_meta_path_for_caller(path, NULL, 0, __builtin_return_address(0));
     if (tdv_hidden_path_result(use)) return -1;
     return TDV_REAL(lstat)(use, sb);
 }
@@ -311,8 +336,7 @@ static int tdv_fstatat(int fd, const char *path, struct stat *sb, int flags) {
     if (!path || path[0] != '/') {
         return TDV_REAL(fstatat)(fd, path, sb, flags);
     }
-    char buf[PATH_MAX];
-    const char *use = tdv_mapped_for_caller(path, buf, sizeof(buf), __builtin_return_address(0));
+    const char *use = tdv_meta_path_for_caller(path, NULL, 0, __builtin_return_address(0));
     if (tdv_hidden_path_result(use)) return -1;
     return TDV_REAL(fstatat)(fd, use, sb, flags);
 }
@@ -323,8 +347,7 @@ static int tdv_access(const char *path, int mode) {
         errno = ENOENT;
         return -1;
     }
-    char buf[PATH_MAX];
-    const char *use = tdv_mapped_for_caller(path, buf, sizeof(buf), __builtin_return_address(0));
+    const char *use = tdv_meta_path_for_caller(path, NULL, 0, __builtin_return_address(0));
     if (tdv_hidden_path_result(use)) return -1;
     return TDV_REAL(access)(use, mode);
 }
@@ -333,8 +356,7 @@ static int tdv_faccessat(int fd, const char *path, int mode, int flags) {
     if (!path || path[0] != '/') {
         return TDV_REAL(faccessat)(fd, path, mode, flags);
     }
-    char buf[PATH_MAX];
-    const char *use = tdv_mapped_for_caller(path, buf, sizeof(buf), __builtin_return_address(0));
+    const char *use = tdv_meta_path_for_caller(path, NULL, 0, __builtin_return_address(0));
     if (tdv_hidden_path_result(use)) return -1;
     return TDV_REAL(faccessat)(fd, use, mode, flags);
 }
@@ -353,10 +375,11 @@ static char *tdv_realpath(const char *path, char *resolved) {
 }
 
 static ssize_t tdv_readlink(const char *path, char *buf, size_t bufSize) {
-    char mapped[PATH_MAX];
     void *caller = __builtin_return_address(0);
     if (tdv_guest_backup_hidden(path, caller)) return -1;
-    const char *use = tdv_mapped_for_caller(path, mapped, sizeof(mapped), caller);
+    // 与 stat 同理: readlink 的结果必须对应访客请求的那个路径, 不能换成原件的
+    // 链接目标 (否则访客看到"路径 A 指向 B", 而 A 其实是另一个文件).
+    const char *use = tdv_meta_path_for_caller(path, NULL, 0, caller);
     if (tdv_hidden_path_result(use)) return -1;
     return TDV_REAL(readlink)(use, buf, bufSize);
 }
@@ -367,8 +390,7 @@ static DIR *tdv_opendir(const char *path) {
         errno = ENOENT;
         return NULL;
     }
-    char buf[PATH_MAX];
-    const char *use = tdv_mapped_for_caller(path, buf, sizeof(buf), __builtin_return_address(0));
+    const char *use = tdv_meta_path_for_caller(path, NULL, 0, __builtin_return_address(0));
     if (tdv_hidden_path_result(use)) return NULL;
     return TDV_REAL(opendir)(use);
 }
@@ -396,8 +418,8 @@ static int tdv_unlink(const char *path) {
 
 static int tdv_getattrlist(const char *path, void *attrList, void *attrBuf,
                            size_t attrBufSize, unsigned long options) {
-    char buf[PATH_MAX];
-    const char *use = tdv_mapped_for_caller(path, buf, sizeof(buf), __builtin_return_address(0));
+    // getattrlist 是 stat 的同族: 返回元数据, 必须对应访客请求的路径.
+    const char *use = tdv_meta_path_for_caller(path, NULL, 0, __builtin_return_address(0));
     if (tdv_hidden_path_result(use)) return -1;
     return TDV_REAL(getattrlist)(use, attrList, attrBuf, attrBufSize, options);
 }

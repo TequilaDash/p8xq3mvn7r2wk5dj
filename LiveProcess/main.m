@@ -73,6 +73,10 @@ int LiveProcessMain(int argc, char *argv[]) {
     }
     
     NSLog(@"Retrieved app info: %@", appInfo);
+    // 标记本进程是多任务访客 (LiveProcess 扩展). 全屏访客跑在宿主进程里, 由
+    // LCBootstrap 标记 TD_LAUNCH_MODE=fullscreen. 镜像清单落盘按此标签分文件,
+    // 便于直接对比两种模式下访客看到的镜像差异.
+    setenv("TD_LAUNCH_MODE", "multitask", 1);
     // Carry per-app environment gates into the separate extension process.
     // 全局隐藏开关住在 app group defaults 里 (宿主与扩展都能读); appInfo 里的
     // tdGlobalHide 从未被写入, 过去这里恒为 NO -> 多任务访客永远拿到"未开启
@@ -125,6 +129,20 @@ int LiveProcessMain(int argc, char *argv[]) {
     setenv("LP_HOME_PATH", getenv("HOME"), 1);
     const char *overrideHomePath = [appInfo[@"lcHomePath"] fileSystemRepresentation];
     if(overrideHomePath) setenv("LC_HOME_PATH", overrideHomePath, 1);
+    // ConsoleLog 必须落在 app group 里, 否则扩展进程的日志会留在扩展沙盒,
+    // 与宿主进程的日志分家 —— 全屏/多任务两种模式的诊断信息就没法对比.
+    {
+        NSString *groupID = [LCSharedUtils appGroupID];
+        NSURL *groupURL = groupID ? [[NSFileManager defaultManager] containerURLForSecurityApplicationGroupIdentifier:groupID] : nil;
+        if (groupURL) {
+            NSString *consoleDir = [[groupURL URLByAppendingPathComponent:@"LiveContainer/ConsoleLog"] path];
+            [[NSFileManager defaultManager] createDirectoryAtPath:consoleDir
+                                      withIntermediateDirectories:YES
+                                                       attributes:nil
+                                                            error:nil];
+            setenv("TD_CONSOLE_LOG_DIR", consoleDir.UTF8String, 1);
+        }
+    }
     // The extension enters before its payload environment exists. Re-run after
     // applying the payload so TDConsoleSignals=1 actually installs handlers.
     TDConsoleLogInstallCrashHandlers();

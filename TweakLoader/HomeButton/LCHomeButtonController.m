@@ -30,8 +30,9 @@ static id LCHomeButtonSettingObject(NSString *key) {
         groupID = ((NSString *(*)(id, SEL))objc_msgSend)(sharedUtils, @selector(appGroupID));
     }
     NSUserDefaults *shared = groupID ? [[NSUserDefaults alloc] initWithSuiteName:groupID] : nil;
-    // 宿主刚改完设置时，跨进程 suite 可能还留在旧缓存里。
-    if (shared) [shared synchronize];
+    // 不再 synchronize: 那是**强制落盘**, 每次调用都要一次磁盘同步, 在触摸事件
+    // 热路径上足以让主线程被拖死. NSUserDefaults 读取本身就会经 CFPrefs
+    // 取到其它进程写入的最新值, synchronize 对"读到最新"并无必要.
     id value = shared ? [shared objectForKey:key] : nil;
     if (value != nil) return value;
     // Suite may be unavailable or a pre-hook redirected it; the shared
@@ -294,16 +295,13 @@ static const CGFloat LCHomeButtonGlobalEdgeWidth = 36;
 static const CGFloat LCHomeButtonGlobalEdgeTravel = 80;
 
 - (BOOL)sideSwipeEnabled {
-    // Re-read live, but not per event: handleApplicationEvent runs for every
-    // UIEvent (moves included), and a suite read per event — each one a
-    // cross-process CFPrefs fetch plus a synchronize() disk flush — starved
-    // the main thread and the edge swipe stopped responding (user-reported
-    // after 1.1.55). Re-read when a new touch begins instead: that is once
-    // per gesture, so a toggle flipped in iManager still takes effect on the
-    // next swipe without paying per event.
-    if (!self.sideSwipeTouchActive) {
-        self.sideSwipeSetting = LCHomeButtonSetting(@"TDSideSwipeMode");
-    }
+    // 每次手势**开始时**读一次设置, 手势进行中复用缓存.
+    // 1.1.54 的写法是每个 UIEvent 都读一次, 而 LCHomeButtonSettingObject 每次都
+    // 新建 suite 并 synchronize (同步落盘) —— handleApplicationEvent 对每个事件
+    // (含 move) 都会走这里, 主线程被拖死, 手势失去响应.
+    // 1.1.56 首次改法有缺陷: 读取点在函数开头, 而 flag 在 Began 分支里才置位,
+    // 于是每个 Began 事件仍然触发一次读取. 现在把读取移到 Began 分支内, 一次手势
+    // 只读一次, 且开关实时性保留(下一个手势生效).
     return [self.sideSwipeSetting isEqualToString:@"always"];
 }
 
@@ -312,7 +310,7 @@ static const CGFloat LCHomeButtonGlobalEdgeTravel = 80;
 }
 
 - (void)handleApplicationEvent:(UIEvent *)event {
-    if (self.isLeaving || self.globalEdgeFired || ![self sideSwipeEnabled]) {
+    if (self.isLeaving || self.globalEdgeFired) {
         return;
     }
     if (event.type != UIEventTypeTouches) return;
@@ -331,9 +329,14 @@ static const CGFloat LCHomeButtonGlobalEdgeTravel = 80;
         CGPoint location = [touch locationInView:window];
         CGFloat width = window.bounds.size.width;
         switch (touch.phase) {
-            case UITouchPhaseBegan:
-                // The setting is read once per gesture, on its first touch.
+            case UITouchPhaseBegan: {
+                // 设置在**手势开始时**读一次, 手势过程中复用缓存值.
+                // 开关关闭时直接跳过整个事件处理, 避免任何设置读取开销.
                 self.sideSwipeTouchActive = YES;
+                self.sideSwipeSetting = LCHomeButtonSetting(@"TDSideSwipeMode");
+                if (![self.sideSwipeEnabled]) {
+                    break;
+                }
                 if (self.globalEdgeTouch || (location.x > LCHomeButtonGlobalEdgeWidth &&
                                              location.x < width - LCHomeButtonGlobalEdgeWidth)) {
                     break;
@@ -341,6 +344,7 @@ static const CGFloat LCHomeButtonGlobalEdgeTravel = 80;
                 self.globalEdgeTouch = touch;
                 self.globalEdgeStart = location;
                 break;
+            }
             case UITouchPhaseMoved:
                 if (touch != self.globalEdgeTouch) break;
                 CGFloat travel = location.y - self.globalEdgeStart.y;

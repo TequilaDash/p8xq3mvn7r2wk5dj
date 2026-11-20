@@ -673,8 +673,16 @@ static LCControlAppURLHandling LCHandleControlAppURL(NSURL *url, NSString** modi
     return canAppOpenItself(url) || shouldRedirectOpenURLToHost(url) || [self hook_canOpenURL:url];
 }
 
+// swizzle() 用的是 method_exchangeImplementations, **不幂等**: 交换两次等于
+// 换回原样. UIApplication.setDelegate: 在 App 生命周期里会被调用多次, 每次
+// 都执行下面的交换 -> 交换偶数次时 hook 直接失效 (状态栏高度又变成 0, 布局错位).
+// 用一次性标记保证每组交换只做一次.
+static BOOL gLCLegacyAppHooksInstalled = NO;
+
 - (void)hook_setDelegate:(id<UIApplicationDelegate>)delegate {
-    if(![delegate respondsToSelector:@selector(application:configurationForConnectingSceneSession:options:)]) {
+    if(!gLCLegacyAppHooksInstalled &&
+       ![delegate respondsToSelector:@selector(application:configurationForConnectingSceneSession:options:)]) {
+        gLCLegacyAppHooksInstalled = YES;
         // Fix old apps black screen when UIApplicationSupportsMultipleScenes is YES
         swizzle(UIWindow.class, @selector(makeKeyAndVisible), @selector(hook_makeKeyAndVisible));
         swizzle(UIWindow.class, @selector(makeKeyWindow), @selector(hook_makeKeyWindow));
@@ -697,13 +705,11 @@ static LCControlAppURLHandling LCHandleControlAppURL(NSURL *url, NSString** modi
 // calling anything that re-enters this swizzle:
 //   UIApplication.statusBarFrame IS this hooked method — calling it here
 //   recursed 10k deep (LiveProcess-2026-11-19-161900.ips, RCT createView).
-// Fallback: the key window's safe-area top inset, which is the real status
-// bar height (59pt on modern devices). The 1.1.54 screen-geometry variant
-// (bounds minus fixedCoordinateSpace) is identically zero on iOS 26 and
-// collapsed to the 20pt constant, which mislaid Via's whole layout.
-// safeAreaInsets does not route back through UIApplication.statusBarFrame,
-// but a re-entrancy guard is kept so any exotic layout feedback loop
-// degrades to a zero frame instead of another 10k-frame overflow.
+// 1.1.55 的 fallback 取 keyWindow.safeAreaInsets.top 拿到真实高度(59pt), 但
+// **宽度仍用 UIScreen.mainScreen.bounds.width** —— 多任务窗口里访客的窗口比
+// 全屏窄, App 按全屏宽排版状态栏, 图四(唱吧)的状态栏图标因此被挤到右边.
+// 现在宽度也用访客自己的 keyWindow 宽度, 高度取该窗口的安全区顶部.
+// 1.1.54 的屏幕几何差(bounds - fixedCoordinateSpace)在 iOS 26 恒为 0, 不可用.
 static BOOL gHookStatusBarFrameEntered = NO;
 - (CGRect)hook_statusBarFrame {
     if (gHookStatusBarFrameEntered) {
@@ -712,23 +718,33 @@ static BOOL gHookStatusBarFrameEntered = NO;
     gHookStatusBarFrameEntered = YES;
     CGRect result = CGRectZero;
     @try {
-    UIStatusBarManager* manager = [(UIWindowScene*)(UIApplication.sharedApplication.connectedScenes.anyObject) statusBarManager];
-    if(manager && !CGRectIsEmpty(manager.statusBarFrame)) {
-        result = manager.statusBarFrame;
-        return result;
-    }
+    // 先找访客自己的 keyWindow: 它决定窗口宽度(状态栏按窗口宽排版)和安全区.
     UIWindow *keyWin = nil;
+    UIWindowScene *keyScene = nil;
     for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
-        if ([scene isKindOfClass:UIWindowScene.class] && scene.activationState == UISceneActivationStateForegroundActive) {
-            keyWin = ((UIWindowScene *)scene).keyWindow;
-            if (keyWin) break;
+        if ([scene isKindOfClass:UIWindowScene.class] &&
+            scene.activationState == UISceneActivationStateForegroundActive) {
+            UIWindow *candidate = ((UIWindowScene *)scene).keyWindow;
+            if (candidate) {
+                keyWin = candidate;
+                keyScene = (UIWindowScene *)scene;
+                break;
+            }
         }
     }
+    if (keyScene) {
+        UIStatusBarManager *manager = keyScene.statusBarManager;
+        if (manager && !CGRectIsEmpty(manager.statusBarFrame)) {
+            result = manager.statusBarFrame;
+            return result;
+        }
+    }
+    CGFloat width = keyWin ? keyWin.bounds.size.width : UIScreen.mainScreen.bounds.size.width;
     CGFloat height = keyWin ? keyWin.safeAreaInsets.top : 0;
-    if(height <= 0) {
+    if (height <= 0) {
         height = 20;
     }
-    result = CGRectMake(0, 0, UIScreen.mainScreen.bounds.size.width, height);
+    result = CGRectMake(0, 0, width, height);
     return result;
     } @finally {
         gHookStatusBarFrameEntered = NO;

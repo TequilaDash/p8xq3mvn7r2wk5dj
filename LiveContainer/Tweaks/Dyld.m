@@ -17,6 +17,9 @@
 @import Foundation;
 @import MachO;
 
+extern void TDConsoleLog(NSString *format, ...) NS_FORMAT_FUNCTION(1, 2);
+extern NSString *TDCurrentModeTag(void);
+
 typedef uint32_t dyld_platform_t;
 
 typedef struct {
@@ -285,6 +288,27 @@ static void tdv_rebuild_image_remap(void) {
         for (uint32_t k = 0; k < n; k++) {
             const char *name = orig_dyld_get_image_name(buf[k]);
             NSLog(@"[TDImageMap] %u %s", k, name ? name : "?");
+        }
+        // NSLog 在设备上难取, 再落一份盘: 全屏访客(宿主进程)与多任务访客(LiveProcess
+        // 扩展)各写一份, 用户可直接对比两种模式下访客看到的镜像清单差异.
+        {
+            extern NSString *TDConsoleLogDirectory(void);
+            NSString *dir = TDConsoleLogDirectory();
+            if (dir.length) {
+                const char *mode = getenv("TD_LAUNCH_MODE");
+                NSString *tag = mode ? @(mode) : @"unknown";
+                NSMutableString *body = [NSMutableString string];
+                [body appendFormat:@"# 可见镜像清单 mode=%s hide=%d guest=%s total=%u visible=%u\n",
+                 tag.UTF8String, (int)gTDVHideLCImages,
+                 guest != UINT32_MAX ? "yes" : "no", total, n];
+                for (uint32_t k = 0; k < n; k++) {
+                    const char *name = orig_dyld_get_image_name(buf[k]);
+                    [body appendFormat:@"%u %s\n", k, name ? name : "?"];
+                }
+                NSString *path = [dir stringByAppendingPathComponent:
+                                 [NSString stringWithFormat:@"imagemap-%@.txt", tag]];
+                [body writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil];
+            }
         }
     }
 }
