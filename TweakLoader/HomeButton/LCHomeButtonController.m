@@ -294,16 +294,13 @@ BOOL LCHomeButtonBoolSetting(NSString *key, BOOL fallback) {
 static const CGFloat LCHomeButtonGlobalEdgeWidth = 36;
 static const CGFloat LCHomeButtonGlobalEdgeTravel = 80;
 
-- (BOOL)sideSwipeEnabled {
-    // 每次手势**开始时**读一次设置, 手势进行中复用缓存.
-    // 1.1.54 的写法是每个 UIEvent 都读一次, 而 LCHomeButtonSettingObject 每次都
-    // 新建 suite 并 synchronize (同步落盘) —— handleApplicationEvent 对每个事件
-    // (含 move) 都会走这里, 主线程被拖死, 手势失去响应.
-    // 1.1.56 首次改法有缺陷: 读取点在函数开头, 而 flag 在 Began 分支里才置位,
-    // 于是每个 Began 事件仍然触发一次读取. 现在把读取移到 Began 分支内, 一次手势
-    // 只读一次, 且开关实时性保留(下一个手势生效).
-    return [self.sideSwipeSetting isEqualToString:@"always"];
-}
+// 侧滑开关的读取时机: 每次手势**开始时**读一次, 手势进行中复用缓存值.
+// 1.1.54 的写法是每个 UIEvent 都读一次, 而 LCHomeButtonSettingObject 每次都要
+// 新建 suite 并 synchronize (强制落盘) —— handleApplicationEvent 对每个事件
+// (含 move) 都走这里, 主线程被拖死, 手势失去响应.
+// 1.1.56 的首次改法有缺陷: 读取点在函数开头, 而标志位在 Began 分支里才置位,
+// 于是每个 Began 事件仍然触发一次读取. 现在读取只在 Began 分支内发生, 一次手势
+// 只读一次, 开关实时性保留(下一个手势即生效).
 
 - (void)refreshSideSwipeSetting {
     self.sideSwipeSetting = LCHomeButtonSetting(@"TDSideSwipeMode");
@@ -334,7 +331,7 @@ static const CGFloat LCHomeButtonGlobalEdgeTravel = 80;
                 // 开关关闭时直接跳过整个事件处理, 避免任何设置读取开销.
                 self.sideSwipeTouchActive = YES;
                 self.sideSwipeSetting = LCHomeButtonSetting(@"TDSideSwipeMode");
-                if (![self.sideSwipeEnabled]) {
+                if (![self.sideSwipeSetting isEqualToString:@"always"]) {
                     break;
                 }
                 if (self.globalEdgeTouch || (location.x > LCHomeButtonGlobalEdgeWidth &&
