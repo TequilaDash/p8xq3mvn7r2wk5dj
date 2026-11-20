@@ -94,4 +94,8 @@ typedef NS_ENUM(NSInteger, MultitaskSpecified){
 /// from the host, rewrite only that backup's CFBundleIdentifier to the guest ID.
 - (void)ensureOriginalInfoPlistBackupForBundlePath:(NSString*)bundlePath
                                       knownGuestId:(nullable NSString*)guestId;
+/// Ensure `.td-original.SecurityPresets.plist` exists. SecurityPresets.plist is a
+/// signed resource: rewriting it makes detectors report "permission configuration
+/// file tampered", so the original bytes must be kept and served instead.
+- (void)ensureOriginalSecurityPresetsBackupForBundlePath:(NSString*)bundlePath;
 @end

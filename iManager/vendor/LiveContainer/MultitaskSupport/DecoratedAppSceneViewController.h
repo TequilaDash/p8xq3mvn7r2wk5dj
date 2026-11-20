@@ -17,6 +17,8 @@ API_AVAILABLE(ios(16.0))
 - (void)minimizeWindowPiP;
 - (void)unminimizeWindowPiP;
 - (void)updateVerticalConstraints;
+/// 关闭这个多任务窗口(结束访客会话). 堆叠后台界面用它实现"上滑删除后台".
+- (void)closeWindow;
 @property(nonatomic, copy) void (^pidAvailableHandler)(NSNumber *pid, NSError *error);
 @end
 

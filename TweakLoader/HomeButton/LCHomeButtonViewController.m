@@ -31,6 +31,8 @@ static const CGFloat LCHomeButtonFlingCarry = 0.12;
 // Idle dimming is optional and its final opacity is user-configurable.
 @property (nonatomic) BOOL dimEnabled;
 @property (nonatomic) CGFloat dimAlpha;
+// 上一次单击的时间, 用于区分双击; 双击打开宿主的堆叠后台界面.
+@property (nonatomic, strong) NSDate *lastPressDate;
 - (nullable UIWindow *)appWindow;
 @end
 
@@ -184,6 +186,25 @@ static const CGFloat LCHomeButtonFlingCarry = 0.12;
 - (void)buttonPressed {
     [self dimSoon];
     [[[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleLight] impactOccurred];
+    // 双击 -> 打开宿主侧的堆叠后台界面(图五); 单击 -> 原来的返回宿主.
+    // 单击动作延迟一小段时间再执行, 以便区分双击.
+    NSDate *now = [NSDate date];
+    if (self.lastPressDate && [now timeIntervalSinceDate:self.lastPressDate] < 0.35) {
+        // 第二次点击: 双击成立, 取消待执行的单击.
+        [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(performSinglePress) object:nil];
+        self.lastPressDate = nil;
+        [[[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleMedium] impactOccurred];
+        if (self.doubleTapHandler) {
+            self.doubleTapHandler();
+        }
+        return;
+    }
+    self.lastPressDate = now;
+    [self performSelector:@selector(performSinglePress) withObject:nil afterDelay:0.28];
+}
+
+- (void)performSinglePress {
+    self.lastPressDate = nil;
     if (self.pressHandler) {
         self.pressHandler();
     }

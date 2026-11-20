@@ -484,3 +484,23 @@ static void LCRegisterMinimizeAllNotification(void) {
                                     CFSTR("com.kdt.livecontainer.minimizeAll"),
                                     NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
 }
+
+// 双击辅助触控 -> 打开堆叠后台界面(图五). 通知由访客进程里的 Home 按钮发出;
+// 堆叠界面属于宿主(只有宿主知道每个访客窗口), 所以在这里接.
+static void LCShowAppStackNotification(CFNotificationCenterRef center, void *observer,
+                                       CFStringRef name, const void *object,
+                                       CFDictionaryRef userInfo) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if (@available(iOS 16.0, *)) {
+            [MultitaskStackManager.shared present];
+        }
+    });
+}
+
+__attribute__((constructor))
+static void LCRegisterShowAppStackNotification(void) {
+    CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL,
+                                    LCShowAppStackNotification,
+                                    CFSTR("com.kdt.livecontainer.showAppStack"),
+                                    NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
+}

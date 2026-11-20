@@ -12,6 +12,9 @@ NS_ASSUME_NONNULL_BEGIN
 // Called when the button is pressed.
 @property (nonatomic, copy, nullable) void (^pressHandler)(void);
 
+// 双击辅助触控: 打开宿主侧的堆叠后台界面(图五).
+@property (nonatomic, copy, nullable) void (^doubleTapHandler)(void);
+
 // 侧边下滑 (实验性): 向下拖动超过阈值并松手后调用; 取消时快照回弹, 按键留在原位.
 @property (nonatomic) BOOL edgeSwipeEnabled;
 @property (nonatomic, copy, nullable) void (^edgeHandler)(void);

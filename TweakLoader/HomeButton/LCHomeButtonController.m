@@ -236,6 +236,9 @@ BOOL LCHomeButtonBoolSetting(NSString *key, BOOL fallback) {
         buttonController.pressHandler = ^{
             [weakSelf handlePress];
         };
+        buttonController.doubleTapHandler = ^{
+            [weakSelf handleDoubleTap];
+        };
         buttonController.edgeHandler = ^{
             [weakSelf handleEdgeSwipe];
         };
@@ -375,6 +378,16 @@ static const CGFloat LCHomeButtonGlobalEdgeTravel = 80;
     // “全局应用”只要求返回 zContainer；设置页跳转必须来自设置入口，
     // 不能在这里写 TDPendingOpenSettings / post openSettings 通知。
     [self goBackToZContainer];
+}
+
+// 双击辅助触控: 让宿主打开堆叠后台界面(图五). 堆叠界面由宿主的
+// MultitaskStackManager 呈现(它才有各访客窗口的信息), 访客进程只发通知.
+- (void)handleDoubleTap {
+    if (self.isLeaving) return;
+    CFNotificationCenterRef center = CFNotificationCenterGetDarwinNotifyCenter();
+    CFStringRef name = CFSTR("com.kdt.livecontainer.showAppStack");
+    CFNotificationCenterPostNotification(center, name, NULL, NULL, true);
+    NSLog(@"[LC] home button double tapped -> request app stack");
 }
 - (void)handlePress {
     // “始终显示”只有单击回到主界面这一个功能；不再弹确认框。
