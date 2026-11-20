@@ -31,27 +31,45 @@ public class MultitaskStackManager: NSObject, ObservableObject {
     /// 打开堆叠界面. 由宿主在双击辅助触控时调用.
     @objc public func present() {
         DispatchQueue.main.async {
-            guard let window = self.keyWindow() else { return }
             if self.isVisible {
                 self.dismiss()
                 return
             }
             self.isVisible = true
             if self.hostingController == nil {
-                let view = AnyView(MultitaskStackView().environmentObject(self))
+                // dock 也必须注入: 视图里用 @EnvironmentObject 取运行中的窗口列表.
+                let view = AnyView(MultitaskStackView()
+                    .environmentObject(self)
+                    .environmentObject(MultitaskDockManager.shared))
                 let host = UIHostingController(rootView: view)
                 host.view.backgroundColor = .clear
                 host.view.autoresizingMask = [.flexibleTopMargin, .flexibleLeftMargin, .flexibleRightMargin, .flexibleBottomMargin]
                 self.hostingController = host
             }
             guard let host = self.hostingController else { return }
-            if host.view.superview == nil {
-                host.view.frame = window.bounds
-                window.addSubview(host.view)
-            } else {
-                host.view.frame = window.bounds
-                window.bringSubviewToFront(host.view)
+            // 挂到**宿主自己的窗口**上: 访客窗口由 LiveProcess 扩展进程渲染,
+            // 宿主进程里没有那些窗口; 宿主窗口在前台 scene 里, 层级足够高.
+            // 一个 view 只能有一个父窗口, 所以只挑一个来挂.
+            var target: UIWindow?
+            for scene in UIApplication.shared.connectedScenes {
+                guard let windowScene = scene as? UIWindowScene,
+                      windowScene.activationState == .foregroundActive else { continue }
+                for window in windowScene.windows where !window.isHidden {
+                    if target == nil || window.isKeyWindow {
+                        target = window
+                    }
+                    if window.isKeyWindow { break }
+                }
+                if target?.isKeyWindow == true { break }
             }
+            if target == nil { target = self.keyWindow() }
+            guard let window = target else { return }
+            host.view.frame = window.bounds
+            if host.view.superview !== window {
+                host.view.removeFromSuperview()
+                window.addSubview(host.view)
+            }
+            window.bringSubviewToFront(host.view)
         }
     }
 
@@ -63,11 +81,22 @@ public class MultitaskStackManager: NSObject, ObservableObject {
     }
 
     /// 点击卡片: 把对应窗口带到前台并关闭堆叠界面.
+    /// 先把其它窗口收起来(iOS 堆叠界面的行为: 只会留下被点开的那个),
+    /// 否则目标窗口会被别的窗口盖住, 看起来像"点了没反应".
     @objc public func selectApp(uuid: String) {
         DispatchQueue.main.async {
             let dock = MultitaskDockManager.shared
-            _ = dock.bringMultitaskViewToFront(uuid: uuid, from: nil)
-            self.dismiss()
+            var target: DecoratedAppSceneViewController?
+            for app in dock.apps where app.appUUID == uuid {
+                target = app.view?._viewDelegate() as? DecoratedAppSceneViewController
+                break
+            }
+            dock.minimizeAllWindows(except: target)
+            // 等其它窗口收起再带目标上前, 否则动画会互相打架.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+                _ = dock.bringMultitaskViewToFront(uuid: uuid, from: nil)
+                self.dismiss()
+            }
         }
     }
 
