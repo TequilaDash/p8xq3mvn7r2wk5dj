@@ -750,7 +750,7 @@ bool TDVProcSpoofEnabled(void) {
     // name is a cheap table walk next to each mach call.
     const char *raw = getenv("TD_PROC_SPOOF");
     bool enabled = raw && raw[0] == '1';
-    __atomic_store_n(&gTDVProcSpoof, enabled, __ATOMIC_RELAXED);
+    gTDVProcSpoof = enabled;
     return enabled;
 }
 
