@@ -43,6 +43,19 @@ struct AppRootView: View {
             }
             home.goHome()
         }
+        .onReceive(NotificationCenter.default.publisher(for: .lcCloseHostScreens)) { _ in
+            home.showHomeScreen()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .lcStackSplitApp)) { note in
+            guard let uuid = note.userInfo?["uuid"] as? String,
+                  let app = home.apps.values.first(where: {
+                      ($0.appInfo.dataUUID as String?) == uuid
+                  }) else { return }
+            home.showHomeScreen()
+            if home.canOpenInSplitScreen(app) {
+                home.openInSplitScreen(app)
+            }
+        }
         // Where the Home button goes, on the Home Screen and every screen
         // over it: beside an iPad's Home button, as the iPad is turned.
         .environment(\.homeButtonEdge, HomeButtonEdge(sceneDelegate.interfaceOrientation))

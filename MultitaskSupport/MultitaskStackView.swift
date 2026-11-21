@@ -302,7 +302,7 @@ public class MultitaskStackManager: NSObject, ObservableObject {
         DispatchQueue.main.async {
             // Settings and other host screens sit above guest windows; close
             // them first so tapping a card really reveals its window.
-            DataManager.shared.model.showHomeScreen()
+            NotificationCenter.default.post(name: .lcCloseHostScreens, object: nil)
             let controllers = self.appControllers()
             guard let controller = controllers.first(where: { $0.dataUUID == uuid }),
                   self.closingControllers[uuid] != ObjectIdentifier(controller) else {
@@ -373,7 +373,7 @@ public class MultitaskStackManager: NSObject, ObservableObject {
     /// The Home Screen's model for the app in a stack card, when the app is
     /// still installed.
     private func appModel(for uuid: String) -> LCAppModel? {
-        DataManager.shared.model.apps.values.first { app in
+        DataManager.shared.model.apps.first { app in
             (app.appInfo.dataUUID as String?) == uuid
         }
     }
@@ -397,17 +397,12 @@ public class MultitaskStackManager: NSObject, ObservableObject {
 
     @objc public func openInSplitScreen(uuid: String) {
         DispatchQueue.main.async {
-            guard let app = self.appModel(for: uuid) else {
+            guard self.appModel(for: uuid) != nil else {
                 self.message = "找不到该应用的信息"
                 return
             }
-            guard DataManager.shared.model.canOpenInSplitScreen(app) else {
-                self.message = "该应用不能分屏运行"
-                return
-            }
-            DataManager.shared.model.showHomeScreen()
             self.dismiss()
-            DataManager.shared.model.openInSplitScreen(app)
+            NotificationCenter.default.post(name: .lcStackSplitApp, object: nil, userInfo: ["uuid": uuid])
         }
     }
 
@@ -437,6 +432,14 @@ public class MultitaskStackManager: NSObject, ObservableObject {
 struct StackSettingsTarget: Identifiable {
     let id: String
     let app: LCAppModel
+}
+
+extension Notification.Name {
+    /// Posted when the stack opens a window, so the Home Screen closes its own
+    /// sheet before the guest comes forward.
+    static let lcCloseHostScreens = Notification.Name("LCCloseHostScreens")
+    /// Posted with `userInfo["uuid"]` when the stack asks for an app's split.
+    static let lcStackSplitApp = Notification.Name("LCStackSplitApp")
 }
 
 
