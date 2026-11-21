@@ -77,7 +77,7 @@ public class MultitaskStackManager: NSObject, ObservableObject {
     }
 
     private func readStoredRequest() {
-        let defaults = UserDefaults.lcShared()
+        guard let defaults = UserDefaults.lcShared() else { return }
         guard let request = defaults.dictionary(forKey: Self.requestKey) else { return }
         guard let timestamp = request["timestamp"] as? TimeInterval,
               let identifier = request["identifier"] as? String, !identifier.isEmpty else {
@@ -93,7 +93,7 @@ public class MultitaskStackManager: NSObject, ObservableObject {
     }
 
     private func clearStoredRequest() {
-        let defaults = UserDefaults.lcShared()
+        guard let defaults = UserDefaults.lcShared() else { return }
         guard defaults.object(forKey: Self.requestKey) != nil else { return }
         defaults.removeObject(forKey: Self.requestKey)
         defaults.synchronize()
@@ -264,7 +264,7 @@ public class MultitaskStackManager: NSObject, ObservableObject {
                     self.message = "窗口暂时无法恢复"
                     return
                 }
-                if target.isStashed { target.unstashAnimated(false) }
+                if target.isStashed { target.unstash(animated: false) }
                 for other in controllers {
                     if let decorated = self.decoratedController(for: other), decorated !== target { decorated.minimizeWindow() }
                 }
