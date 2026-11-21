@@ -19,9 +19,9 @@ uint32_t dyld_get_sdk_version(const struct mach_header* mh);
 
 
 + (NSProgress *)signAppBundleWithZSign:(NSURL *)path completionHandler:(void (^)(BOOL success, NSError *error))completionHandler;
-// The identifier the guest's own provisioning profile claims, read from the
-// backup taken at install time when there is one. nil when no profile is present
-// or it cannot be parsed.
+// Reads the identifier claimed by the bundle's current embedded.mobileprovision.
+// This parses the profile payload only; it does not verify its CMS signature.
+// Returns nil when no concrete application identifier can be parsed.
 + (NSString *)guestBundleIdentifierFromProvisioningProfileInBundleAtPath:(NSString *)path;
 + (NSProgress *)signFilesWithZSignWithURLs:(NSArray<NSURL*>*)urls completionHandler:(void (^)(BOOL success, NSError *error))completionHandler;
 + (NSString*)getCertTeamIdWithKeyData:(NSData*)keyData password:(NSString*)password;

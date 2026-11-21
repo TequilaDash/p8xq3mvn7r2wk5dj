@@ -259,6 +259,7 @@ extern const char *TDHostHomeDocumentsPath(void);
     self.hostScene = self.view.window.windowScene;
     self.settingsDiffKey = NSUUID.UUID.UUIDString;
     [self.hostScene _registerSettingsDiffActionArray:@[self] forKey:self.settingsDiffKey];
+    [NSNotificationCenter.defaultCenter postNotificationName:@"LCMultitaskWindowsChanged" object:self];
 }
 
 - (void)terminate {
@@ -385,6 +386,7 @@ extern const char *TDHostHomeDocumentsPath(void);
         
         [self.delegate appSceneVCAppDidExit:self];
         [MultitaskManager unregisterMultitaskContainerWithContainer:self.dataUUID];
+        [NSNotificationCenter.defaultCenter postNotificationName:@"LCMultitaskWindowsChanged" object:self];
     });
 }
 
@@ -467,6 +469,7 @@ static void LCMinimizeAllMultitaskWindows(CFNotificationCenterRef center, void *
                                           CFStringRef name, const void *object,
                                           CFDictionaryRef userInfo) {
     dispatch_async(dispatch_get_main_queue(), ^{
+        if (NSUserDefaults.lcGuestAppId || NSUserDefaults.isLiveProcess) return;
         NSLog(@"[TDHome] minimizeAll notification received");
         for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
             if (![scene isKindOfClass:UIWindowScene.class]) continue;
@@ -491,7 +494,9 @@ static void LCShowAppStackNotification(CFNotificationCenterRef center, void *obs
                                        CFStringRef name, const void *object,
                                        CFDictionaryRef userInfo) {
     dispatch_async(dispatch_get_main_queue(), ^{
+        if (NSUserDefaults.lcGuestAppId || NSUserDefaults.isLiveProcess) return;
         if (@available(iOS 16.0, *)) {
+            NSLog(@"[TDHome] app stack request received; waiting for an active host window if needed");
             [MultitaskStackManager.shared present];
         }
     });
@@ -503,4 +508,14 @@ static void LCRegisterShowAppStackNotification(void) {
                                     LCShowAppStackNotification,
                                     CFSTR("com.kdt.livecontainer.showAppStack"),
                                     NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
+    // A classic fullscreen guest restarts this process to return home. Its
+    // request must survive that restart, even if the Darwin message arrived
+    // before this framework was loaded. The manager reads that request and
+    // waits for scene activation instead of presenting on a guest's window.
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if (NSUserDefaults.lcGuestAppId || NSUserDefaults.isLiveProcess) return;
+        if (@available(iOS 16.0, *)) {
+            (void)[MultitaskStackManager shared];
+        }
+    });
 }

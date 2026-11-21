@@ -6,10 +6,10 @@
 //  双击辅助触控进入 -> 看到所有在跑的多任务窗口(卡片堆叠, 后一个压前一个),
 //  点卡片进入该 app 的多任务窗口, 卡片上滑删除该窗口(结束访客进程).
 //  设计:
-//   · 数据源复用 MultitaskDockManager.runningApps(与 Dock 同一份, 不重复维护)
-//   · 卡片按 z 序叠放, 后加入的在最上面, 整体可左右拖动切换
-//   · 点卡片 -> bringMultitaskViewToFront(uuid:) 把对应窗口带到前台
-//   · 上滑超过阈值 -> 关闭该窗口(DecoratedAppSceneViewController.closeWindow)
+//   · 优先复用 Dock 的顺序, 同时收集实际窗口, 关闭 Dock 也不会漏掉后台
+//   · 卡片左右滑动切换, 当前卡片置顶, 相邻卡片始终露出可点击的部分
+//   · 点卡片恢复对应窗口; 原生 iPad 窗口激活自己的 scene
+//   · 上滑走真实 closeWindow/terminate 路径, 不用删列表冒充关闭
 //
 
 import Foundation
@@ -20,244 +20,459 @@ import Combine
 @available(iOS 16.0, *)
 @objcMembers
 public class MultitaskStackManager: NSObject, ObservableObject {
-    @Published public var isVisible: Bool = false
-    @Published public var selectedIndex: Int = 0
+    @Published public private(set) var isVisible = false
+    @Published public var selectedIndex = 0
+    @Published private(set) var apps: [DockAppModel] = []
+    @Published private(set) var message: String?
 
-    private weak var hostingController: UIHostingController<AnyView>?
-    private var dismissWorkItem: DispatchWorkItem?
+    // A window retains its root controller, and the manager owns both until
+    // dismissal. Retaining only host.view does not retain a hosting controller.
+    private var hostingController: UIHostingController<AnyView>?
+    private var hostingWindow: UIWindow?
+    private weak var previousKeyWindow: UIWindow?
+    private var pendingPresentation = false
+    private var selectedUUID: String?
+    private var closingControllers: [String: ObjectIdentifier] = [:]
+    private var dockSubscription: AnyCancellable?
+    private static let requestKey = "LCPendingAppStackRequest"
 
     public static let shared = MultitaskStackManager()
 
-    /// 打开堆叠界面. 由宿主在双击辅助触控时调用.
+    private override init() {
+        super.init()
+        let center = NotificationCenter.default
+        center.addObserver(self, selector: #selector(sceneDidActivate(_:)), name: UIScene.didActivateNotification, object: nil)
+        center.addObserver(self, selector: #selector(sceneWillDeactivate(_:)), name: UIScene.willDeactivateNotification, object: nil)
+        center.addObserver(self, selector: #selector(sceneDidDisconnect(_:)), name: UIScene.didDisconnectNotification, object: nil)
+        center.addObserver(self, selector: #selector(applicationDidActivate), name: UIApplication.didBecomeActiveNotification, object: nil)
+        center.addObserver(self, selector: #selector(windowsDidChange(_:)), name: UIWindow.didBecomeVisibleNotification, object: nil)
+        center.addObserver(self, selector: #selector(windowsDidChange(_:)), name: NSNotification.Name("LCMultitaskWindowsChanged"), object: nil)
+        dockSubscription = MultitaskDockManager.shared.$apps
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                guard let self, self.isVisible || self.pendingPresentation else { return }
+                self.refreshApps()
+            }
+        readStoredRequest()
+        presentIfPossible()
+    }
+
+    /// Repeated delivery is idempotent. A background host keeps the request
+    /// pending until it has an active scene and an actual content window.
     @objc public func present() {
         DispatchQueue.main.async {
-            if self.isVisible {
-                self.dismiss()
-                return
-            }
-            self.isVisible = true
-            if self.hostingController == nil {
-                // dock 也必须注入: 视图里用 @EnvironmentObject 取运行中的窗口列表.
-                let view = AnyView(MultitaskStackView()
-                    .environmentObject(self)
-                    .environmentObject(MultitaskDockManager.shared))
-                let host = UIHostingController(rootView: view)
-                host.view.backgroundColor = .clear
-                host.view.autoresizingMask = [.flexibleTopMargin, .flexibleLeftMargin, .flexibleRightMargin, .flexibleBottomMargin]
-                self.hostingController = host
-            }
-            guard let host = self.hostingController else { return }
-            // 挂到**宿主自己的窗口**上: 访客窗口由 LiveProcess 扩展进程渲染,
-            // 宿主进程里没有那些窗口; 宿主窗口在前台 scene 里, 层级足够高.
-            // 一个 view 只能有一个父窗口, 所以只挑一个来挂.
-            var target: UIWindow?
-            for scene in UIApplication.shared.connectedScenes {
-                guard let windowScene = scene as? UIWindowScene,
-                      windowScene.activationState == .foregroundActive else { continue }
-                for window in windowScene.windows where !window.isHidden {
-                    if target == nil || window.isKeyWindow {
-                        target = window
-                    }
-                    if window.isKeyWindow { break }
-                }
-                if target?.isKeyWindow == true { break }
-            }
-            if target == nil { target = self.keyWindow() }
-            guard let window = target else { return }
-            host.view.frame = window.bounds
-            if host.view.superview !== window {
-                host.view.removeFromSuperview()
-                window.addSubview(host.view)
-            }
-            window.bringSubviewToFront(host.view)
+            self.readStoredRequest()
+            self.pendingPresentation = true
+            self.message = nil
+            self.presentIfPossible()
         }
     }
 
     @objc public func dismiss() {
         DispatchQueue.main.async {
-            self.isVisible = false
-            self.hostingController?.view.removeFromSuperview()
+            self.pendingPresentation = false
+            self.clearStoredRequest()
+            self.detachWindow()
         }
     }
 
-    /// 点击卡片: 把对应窗口带到前台并关闭堆叠界面.
-    /// 先把其它窗口收起来(iOS 堆叠界面的行为: 只会留下被点开的那个),
-    /// 否则目标窗口会被别的窗口盖住, 看起来像"点了没反应".
+    private func readStoredRequest() {
+        let defaults = UserDefaults.lcShared()
+        guard let request = defaults.dictionary(forKey: Self.requestKey) else { return }
+        guard let timestamp = request["timestamp"] as? TimeInterval,
+              let identifier = request["identifier"] as? String, !identifier.isEmpty else {
+            clearStoredRequest()
+            return
+        }
+        let age = Date().timeIntervalSince1970 - timestamp
+        guard age >= -5, age < 30 else {
+            clearStoredRequest()
+            return
+        }
+        pendingPresentation = true
+    }
+
+    private func clearStoredRequest() {
+        let defaults = UserDefaults.lcShared()
+        guard defaults.object(forKey: Self.requestKey) != nil else { return }
+        defaults.removeObject(forKey: Self.requestKey)
+        defaults.synchronize()
+    }
+
+    private func presentIfPossible() {
+        guard pendingPresentation else { return }
+        if let window = hostingWindow, !window.isHidden,
+           window.windowScene?.activationState == .foregroundActive,
+           hostingController?.viewIfLoaded?.window === window {
+            refreshApps()
+            pendingPresentation = false
+            clearStoredRequest()
+            return
+        }
+        let windows = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .filter { $0.activationState == .foregroundActive && $0.session.role == .windowApplication }
+            .flatMap(\.windows)
+            .filter { $0 !== hostingWindow && !$0.isHidden && $0.alpha > 0 && $0.rootViewController != nil && $0.windowLevel == .normal && !$0.bounds.isEmpty }
+        guard let target = windows.first(where: \.isKeyWindow) ?? windows.first,
+              let scene = target.windowScene else { return }
+
+        detachWindow()
+        refreshApps()
+        focus(index: max(0, apps.count - 1))
+        let host = UIHostingController(rootView: AnyView(MultitaskStackView().environmentObject(self)))
+        host.view.backgroundColor = .clear
+        let window = UIWindow(windowScene: scene)
+        window.frame = target.frame
+        window.backgroundColor = .clear
+        window.windowLevel = UIWindow.Level(rawValue: UIWindow.Level.alert.rawValue + 1)
+        window.rootViewController = host
+        previousKeyWindow = scene.windows.first(where: \.isKeyWindow) ?? target
+        hostingController = host
+        hostingWindow = window
+        window.makeKeyAndVisible()
+        guard !window.isHidden, host.view.window === window,
+              scene.activationState == .foregroundActive else {
+            detachWindow()
+            return
+        }
+        isVisible = true
+        pendingPresentation = false
+        clearStoredRequest()
+        NSLog("[TDHome] app stack attached: scene=%@ cards=%ld", scene.session.persistentIdentifier, apps.count)
+    }
+
+    private func detachWindow() {
+        let previous = previousKeyWindow
+        hostingWindow?.isHidden = true
+        hostingWindow?.rootViewController = nil
+        hostingWindow?.windowScene = nil
+        hostingController = nil
+        hostingWindow = nil
+        previousKeyWindow = nil
+        isVisible = false
+        apps.removeAll()
+        focus(index: 0)
+        if let previous, !previous.isHidden, previous.windowScene?.activationState == .foregroundActive {
+            previous.makeKey()
+        }
+    }
+
+    @objc private func applicationDidActivate() {
+        readStoredRequest()
+        presentIfPossible()
+    }
+
+    @objc private func sceneDidActivate(_ notification: Notification) {
+        applicationDidActivate()
+    }
+
+    @objc private func sceneWillDeactivate(_ notification: Notification) {
+        guard let scene = notification.object as? UIWindowScene, hostingWindow?.windowScene === scene else { return }
+        pendingPresentation = isVisible || pendingPresentation
+        detachWindow()
+    }
+
+    @objc private func sceneDidDisconnect(_ notification: Notification) {
+        sceneWillDeactivate(notification)
+        presentIfPossible()
+    }
+
+    @objc private func windowsDidChange(_ notification: Notification) {
+        // makeKeyAndVisible posts synchronously while presentation is mounting.
+        if let window = notification.object as? UIWindow, window === hostingWindow { return }
+        if isVisible { refreshApps() }
+        presentIfPossible()
+    }
+
+    // Dock registration is disabled with the Dock setting. Traverse the real
+    // controller hierarchy as well, including native scenes and minimized views.
+    private func appControllers() -> [AppSceneViewController] {
+        var result: [AppSceneViewController] = []
+        var seen = Set<String>()
+        func visit(_ controller: UIViewController) {
+            if let app = controller as? AppSceneViewController,
+               let uuid = app.dataUUID, !uuid.isEmpty, seen.insert(uuid).inserted {
+                result.append(app)
+            }
+            for child in controller.children { visit(child) }
+            if let presented = controller.presentedViewController { visit(presented) }
+        }
+        for scene in UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }) {
+            for window in scene.windows where window !== hostingWindow {
+                if let root = window.rootViewController { visit(root) }
+            }
+        }
+        for app in MultitaskDockManager.shared.apps {
+            if let decorated = app.view?._viewDelegate() as? DecoratedAppSceneViewController {
+                visit(decorated)
+            }
+        }
+        return result
+    }
+
+    private func decoratedController(for controller: AppSceneViewController) -> DecoratedAppSceneViewController? {
+        var parent = controller.parent
+        while let current = parent {
+            if let decorated = current as? DecoratedAppSceneViewController { return decorated }
+            parent = current.parent
+        }
+        return nil
+    }
+
+    private func refreshApps() {
+        let controllers = appControllers()
+        let byUUID = Dictionary(uniqueKeysWithValues: controllers.compactMap { controller -> (String, AppSceneViewController)? in
+            guard let uuid = controller.dataUUID else { return nil }
+            return (uuid, controller)
+        })
+        closingControllers = closingControllers.filter { uuid, identifier in
+            byUUID[uuid].map { ObjectIdentifier($0) == identifier } ?? false
+        }
+        let dockApps = MultitaskDockManager.shared.apps
+        var seen = Set<String>()
+        let order = (dockApps.map(\.appUUID) + controllers.compactMap(\.dataUUID))
+            .filter { seen.insert($0).inserted }
+        apps = order.compactMap { uuid in
+            guard let controller = byUUID[uuid], closingControllers[uuid] != ObjectIdentifier(controller) else { return nil }
+            if let existing = dockApps.first(where: { $0.appUUID == uuid }), existing.view != nil { return existing }
+            let existing = dockApps.first(where: { $0.appUUID == uuid })
+            let info = existing?.appInfo ?? AppInfoProvider.shared.findAppInfo(appName: controller.bundleId ?? "", dataUUID: uuid)
+            let name = existing?.appName ?? info?.displayName() ?? controller.bundleId ?? uuid
+            let view: UIView? = decoratedController(for: controller)?.view ?? controller.viewIfLoaded
+            return DockAppModel(appName: name, appUUID: uuid, appInfo: info, view: view)
+        }
+        focus(index: selectedUUID.flatMap { uuid in apps.firstIndex(where: { $0.appUUID == uuid }) } ?? selectedIndex)
+    }
+
+    func focus(index: Int) {
+        selectedIndex = min(max(0, index), max(0, apps.count - 1))
+        selectedUUID = apps.indices.contains(selectedIndex) ? apps[selectedIndex].appUUID : nil
+    }
+
     @objc public func selectApp(uuid: String) {
         DispatchQueue.main.async {
-            let dock = MultitaskDockManager.shared
-            var target: DecoratedAppSceneViewController?
-            for app in dock.apps where app.appUUID == uuid {
-                target = app.view?._viewDelegate() as? DecoratedAppSceneViewController
-                break
+            let controllers = self.appControllers()
+            guard let controller = controllers.first(where: { $0.dataUUID == uuid }),
+                  self.closingControllers[uuid] != ObjectIdentifier(controller) else {
+                self.message = "窗口已经关闭"
+                self.refreshApps()
+                return
             }
-            dock.minimizeAllWindows(except: target)
-            // 等其它窗口收起再带目标上前, 否则动画会互相打架.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
-                _ = dock.bringMultitaskViewToFront(uuid: uuid, from: nil)
+            if let target = self.decoratedController(for: controller) {
+                guard let view = target.viewIfLoaded, let container = view.superview else {
+                    self.message = "窗口暂时无法恢复"
+                    return
+                }
+                if target.isStashed { target.unstashAnimated(false) }
+                for other in controllers {
+                    if let decorated = self.decoratedController(for: other), decorated !== target { decorated.minimizeWindow() }
+                }
+                if !MultitaskDockManager.shared.bringMultitaskViewToFront(uuid: uuid) {
+                    if let pip = PiPManager.shared, pip.isPiP(withDecoratedVC: target) { pip.stopPiP() }
+                    target.restoreFromDock()
+                    container.bringSubviewToFront(view)
+                    target.revealWindowControls()
+                }
                 self.dismiss()
+            } else if let scene = controller.viewIfLoaded?.window?.windowScene {
+                UIApplication.shared.requestSceneSessionActivation(scene.session, userActivity: nil, options: nil) { error in
+                    NSLog("[TDHome] app stack activation failed: %@", error.localizedDescription)
+                    self.present()
+                }
+                self.dismiss()
+            } else {
+                self.message = "窗口暂时无法恢复"
             }
         }
     }
 
-    /// 上滑删除: 结束该访客窗口(与 Dock 上的关闭按钮同一路径).
     @objc public func closeApp(uuid: String) {
         DispatchQueue.main.async {
-            let dock = MultitaskDockManager.shared
-            for app in dock.apps where app.appUUID == uuid {
-                if let vc = app.view?._viewDelegate() as? DecoratedAppSceneViewController {
-                    vc.closeWindow()
+            guard let controller = self.appControllers().first(where: { $0.dataUUID == uuid }) else {
+                self.message = "窗口已经关闭"
+                self.refreshApps()
+                return
+            }
+            let identifier = ObjectIdentifier(controller)
+            guard self.closingControllers[uuid] != identifier else { return }
+            self.closingControllers[uuid] = identifier
+            if let decorated = self.decoratedController(for: controller) {
+                decorated.closeWindow()
+            } else {
+                controller.terminate()
+                if let scene = controller.viewIfLoaded?.window?.windowScene {
+                    UIApplication.shared.requestSceneSessionDestruction(scene.session, options: nil) { error in
+                        NSLog("[TDHome] app stack close scene failed: %@", error.localizedDescription)
+                        DispatchQueue.main.async {
+                            guard self.closingControllers[uuid] == identifier else { return }
+                            self.closingControllers.removeValue(forKey: uuid)
+                            self.message = "窗口关闭失败：\(error.localizedDescription)"
+                            self.refreshApps()
+                        }
+                    }
                 }
             }
-            dock.removeRunningApp(uuid)
+            // Only a real close above removes a card; Dock cleanup remains the
+            // controller's responsibility when the guest actually exits.
+            self.refreshApps()
         }
-    }
-
-    private func keyWindow() -> UIWindow? {
-        UIApplication.shared.connectedScenes
-            .compactMap { $0 as? UIWindowScene }
-            .first { $0.activationState == .foregroundActive }?
-            .windows
-            .first { $0.isKeyWindow } ?? UIApplication.shared.connectedScenes
-            .compactMap { $0 as? UIWindowScene }
-            .first { $0.activationState == .foregroundActive }?
-            .windows
-            .first
     }
 }
 
 @available(iOS 16.0, *)
 struct MultitaskStackView: View {
     @EnvironmentObject var manager: MultitaskStackManager
-    @EnvironmentObject var dock: MultitaskDockManager
+    @State private var dragOffset: CGSize = .zero
+    @State private var dragAxis: Axis?
+    @State private var draggedUUID: String?
 
     var body: some View {
         ZStack {
-            // 背景遮罩: 点空白关闭
-            Color.black.opacity(0.35)
+            Color.black.opacity(0.65)
                 .ignoresSafeArea()
                 .onTapGesture { manager.dismiss() }
-
-            if dock.apps.isEmpty {
-                VStack(spacing: 10) {
-                    Image(systemName: "rectangle.stack")
-                        .font(.system(size: 46, weight: .light))
-                        .foregroundStyle(.white.opacity(0.8))
-                    Text("没有正在运行的多任务窗口")
-                        .font(.callout)
-                        .foregroundStyle(.white.opacity(0.8))
+            VStack(spacing: 16) {
+                HStack {
+                    Text("多任务后台").font(.title2.bold())
+                    Spacer()
+                    Button { manager.dismiss() } label: { Image(systemName: "xmark.circle.fill").font(.title2) }
+                        .accessibilityLabel("关闭后台视图")
                 }
-            } else {
-                GeometryReader { geo in
-                    let count = dock.apps.count
-                    ZStack {
-                        ForEach(Array(dock.apps.enumerated()), id: \.offset) { index, app in
-                            card(for: app, index: index, count: count, size: geo.size)
-                        }
+                .padding(.horizontal, 24)
+                if manager.apps.isEmpty {
+                    Spacer()
+                    Image(systemName: "rectangle.stack").font(.system(size: 46, weight: .light))
+                    Text("没有正在运行的多任务窗口").font(.callout)
+                    Spacer()
+                } else {
+                    GeometryReader { geometry in deck(in: geometry.size) }
+                    HStack(spacing: 28) {
+                        Button { moveSelection(by: -1) } label: { Image(systemName: "chevron.left") }
+                            .disabled(manager.selectedIndex == 0)
+                            .accessibilityLabel("上一个窗口")
+                        Text("\(manager.selectedIndex + 1) / \(manager.apps.count)").monospacedDigit()
+                        Button { moveSelection(by: 1) } label: { Image(systemName: "chevron.right") }
+                            .disabled(manager.selectedIndex >= manager.apps.count - 1)
+                            .accessibilityLabel("下一个窗口")
                     }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    Text("左右滑动切换 · 点按打开 · 上滑关闭").font(.footnote)
                 }
+                if let message = manager.message { Text(message).font(.footnote).accessibilityAddTraits(.updatesFrequently) }
             }
+            .foregroundStyle(.white)
+            .padding(.vertical, 24)
         }
-        .animation(.spring(response: 0.35, dampingFraction: 0.85), value: dock.apps.count)
     }
 
-    @ViewBuilder
-    private func card(for app: DockAppModel, index: Int, count: Int, size: CGSize) -> some View {
-        // 越靠后的卡片越"上"一层(像 springboard 的堆叠)
-        let depth = CGFloat(count - 1 - index)
-        let cardWidth = size.width * 0.62
-        let cardHeight = size.height * 0.62
-        let offset = depth * 14
-        let scale = 1.0 - depth * 0.04
+    private func moveSelection(by distance: Int) {
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+            manager.focus(index: manager.selectedIndex + distance)
+        }
+    }
 
-        AppStackCard(app: app,
-                     size: CGSize(width: cardWidth, height: cardHeight),
-                     onSelect: { manager.selectApp(uuid: app.appUUID) },
-                     onClose: { manager.closeApp(uuid: app.appUUID) })
-            .scaleEffect(scale)
-            .offset(y: -offset)
-            .zIndex(Double(index))
-            .allowsHitTesting(index == count - 1 || abs(index - manager.selectedIndex) <= 1)
+    private func deck(in size: CGSize) -> some View {
+        let width = min(420, size.width * 0.72)
+        let height = min(620, size.height * 0.86)
+        let stride = max(1, width * 0.48)
+        let horizontal = dragAxis == .horizontal ? dragOffset.width : 0
+        return ZStack {
+            ForEach(Array(manager.apps.enumerated()), id: \.element.appUUID) { index, app in
+                let distance = CGFloat(index - manager.selectedIndex)
+                let depth = min(4, abs(distance))
+                let vertical = app.appUUID == draggedUUID && dragAxis == .vertical ? min(0, dragOffset.height) : 0
+                AppStackCard(app: app, size: CGSize(width: width, height: height),
+                             onSelect: { manager.selectApp(uuid: app.appUUID) },
+                             onClose: { manager.closeApp(uuid: app.appUUID) })
+                    .scaleEffect(1 - depth * 0.055)
+                    .offset(x: distance * stride + horizontal, y: depth * 14 + vertical)
+                    .zIndex(Double(manager.apps.count) - Double(abs(distance)))
+                    .accessibilityHidden(index != manager.selectedIndex)
+            }
+        }
+        .frame(width: size.width, height: size.height)
+        .contentShape(Rectangle())
+        .clipped()
+        .gesture(DragGesture(minimumDistance: 12)
+            .onChanged { value in
+                if dragAxis == nil {
+                    dragAxis = abs(value.translation.width) > abs(value.translation.height) ? .horizontal : .vertical
+                    draggedUUID = manager.apps.indices.contains(manager.selectedIndex) ? manager.apps[manager.selectedIndex].appUUID : nil
+                }
+                dragOffset = value.translation
+            }
+            .onEnded { value in
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                    if dragAxis == .horizontal, let uuid = draggedUUID,
+                       let index = manager.apps.firstIndex(where: { $0.appUUID == uuid }) {
+                        let travel = value.translation.width
+                        if abs(travel) > 40 || abs(value.predictedEndTranslation.width) > stride * 0.5 {
+                            manager.focus(index: index + (travel < 0 ? 1 : -1))
+                        }
+                    } else if dragAxis == .vertical,
+                              value.translation.height < -100 || (value.translation.height < -30 && value.predictedEndTranslation.height < -180),
+                              let uuid = draggedUUID {
+                        manager.closeApp(uuid: uuid)
+                    }
+                    dragOffset = .zero
+                    dragAxis = nil
+                    draggedUUID = nil
+                }
+            })
+        .animation(.spring(response: 0.35, dampingFraction: 0.85), value: manager.apps.map(\.appUUID))
+        .accessibilityAdjustableAction { direction in
+            switch direction {
+            case .increment: moveSelection(by: 1)
+            case .decrement: moveSelection(by: -1)
+            @unknown default: break
+            }
+        }
     }
 }
 
-/// 单张卡片: 图标 + 名称, 支持上滑删除与点击进入.
 @available(iOS 16.0, *)
 struct AppStackCard: View {
     let app: DockAppModel
     let size: CGSize
     var onSelect: () -> Void
     var onClose: () -> Void
-
-    @State private var dragOffset: CGSize = .zero
     @State private var icon: UIImage?
 
     var body: some View {
-        VStack(spacing: 12) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 22, style: .continuous)
-                    .fill(Color.black.opacity(0.35))
-                if let icon {
-                    Image(uiImage: icon)
-                        .resizable()
-                        .aspectRatio(contentMode: .fill)
-                        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                        .padding(10)
-                } else {
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .fill(Color.gray.opacity(0.35))
-                        .padding(10)
-                        .overlay(ProgressView().tint(.white))
-                }
+        VStack(spacing: 18) {
+            if let icon {
+                Image(uiImage: icon).resizable().scaledToFit()
+                    .frame(width: size.width * 0.48, height: size.width * 0.48)
+                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+            } else {
+                Image(systemName: "app.fill").resizable().scaledToFit()
+                    .frame(width: size.width * 0.48, height: size.width * 0.48)
+                    .foregroundStyle(.white.opacity(0.6))
             }
-            .frame(width: size.width * 0.55, height: size.width * 0.55)
-
-            Text(app.appName)
-                .font(.callout.weight(.medium))
-                .foregroundStyle(.white)
-                .lineLimit(1)
+            Text(app.appName).font(.headline).multilineTextAlignment(.center).lineLimit(2).padding(.horizontal)
         }
         .frame(width: size.width, height: size.height)
-        .background(
-            RoundedRectangle(cornerRadius: 26, style: .continuous)
-                .fill(Color.black.opacity(0.55))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 26, style: .continuous)
-                .stroke(Color.white.opacity(0.18), lineWidth: 1)
-        )
+        .background(RoundedRectangle(cornerRadius: 26, style: .continuous).fill(Color(white: 0.14)))
+        .overlay(RoundedRectangle(cornerRadius: 26, style: .continuous).stroke(.white.opacity(0.25), lineWidth: 1))
+        .contentShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
+        .onTapGesture(perform: onSelect)
+        .overlay(alignment: .topTrailing) {
+            Button(action: onClose) { Image(systemName: "xmark.circle.fill").font(.title2).padding(16) }
+                .accessibilityLabel("关闭 \(app.appName)")
+        }
         .shadow(color: .black.opacity(0.4), radius: 12, y: 6)
-        .offset(dragOffset)
-        .rotationEffect(.degrees(Double(dragOffset.height / 40)))
-        .gesture(
-            DragGesture()
-                .onChanged { value in
-                    dragOffset = value.translation
-                }
-                .onEnded { value in
-                    // 上滑超过阈值 -> 删除; 否则弹回
-                    if value.translation.height < -110 {
-                        onClose()
-                    }
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                        dragOffset = .zero
-                    }
-                }
-        )
-        .onTapGesture { onSelect() }
-        .onAppear { loadIcon() }
+        .accessibilityAction(named: Text("打开窗口"), onSelect)
+        .accessibilityAction(named: Text("关闭窗口"), onClose)
+        .onAppear(perform: loadIcon)
     }
 
     private func loadIcon() {
+        // Shared SwiftUI models are main-thread state; only image decoding is
+        // moved off the main queue.
+        let info = app.appInfo ?? AppInfoProvider.shared.findAppInfo(appName: app.appName, dataUUID: app.appUUID)
         DispatchQueue.global(qos: .userInitiated).async {
-            var result: UIImage?
-            if let info = app.appInfo {
-                result = info.iconIsDarkIcon(false)
-            } else if let found = AppInfoProvider.shared.findAppInfo(appName: app.appName, dataUUID: app.appUUID) {
-                result = found.iconIsDarkIcon(false)
-            }
-            DispatchQueue.main.async { icon = result }
+            let image = info?.iconIsDarkIcon(false)
+            DispatchQueue.main.async { icon = image }
         }
     }
 }

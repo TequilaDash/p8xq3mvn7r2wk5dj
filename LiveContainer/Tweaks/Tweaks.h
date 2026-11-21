@@ -30,6 +30,9 @@ uint32_t LCRealImageCount(void);
 uint32_t LCGuestImageIndexForPath(const char *path);
 // 备注客索引解析完成后重建"可见索引"表, 保证 guest 就是 index 0.
 void LCRebuildImageRemap(void);
+// Bootstrap only: after a successful guest dlopen and remap rebuild. Pass the
+// path resolver's result (including UINT32_MAX), never the fallback index.
+void LCSampleGuestImageMap(const char *guestPath, uint32_t resolvedGuestIndex);
 void* getDSCAddr(void);
 void* getCachedSymbol(NSString* symbolName, struct mach_header_64* header);
 void saveCachedSymbol(NSString* symbolName, struct mach_header_64* header, uint64_t offset);

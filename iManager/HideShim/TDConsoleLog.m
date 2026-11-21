@@ -100,15 +100,14 @@ void TDConsoleLog(NSString *format, ...) {
     if (!dir) return;
     NSDateFormatter *day = [[NSDateFormatter alloc] init];
     day.dateFormat = @"yyyyMMdd";
+    // 宿主和各 LiveProcess 分文件追加, 进程内锁不承担跨进程的 seek/write 同步.
+    // 旧 console-YYYYMMDD.log 保留, UI 仍按 .log 兼容读取.
     NSString *path = [dir stringByAppendingPathComponent:
-                      [NSString stringWithFormat:@"console-%@.log", [day stringFromDate:[NSDate date]]]];
+                      [NSString stringWithFormat:@"console-%@-pid%d.log",
+                       [day stringFromDate:[NSDate date]], (int)getpid()]];
 
     pthread_mutex_lock(&gTDLogLock);
     NSFileManager *fm = [NSFileManager defaultManager];
-    NSDictionary *attrs = [fm attributesOfItemAtPath:path error:nil];
-    if ([attrs[NSFileSize] unsignedLongLongValue] > 512 * 1024) {
-        [fm removeItemAtPath:path error:nil];
-    }
     NSString *line = [NSString stringWithFormat:@"%@ %@\n", TDLogTimestamp(), message];
     NSData *data = [line dataUsingEncoding:NSUTF8StringEncoding];
     if (![fm fileExistsAtPath:path]) {
@@ -154,9 +153,9 @@ static void TDWriteSignalCrash(int sig) {
     struct tm tm;
     localtime_r(&tv.tv_sec, &tm);
     char path[PATH_MAX];
-    snprintf(path, sizeof(path), "%s/crash-%04d%02d%02d-%02d%02d%02d-sig%d.log",
+    snprintf(path, sizeof(path), "%s/crash-%04d%02d%02d-%02d%02d%02d-pid%d-sig%d.log",
              dir, tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
-             tm.tm_hour, tm.tm_min, tm.tm_sec, sig);
+             tm.tm_hour, tm.tm_min, tm.tm_sec, (int)getpid(), sig);
     int fd = open(path, O_CREAT | O_WRONLY | O_TRUNC, 0644);
     if (fd < 0) return;
     char header[160];
@@ -177,9 +176,9 @@ static void TDSignalHandler(int sig) {
 static void TDExceptionHandler(NSException *exception) {
     NSString *dir = TDConsoleLogDirectory();
     if (dir) {
-        NSString *name = [NSString stringWithFormat:@"crash-%@.log",
+        NSString *name = [NSString stringWithFormat:@"crash-%@-pid%d.log",
                           [[TDLogTimestamp() stringByReplacingOccurrencesOfString:@" " withString:@"-"]
-                           stringByReplacingOccurrencesOfString:@":" withString:@""]];
+                           stringByReplacingOccurrencesOfString:@":" withString:@""], (int)getpid()];
         NSArray<NSString *> *symbols = exception.callStackSymbols ?: @[];
         NSString *body = [NSString stringWithFormat:@"exception: %@\nreason: %@\n\n%@\n",
                           exception.name ?: @"(nil)", exception.reason ?: @"(nil)",

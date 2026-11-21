@@ -70,7 +70,7 @@ struct IManagerRootView: View {
                 NavigationLink {
                     TDAudioInputSettingsView()
                 } label: {
-                    Label("修复音频输入", systemImage: "mic.badge.plus")
+                    Label("音频会话诊断", systemImage: "waveform")
                 }
             } header: {
                 Text("实验性")

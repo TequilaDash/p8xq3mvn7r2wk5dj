@@ -260,83 +260,34 @@ void overwriteExecPath(const char *newExecPath) {
 }
 
 static void *getAppEntryPoint(void *handle) {
-    uint32_t entryoff = 0;
+    if (!handle) return NULL;
+
     const struct mach_header_64 *header = (struct mach_header_64 *)getGuestAppHeader();
-    uint8_t *imageHeaderPtr = (uint8_t*)header + sizeof(struct mach_header_64);
-    struct load_command *command = (struct load_command *)imageHeaderPtr;
-    for(int i = 0; i < header->ncmds; ++i) {
-        if(command->cmd == LC_MAIN) {
-            struct entry_point_command ucmd = *(struct entry_point_command *)imageHeaderPtr;
-            entryoff = ucmd.entryoff;
-            break;
-        }
-        imageHeaderPtr += command->cmdsize;
-        command = (struct load_command *)imageHeaderPtr;
+    if (!header || header->magic != MH_MAGIC_64 || header->sizeofcmds > (16U * 1024U * 1024U)) {
+        return NULL;
     }
-    assert(entryoff > 0);
-    return (void *)header + entryoff;
+
+    uint8_t *commands = (uint8_t *)header + sizeof(struct mach_header_64);
+    uint8_t *commandsEnd = commands + header->sizeofcmds;
+    struct load_command *command = (struct load_command *)commands;
+    for (uint32_t i = 0; i < header->ncmds; ++i) {
+        if ((uint8_t *)command + sizeof(struct load_command) > commandsEnd ||
+            command->cmdsize < sizeof(struct load_command) ||
+            (uint8_t *)command + command->cmdsize > commandsEnd) {
+            return NULL;
+        }
+        if (command->cmd == LC_MAIN && command->cmdsize >= sizeof(struct entry_point_command)) {
+            struct entry_point_command entry = *(struct entry_point_command *)command;
+            if (entry.entryoff == 0) return NULL;
+            return (void *)header + entry.entryoff;
+        }
+        command = (struct load_command *)((uint8_t *)command + command->cmdsize);
+    }
+    return NULL;
 }
 
 
-// SecurityPresets.plist 是**签名资源**: 改写它就与代码签名里的资源哈希不符,
-// 检测器据此判"权限配置文件被篡改". 历史上两条路都是死路:
-//   · 读盘时改写字典 (1.1.50 及以前) -> 小红书 discover 的 plist 解析循环递归爆栈
-//     (LiveProcess-2026-11-18-211701.ips, 与 2026-11-20-170705.ips 同型)
-//   · 写盘时改写 (1.1.47-1.1.55) -> 直接被判篡改 (用户实测红项一直存在)
-// 现在: **不碰这个文件**. 装 App 时宿主已把原件备份成
-// .td-original.SecurityPresets.plist; 这里若发现文件被旧版本改写过, 就用原件
-// 覆盖回去, 让访客读到出厂原样. 上游 LiveContainer 也从不改写它.
-// 代价: secureMainBundleIdentifiers / secureMainExecutableMachOHashes /
-// secureEntitlementKeys 这三项基线不再被我们调整 —— 它们由 App 自己的出厂
-// plist 提供, 与上游行为一致.
-static void LCAdaptSecurityPresets(NSString *bundlePath, NSString *guestId, NSString *execName) {
-    (void)guestId;
-    (void)execName;
-    if (!bundlePath) return;
-    NSFileManager *fm = NSFileManager.defaultManager;
-    NSString *path = [bundlePath stringByAppendingPathComponent:@"SecurityPresets.plist"];
-    NSString *backup = [bundlePath stringByAppendingPathComponent:@".td-original.SecurityPresets.plist"];
 
-    // 1) 还原被旧版本改写的 SecurityPresets.plist
-    if ([fm fileExistsAtPath:backup] && [fm fileExistsAtPath:path]) {
-        NSData *orig = [NSData dataWithContentsOfFile:backup];
-        NSData *cur = [NSData dataWithContentsOfFile:path];
-        if (orig && cur && ![orig isEqualToData:cur]) {
-            if ([orig writeToFile:path atomically:YES]) {
-                NSLog(@"[LC] restored original SecurityPresets.plist (was modified by an older build)");
-            }
-        }
-    }
-
-    // 2) 修复 1.1.47-1.1.55 留下的损坏: 那几个版本在"原件与当前都缺失"时会伪造一个
-    // 0 字节 embedded.mobileprovision, 并把 0 字节副本存成 .td-original. 设备上
-    // 这些文件还在, 检测器读到 0 字节的描述文件 -> 判"应用程序分发配置文件被篡改".
-    // 现在: 当前文件为空但备份有内容时, 用备份覆盖回去(恢复真实描述文件);
-    // 两者都空时把当前删掉, 让它回到"没有描述文件"的出厂状态, 与上游一致.
-    NSString *profileBackup = [bundlePath stringByAppendingPathComponent:@".td-original.mobileprovision"];
-    NSString *profileCurrent = [bundlePath stringByAppendingPathComponent:@"embedded.mobileprovision"];
-    if (![fm fileExistsAtPath:profileBackup] && [fm fileExistsAtPath:profileCurrent]) {
-        [fm copyItemAtPath:profileCurrent toPath:profileBackup error:nil];
-    }
-    if (![fm fileExistsAtPath:profileCurrent] && [fm fileExistsAtPath:profileBackup]) {
-        [fm copyItemAtPath:profileBackup toPath:profileCurrent error:nil];
-    }
-    if ([fm fileExistsAtPath:profileCurrent]) {
-        NSDictionary *curAttr = [fm attributesOfItemAtPath:profileCurrent error:nil];
-        unsigned long long curSize = [curAttr fileSize];
-        NSDictionary *bakAttr = [fm attributesOfItemAtPath:profileBackup error:nil];
-        unsigned long long bakSize = [bakAttr fileSize];
-        if (curSize == 0 && bakSize > 0) {
-            [fm removeItemAtPath:profileCurrent error:nil];
-            [fm copyItemAtPath:profileBackup toPath:profileCurrent error:nil];
-            NSLog(@"[LC] restored empty embedded.mobileprovision from backup (size=%llu)", bakSize);
-        } else if (curSize == 0 && bakSize == 0) {
-            [fm removeItemAtPath:profileCurrent error:nil];
-            [fm removeItemAtPath:profileBackup error:nil];
-            NSLog(@"[LC] removed fabricated empty embedded.mobileprovision");
-        }
-    }
-}
 static void LCEnsureOriginalInfoPlistBackup(NSString* bundlePath,
                                             NSString* knownGuestId) {
     NSFileManager* fm = NSFileManager.defaultManager;
@@ -361,7 +312,6 @@ static void LCEnsureOriginalInfoPlistBackup(NSString* bundlePath,
         [dict writeBinToFile:backupPath atomically:YES];
     }
 }
-
 static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContainer, int argc, char *argv[]) {
     NSString *appError = nil;
     if([[lcUserDefaults objectForKey:@"LCWaitForDebugger"] boolValue]) {
@@ -407,7 +357,6 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
     
     if([guestAppInfo[@"doUseLCBundleId"] boolValue] ) {
         NSMutableDictionary* infoPlist = [NSMutableDictionary dictionaryWithContentsOfFile:[NSString stringWithFormat:@"%@/Info.plist", bundlePath]];
-        LCEnsureOriginalInfoPlistBackup(bundlePath, infoPlist[@"CFBundleIdentifier"]);
         CFErrorRef error = NULL;
         void* taskSelf = SecTaskCreateFromSelf(NULL);
         CFTypeRef value = taskSelf ? SecTaskCopyValueForEntitlement(taskSelf, CFSTR("application-identifier"), &error) : NULL;
@@ -451,7 +400,7 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
         [lcUserDefaults removeObjectForKey:@"hostUrlScheme"];
     }
     
-    NSError *error;
+    NSError *error = nil;
 
     // Setup tweak loader
     NSString *tweakFolder = nil;
@@ -517,7 +466,6 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
     } else {
         lcGuestAppId = appBundle.bundleIdentifier;
     }
-    LCAdaptSecurityPresets(bundlePath, lcGuestAppId, appBundle.executablePath.lastPathComponent);
     NSBundleGuestHooksInit();
 
     // Overwrite home and tmp path
@@ -642,10 +590,6 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
     NSString *tdFlagPath = tdHostDocuments ? [tdHostDocuments stringByAppendingPathComponent:@"TDGlobalHide"] : nil;
     NSString *tdGlobalValue = tdFlagPath ? [NSString stringWithContentsOfFile:tdFlagPath encoding:NSUTF8StringEncoding error:nil] : nil;
     BOOL tdFileGlobalHide = [tdGlobalValue isEqualToString:@"1"];
-    // app group defaults 是宿主与 LiveProcess 扩展都能读到的地方. Documents
-    // 标志文件只存在于宿主沙盒: 多任务访客跑在扩展进程里, HOME 是扩展沙盒,
-    // 构造函数捕获到的 Documents 路径里没有 TDGlobalHide -> 全局隐藏对多任务
-    // 永远读到 false (用户实测"开了和不开一样"、"多任务与全屏环境不一致").
     BOOL tdSharedGlobalHide = [lcSharedDefaults boolForKey:@"TDGlobalHide"];
     BOOL tdPayloadGlobalHide = getenv("TD_GLOBAL_HIDE") && getenv("TD_GLOBAL_HIDE")[0] == '1';
     BOOL tdGlobalHide = tdFileGlobalHide || tdSharedGlobalHide || tdPayloadGlobalHide;
@@ -673,8 +617,7 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
     litehook_rebind_symbol(LITEHOOK_REBIND_GLOBAL, NSSetUncaughtExceptionHandler, hook_do_nothing, nil);
     
     BOOL hookDlopen = !isSharedBundle && LCSharedUtils.certificatePassword && isLiveProcess;
-    // 环境门控默认开启: 用户关掉"隐藏"只是不希望裁剪 dyld 清单, 不应连带
-    // 把 sysctl/SecTask/csops/proc 的伪值也关掉. per-app 显式配置优先.
+    // Per-guest gates are replaced on each launch because the host process is resident.
     id tdSysctlValue = guestAppInfo[@"sysctlSpoof"];
     id tdSecTaskValue = guestAppInfo[@"secTaskSpoof"];
     id tdCsopsValue = guestAppInfo[@"csopsSpoof"];
@@ -683,21 +626,12 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
     BOOL tdSecTaskSpoof = gTDEnvSpoofGlobal && (tdGlobalHide || (tdSecTaskValue ? [tdSecTaskValue boolValue] : YES));
     BOOL tdCsopsSpoof = gTDEnvSpoofGlobal && (tdGlobalHide || (tdCsopsValue ? [tdCsopsValue boolValue] : YES));
     BOOL tdProcSpoof = gTDEnvSpoofGlobal && (tdGlobalHide || (tdProcValue ? [tdProcValue boolValue] : YES));
-    // This process hosts multiple guests; every launch must replace the previous
-    // guest's gates instead of inheriting them from the resident process.
     setenv("TD_SYSCTL_SPOOF", tdSysctlSpoof ? "1" : "0", 1);
     setenv("TD_SECTASK_SPOOF", tdSecTaskSpoof ? "1" : "0", 1);
     setenv("TD_CSOPS_SPOOF", tdCsopsSpoof ? "1" : "0", 1);
     setenv("TD_PROC_SPOOF", tdProcSpoof ? "1" : "0", 1);
-    // TD_DYLD_TRIM 此前只有读端 (HideShim 的 TDVDyldTrimEnabled), 从未有人写:
-    // 隐藏开关对 dyld 裁剪实际完全无效 (用户实测"开了和不开一样"). 这里按
-    // per-app 隐藏开关透传, 与其它门控同一生命周期.
     setenv("TD_DYLD_TRIM", tdHideLiveContainer ? "1" : "0", 1);
-    if (![guestAppInfo[@"csopsKeepDebugged"] boolValue] || tdGlobalHide) {
-        setenv("TD_CSOPS_KEEP_DEBUGGED", "0", 1);
-    } else {
-        setenv("TD_CSOPS_KEEP_DEBUGGED", "1", 1);
-    }
+    setenv("TD_CSOPS_KEEP_DEBUGGED", (![guestAppInfo[@"csopsKeepDebugged"] boolValue] || tdGlobalHide) ? "0" : "1", 1);
     TDVRootInstallIfRequested();
     NSLog(@"[TDGlobalHide] gates hide=%d sysctl=%d sectask=%d csops=%d proc=%d", (int)tdHideLiveContainer,
           (int)tdSysctlSpoof, (int)tdSecTaskSpoof, (int)tdCsopsSpoof, (int)tdProcSpoof);
@@ -752,9 +686,15 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
     // 必须是真实镜像索引: 隐藏开启后 _dyld_image_count 已被重绑成可见数量,
     // 用它记录 dlopen 前位置会让 appMainImageIndex 偏移, 访客入口取错后立即终止.
     appMainImageIndex = LCRealImageCount();
-    __block void *appHandle = 0;
+    __block void *appHandle = NULL;
+    __block NSString *appLoadError = nil;
     void (^dlopenBlock)(void) = ^{
+        dlerror();
         appHandle = dlopen_nolock(appExecPath, RTLD_LAZY|RTLD_GLOBAL|RTLD_FIRST);
+        if (!appHandle) {
+            const char *loaderError = dlerror();
+            appLoadError = loaderError ? @(loaderError) : @"dlopen failed without an error description";
+        }
     };
     TDAppendLaunchLog([NSString stringWithFormat:@"dlopen start path=%s", appExecPath]);
     
@@ -766,20 +706,15 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
         dlopenBlock();
     }
 
-    appExecutableHandle = appHandle;
-    const char *dlerr = dlerror();
-    
     if (!appHandle || (uint64_t)appHandle > 0xf00000000000) {
-        if (dlerr) {
-            appError = @(dlerr);
-        } else {
-            appError = @"dlopen: an unknown error occurred";
-        }
+        appError = [NSString stringWithFormat:@"Could not load guest executable %s: %@",
+                    appExecPath, appLoadError ?: @"dlopen returned an invalid handle"];
         NSLog(@"[LCBootstrap] %@", appError);
-        TDAppendLaunchLog([NSString stringWithFormat:@"dlopen failed: %@", appError]);
+        TDAppendLaunchLog(appError);
         *path = oldPath;
         return appError;
     }
+    appExecutableHandle = appHandle;
 
     // 现在访客确实在了镜像表里; 用路径比对拿到真实索引, 不再依赖"dlopen 前数量".
     uint32_t resolvedGuestIndex = LCGuestImageIndexForPath(appExecPath);
@@ -787,6 +722,9 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
         appMainImageIndex = resolvedGuestIndex;
     }
     LCRebuildImageRemap();
+#if !(TARGET_OS_SIMULATOR && defined(__x86_64__))
+    LCSampleGuestImageMap(appExecPath, resolvedGuestIndex);
+#endif
     NSLog(@"[LCBootstrap] guest image index=%u total=%u", appMainImageIndex, LCRealImageCount());
     TDAppendLaunchLog([NSString stringWithFormat:@"guest index=%u total=%u path=%s",
                        appMainImageIndex, LCRealImageCount(), appExecPath]);
@@ -813,8 +751,9 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
     [NSUserDefaults performSelector:@selector(initialize)];
 
     // Attempt to load the bundle. 32-bit bundle will always fail because of 32-bit main executable, so ignore it
+    error = nil;
     if (!is32bit && ![appBundle loadAndReturnError:&error]) {
-        appError = error.localizedDescription;
+        appError = error.localizedDescription ?: @"The guest bundle failed to load without an error description.";
         NSLog(@"[LCBootstrap] loading bundle failed: %@", error);
         TDAppendLaunchLog([NSString stringWithFormat:@"bundle load failed: %@", appError]);
         *path = oldPath;
@@ -826,9 +765,9 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
     // Find main()
     appMain = getAppEntryPoint(appHandle);
     if (!appMain) {
-        appError = @"Could not find the main entry point";
-        NSLog(@"[LCBootstrap] %@", appError);
-        TDAppendLaunchLog([NSString stringWithFormat:@"entry point failed: %@", appError]);
+        appError = @"Could not find a valid guest LC_MAIN entry point";
+        NSLog(@"[LCBootstrap] %@ path=%s handle=%p", appError, appExecPath, appHandle);
+        TDAppendLaunchLog([NSString stringWithFormat:@"entry point failed path=%s handle=%p", appExecPath, appHandle]);
         *path = oldPath;
         return appError;
     }
@@ -1082,8 +1021,28 @@ int LiveContainerMain(int argc, char *argv[]) {
         }
     }
     
-    void *LiveContainerSwiftUIHandle = dlopen("@executable_path/Frameworks/LiveContainerSwiftUI.framework/LiveContainerSwiftUI", RTLD_LAZY);
-    NSCAssert(LiveContainerSwiftUIHandle, @"%s", dlerror());
+    NSString *swiftUIPath = [lcMainBundle.bundlePath stringByAppendingPathComponent:@"Frameworks/LiveContainerSwiftUI.framework/LiveContainerSwiftUI"];
+    dlerror();
+    void *LiveContainerSwiftUIHandle = dlopen(swiftUIPath.fileSystemRepresentation, RTLD_LAZY | RTLD_FIRST);
+    if (!LiveContainerSwiftUIHandle) {
+        const char *loaderError = dlerror();
+        NSString *appError = [NSString stringWithFormat:@"Could not load host UI framework %@: %s",
+                              swiftUIPath, loaderError ?: "dlopen failed without an error description"];
+        TDAppendLaunchLog(appError);
+        [lcUserDefaults setObject:appError forKey:@"error"];
+        return 1;
+    }
+
+    dlerror();
+    int (*LiveContainerSwiftUIMain)(void) = dlsym(LiveContainerSwiftUIHandle, "main");
+    if (!LiveContainerSwiftUIMain) {
+        const char *symbolError = dlerror();
+        NSString *appError = [NSString stringWithFormat:@"Could not resolve host UI entry main in %@: %s",
+                              swiftUIPath, symbolError ?: "dlsym returned a null entry without an error description"];
+        TDAppendLaunchLog(appError);
+        [lcUserDefaults setObject:appError forKey:@"error"];
+        return 1;
+    }
     
     if ([lcUserDefaults boolForKey:@"LCLoadTweaksToSelf"]) {
         NSString *tweakFolder = nil;
@@ -1102,7 +1061,6 @@ int LiveContainerMain(int argc, char *argv[]) {
         dlopen("@executable_path/Frameworks/TweakLoader.dylib", RTLD_LAZY);
     }
 
-    int (*LiveContainerSwiftUIMain)(void) = dlsym(LiveContainerSwiftUIHandle, "main");
     return LiveContainerSwiftUIMain();
 
 }

@@ -16,7 +16,7 @@ static const CGFloat LCHomeButtonDimmedAlpha = 0.4;
 // How far a flung button carries on, in seconds of its speed when let go.
 static const CGFloat LCHomeButtonFlingCarry = 0.12;
 
-@interface LCHomeButtonViewController ()
+@interface LCHomeButtonViewController () <UIGestureRecognizerDelegate>
 @property (nonatomic) LCHomeButtonView *button;
 // Where the button was moved to, or nil while it rests in its first place,
 // which follows an iPad as it's turned.
@@ -31,8 +31,11 @@ static const CGFloat LCHomeButtonFlingCarry = 0.12;
 // Idle dimming is optional and its final opacity is user-configurable.
 @property (nonatomic) BOOL dimEnabled;
 @property (nonatomic) CGFloat dimAlpha;
-// 上一次单击的时间, 用于区分双击; 双击打开宿主的堆叠后台界面.
-@property (nonatomic, strong) NSDate *lastPressDate;
+@property (nonatomic) UIScreenEdgePanGestureRecognizer *leftEdgePan;
+@property (nonatomic) UIScreenEdgePanGestureRecognizer *rightEdgePan;
+@property (nonatomic) BOOL edgeSwipeFired;
+// Native single-tap recognition waits for the same double-tap recognizer to
+// fail. There is no shorter independent timer that can leave the app first.
 - (nullable UIWindow *)appWindow;
 @end
 
@@ -60,12 +63,50 @@ static const CGFloat LCHomeButtonFlingCarry = 0.12;
                               LCHomeButtonView.diameter,
                               LCHomeButtonView.diameter);
     [button addTarget:self action:@selector(buttonTouchedDown) forControlEvents:UIControlEventTouchDown];
-    [button addTarget:self action:@selector(buttonPressed) forControlEvents:UIControlEventTouchUpInside];
+    UITapGestureRecognizer *singleTap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(buttonPressed)];
+    UITapGestureRecognizer *doubleTap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(buttonDoubleTapped)];
+    doubleTap.numberOfTapsRequired = 2;
+    [singleTap requireGestureRecognizerToFail:doubleTap];
+    [button addGestureRecognizer:singleTap];
+    [button addGestureRecognizer:doubleTap];
     [button addTarget:self action:@selector(buttonLetGo) forControlEvents:UIControlEventTouchUpOutside | UIControlEventTouchCancel];
     [button addGestureRecognizer:[[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(buttonDragged:)]];
     [self.view addSubview:button];
+    self.leftEdgePan = [self edgePanWithEdge:UIRectEdgeLeft];
+    self.rightEdgePan = [self edgePanWithEdge:UIRectEdgeRight];
     [self reloadSettings];
 }
+
+- (UIScreenEdgePanGestureRecognizer *)edgePanWithEdge:(UIRectEdge)edge {
+    UIScreenEdgePanGestureRecognizer *pan = [[UIScreenEdgePanGestureRecognizer alloc] initWithTarget:self action:@selector(edgePanned:)];
+    pan.edges = edge;
+    pan.cancelsTouchesInView = NO;
+    pan.delegate = self;
+    return pan;
+}
+
+- (BOOL)gestureRecognizerShouldBegin:(UIGestureRecognizer *)gestureRecognizer {
+    if ([gestureRecognizer isKindOfClass:UIScreenEdgePanGestureRecognizer.class]) {
+        return self.edgeSwipeEnabled && self.edgeHandler != nil;
+    }
+    return YES;
+}
+
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)gestureRecognizer shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)otherGestureRecognizer {
+    return YES;
+}
+
+- (void)edgePanned:(UIScreenEdgePanGestureRecognizer *)pan {
+    if (!self.edgeSwipeEnabled) return;
+    if (pan.state == UIGestureRecognizerStateBegan) self.edgeSwipeFired = NO;
+    if (pan.state != UIGestureRecognizerStateChanged && pan.state != UIGestureRecognizerStateEnded) return;
+    CGPoint travel = [pan translationInView:self.view];
+    if (!self.edgeSwipeFired && travel.y > 80 && travel.y > fabs(travel.x)) {
+        self.edgeSwipeFired = YES;
+        if (self.edgeHandler) self.edgeHandler();
+    }
+}
+
 
 
 
@@ -89,11 +130,31 @@ static const CGFloat LCHomeButtonFlingCarry = 0.12;
     // “保持现状”沿用原有主屏按键开关；只有“始终显示”才无视原有开关。
     self.buttonHidden = always ? NO : !legacyShow;
     self.edgeSwipeEnabled = [LCHomeButtonSetting(@"TDSideSwipeMode") isEqualToString:@"always"];
-    self.dimEnabled = LCHomeButtonBoolSetting(@"TDAssistiveTouchIdleDim", YES);
+    BOOL dimEnabled = LCHomeButtonBoolSetting(@"TDAssistiveTouchIdleDim", YES);
     NSNumber *alpha = LCHomeButtonNumberSetting(@"TDAssistiveTouchIdleAlpha");
-    self.dimAlpha = alpha ? MAX(0.15, MIN(1.0, alpha.doubleValue)) : 0.4;
+    CGFloat dimAlpha = alpha ? MAX(0.15, MIN(1.0, alpha.doubleValue)) : LCHomeButtonDimmedAlpha;
+    BOOL dimChanged = self.dimEnabled != dimEnabled || self.dimAlpha != dimAlpha;
+    self.dimEnabled = dimEnabled;
+    self.dimAlpha = dimAlpha;
     self.button.hidden = self.buttonHidden;
-    if (!self.dimEnabled) self.button.alpha = 1;
+    // A clear handle in the overlay still wins hit testing and swallows every
+    // guest touch in its strip. Observe the real app window instead, so taps
+    // and nonmatching swipes continue to reach the guest's own views.
+    UIWindow *appWindow = self.appWindow;
+    if (self.leftEdgePan.view != appWindow) {
+        [self.leftEdgePan.view removeGestureRecognizer:self.leftEdgePan];
+        [appWindow addGestureRecognizer:self.leftEdgePan];
+    }
+    if (self.rightEdgePan.view != appWindow) {
+        [self.rightEdgePan.view removeGestureRecognizer:self.rightEdgePan];
+        [appWindow addGestureRecognizer:self.rightEdgePan];
+    }
+    self.leftEdgePan.enabled = self.edgeSwipeEnabled;
+    self.rightEdgePan.enabled = self.edgeSwipeEnabled;
+    if (dimChanged) {
+        [self brighten];
+        [self dimSoon];
+    }
     [self.view setNeedsLayout];
     [self.view layoutIfNeeded];
 }
@@ -186,28 +247,13 @@ static const CGFloat LCHomeButtonFlingCarry = 0.12;
 - (void)buttonPressed {
     [self dimSoon];
     [[[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleLight] impactOccurred];
-    // 双击 -> 打开宿主侧的堆叠后台界面(图五); 单击 -> 原来的返回宿主.
-    // 单击动作延迟一小段时间再执行, 以便区分双击.
-    NSDate *now = [NSDate date];
-    if (self.lastPressDate && [now timeIntervalSinceDate:self.lastPressDate] < 0.35) {
-        // 第二次点击: 双击成立, 取消待执行的单击.
-        [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(performSinglePress) object:nil];
-        self.lastPressDate = nil;
-        [[[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleMedium] impactOccurred];
-        if (self.doubleTapHandler) {
-            self.doubleTapHandler();
-        }
-        return;
-    }
-    self.lastPressDate = now;
-    [self performSelector:@selector(performSinglePress) withObject:nil afterDelay:0.28];
+    if (self.pressHandler) self.pressHandler();
 }
 
-- (void)performSinglePress {
-    self.lastPressDate = nil;
-    if (self.pressHandler) {
-        self.pressHandler();
-    }
+- (void)buttonDoubleTapped {
+    [self dimSoon];
+    [[[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleMedium] impactOccurred];
+    if (self.doubleTapHandler) self.doubleTapHandler();
 }
 
 // Follows the finger, then lets the button settle against the edge nearest
@@ -269,15 +315,15 @@ static const CGFloat LCHomeButtonFlingCarry = 0.12;
 }
 
 - (void)dimSoon {
+    NSUInteger generation = ++self.dimmingGeneration;
     if (!self.dimEnabled) {
         self.button.alpha = 1;
         return;
     }
-    NSUInteger generation = ++self.dimmingGeneration;
     __weak LCHomeButtonViewController *weakSelf = self;
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(LCHomeButtonDimDelay * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         LCHomeButtonViewController *controller = weakSelf;
-        if (!controller || controller.dimmingGeneration != generation || controller.isDragging || controller.button.isTracking) {
+        if (!controller || !controller.dimEnabled || controller.dimmingGeneration != generation || controller.isDragging || controller.button.isTracking) {
             return;
         }
         [UIView animateWithDuration:0.5

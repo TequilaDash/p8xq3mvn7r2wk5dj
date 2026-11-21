@@ -8,6 +8,7 @@
 #import <dlfcn.h>
 #import <UIKit/UIKit.h>
 #import <mach-o/dyld.h>
+#include <stdlib.h>
 #import "../LiveContainer/utils.h"
 #import "../LiveContainer/LCSharedUtils.h"
 #import <objc/message.h>
@@ -40,6 +41,29 @@ static NSDictionary *retrievedAppInfo;
 
 extern int LiveContainerMain(int argc, char *argv[]);
 static char **_envp, **_apple = NULL;
+
+static void finishLiveProcess(int status, NSString *error) __attribute__((noreturn));
+static void finishLiveProcess(int status, NSString *error) {
+    NSExtensionContext *context = LiveProcessHandler.extensionContext;
+    if (error) {
+        TDConsoleLog(@"[LiveProcess] %@", error);
+        [context cancelRequestWithError:[NSError errorWithDomain:@"LiveProcess" code:status
+                                                      userInfo:@{NSLocalizedDescriptionKey: error}]];
+    } else {
+        TDConsoleLog(@"[LiveProcess] payload finished with code %d", status);
+        [context completeRequestReturningItems:@[] completionHandler:nil];
+    }
+    if (context) {
+        // Give the request result a chance to reach the host, but never return
+        // through _xpc_objc_uimain: libxpc treats that as a SIGTRAP.
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 100 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{
+            exit(status);
+        });
+        CFRunLoopRun();
+    }
+    exit(status);
+}
+
 int LiveProcessMain(int argc, char *argv[]) {
     // LCBootstrap 稍后也会写这个环境变量; 这里先写是为了让最早的信号安装
     // 就能看到开关, 避免开关开启后第一个崩溃窗口没有采集器.
@@ -56,20 +80,44 @@ int LiveProcessMain(int argc, char *argv[]) {
     TDConsoleLog(@"[LiveProcess] main entered");
     // Let NSExtensionContext initialize, once it's done it will call CFRunLoopStop
     CFRunLoopRun();
-    // Ensure app info is delivered
+    // Ensure app info is delivered before dereferencing it.
     NSDictionary *appInfo = LiveProcessHandler.retrievedAppInfo;
-    NSCAssert(appInfo, @"Failed to retrieve app info");
-    
-    // Check if we received a request to execute a custom payload
+    if (![appInfo isKindOfClass:NSDictionary.class]) {
+        finishLiveProcess(1, @"Failed to retrieve app info.");
+    }
+
+    // Check if we received a request to execute a custom payload.
     NSString *customPayloadDylib = appInfo[@"customPayloadDylib"];
-    if(customPayloadDylib) {
-        void *handle = dlopen(customPayloadDylib.fileSystemRepresentation, RTLD_LAZY);
-        NSCAssert(appInfo, @"Failed to load custom payload dylib at path: %@", customPayloadDylib);
-        
+    if (customPayloadDylib) {
+        if (![customPayloadDylib isKindOfClass:NSString.class] || customPayloadDylib.length == 0) {
+            finishLiveProcess(1, @"The custom payload path is not a nonempty string.");
+        }
         NSString *customPayloadEntry = appInfo[@"customPayloadEntry"];
-        NSCAssert(customPayloadEntry, @"Missing customPayloadEntry");
+        if (![customPayloadEntry isKindOfClass:NSString.class] || customPayloadEntry.length == 0) {
+            finishLiveProcess(1, [NSString stringWithFormat:@"Custom payload entry is missing for %@.", customPayloadDylib]);
+        }
+
+        dlerror();
+        void *handle = dlopen(customPayloadDylib.fileSystemRepresentation, RTLD_LAZY | RTLD_FIRST);
+        if (!handle) {
+            const char *loaderError = dlerror();
+            finishLiveProcess(1, [NSString stringWithFormat:@"Could not load custom payload %@: %s",
+                                  customPayloadDylib, loaderError ?: "dlopen failed without an error description"]);
+        }
+
+        dlerror();
         int (*payloadEntry)(int, char **, char **, char **) = dlsym(handle, customPayloadEntry.UTF8String);
-        return payloadEntry(argc, argv, _envp, _apple);
+        if (!payloadEntry) {
+            const char *symbolError = dlerror();
+            NSString *payloadError = [NSString stringWithFormat:@"Could not resolve custom payload entry %@ in %@: %s",
+                                      customPayloadEntry, customPayloadDylib,
+                                      symbolError ?: "dlsym returned a null entry without an error description"];
+            dlclose(handle);
+            finishLiveProcess(1, payloadError);
+        }
+        int status = payloadEntry(argc, argv, _envp, _apple);
+        NSString *payloadError = status == 0 ? nil : [NSString stringWithFormat:@"Custom payload %@ returned code %d.", customPayloadDylib, status];
+        finishLiveProcess(status, payloadError);
     }
     
     NSLog(@"Retrieved app info: %@", appInfo);
@@ -78,12 +126,9 @@ int LiveProcessMain(int argc, char *argv[]) {
     // 便于直接对比两种模式下访客看到的镜像差异.
     setenv("TD_LAUNCH_MODE", "multitask", 1);
     // Carry per-app environment gates into the separate extension process.
-    // 全局隐藏开关住在 app group defaults 里 (宿主与扩展都能读); appInfo 里的
-    // tdGlobalHide 从未被写入, 过去这里恒为 NO -> 多任务访客永远拿到"未开启
-    // 全局隐藏", 与全屏访客环境不一致 (用户实测"开了和不开一样").
+    // Global hide state lives in the app-group defaults shared by host and extension.
     NSUserDefaults *lcShared = [[NSUserDefaults alloc] initWithSuiteName:[LCSharedUtils appGroupID]];
     BOOL tdGlobalHide = [appInfo[@"tdGlobalHide"] boolValue] || [lcShared boolForKey:@"TDGlobalHide"];
-    // "环境伪值"总闸: 宿主 iManager 的开关住在 app group 里, 扩展进程同样读得到.
     NSNumber *envSpoofValue = [lcShared objectForKey:@"TDEnvSpoof"];
     BOOL tdEnvSpoofGlobal = envSpoofValue ? envSpoofValue.boolValue : YES;
     if (tdGlobalHide) {
@@ -100,32 +145,19 @@ int LiveProcessMain(int argc, char *argv[]) {
     };
     for (size_t i = 0; i < sizeof(gateMap) / sizeof(gateMap[0]); i++) {
         NSNumber *value = [appInfo[gateMap[i].infoKey] isKindOfClass:NSNumber.class] ? appInfo[gateMap[i].infoKey] : nil;
-        BOOL enabled;
-        if (strcmp(gateMap[i].envKey, "TD_CSOPS_KEEP_DEBUGGED") == 0) {
-            enabled = tdGlobalHide ? NO : (value ? value.boolValue : NO);
-        } else {
-            enabled = tdGlobalHide || (value ? value.boolValue : YES);
-        }
-        // "环境伪值"总闸在 app group 里 (宿主与扩展都能读): 关掉时四个伪值门控
-        // 全部关闭, 与 LCBootstrap 全屏路径的 gTDEnvSpoofGlobal 语义一致.
-        if (!tdEnvSpoofGlobal) {
-            enabled = NO;
-        }
+        BOOL enabled = strcmp(gateMap[i].envKey, "TD_CSOPS_KEEP_DEBUGGED") == 0
+            ? (tdGlobalHide ? NO : (value ? value.boolValue : NO))
+            : (tdGlobalHide || (value ? value.boolValue : YES));
+        if (!tdEnvSpoofGlobal) enabled = NO;
         setenv(gateMap[i].envKey, enabled ? "1" : "0", 1);
     }
-    // per-app 隐藏开关同样没进 appInfo 的门控表: 多任务访客的 dyld 裁剪因此
-    // 与全屏不一致. LCSharedUtils 里 hideLiveContainer 由 LCBootstrap 直接读
-    // 访客 bundle 的 LCAppInfo.plist, 这里只需要把裁剪总闸传到访客进程.
-    {
-        NSNumber *hideNumber = [appInfo[@"hideLiveContainer"] isKindOfClass:NSNumber.class] ? appInfo[@"hideLiveContainer"] : nil;
-        BOOL hide = hideNumber ? hideNumber.boolValue : NO;
-        if (!hide) {
-            // appInfo 里没有该键时, 用 app group 里宿主写入的值兜底.
-            NSNumber *sharedHide = [lcShared objectForKey:@"TDHideLiveContainer"];
-            hide = sharedHide ? sharedHide.boolValue : NO;
-        }
-        setenv("TD_DYLD_TRIM", hide ? "1" : "0", 1);
+    NSNumber *hideNumber = [appInfo[@"hideLiveContainer"] isKindOfClass:NSNumber.class] ? appInfo[@"hideLiveContainer"] : nil;
+    BOOL hide = hideNumber ? hideNumber.boolValue : NO;
+    if (!hide) {
+        NSNumber *sharedHide = [lcShared objectForKey:@"TDHideLiveContainer"];
+        hide = sharedHide ? sharedHide.boolValue : NO;
     }
+    setenv("TD_DYLD_TRIM", hide ? "1" : "0", 1);
     setenv("LP_HOME_PATH", getenv("HOME"), 1);
     const char *overrideHomePath = [appInfo[@"lcHomePath"] fileSystemRepresentation];
     if(overrideHomePath) setenv("LC_HOME_PATH", overrideHomePath, 1);
@@ -161,7 +193,9 @@ int LiveProcessMain(int argc, char *argv[]) {
         [bookmarkedUrls[i] startAccessingSecurityScopedResource];
     }
 
-    return LiveContainerMain(argc, argv);
+    int status = LiveContainerMain(argc, argv);
+    NSString *launchError = status == 0 ? nil : [NSString stringWithFormat:@"LiveContainerMain returned code %d.", status];
+    finishLiveProcess(status, launchError);
 }
 
 // this is our fake UIApplicationMain called from _xpc_objc_uimain (xpc_main)
@@ -196,6 +230,12 @@ int NSExtensionMain(int argc, char *argv[], char *envp[], char *apple[]) {
     // call the real one
     _envp = envp;
     _apple = apple;
+    dlerror();
     int (*orig_NSExtensionMain)(int argc, char * argv[]) = dlsym(RTLD_NEXT, "NSExtensionMain");
+    if (!orig_NSExtensionMain) {
+        const char *symbolError = dlerror();
+        finishLiveProcess(1, [NSString stringWithFormat:@"Could not resolve the system NSExtensionMain entry: %s",
+                              symbolError ?: "dlsym returned a null entry without an error description"]);
+    }
     return orig_NSExtensionMain(argc, argv);
 }

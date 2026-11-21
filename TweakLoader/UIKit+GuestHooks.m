@@ -6,6 +6,7 @@
 #import "Localization.h"
 #import "HomeButton/LCHomeButtonController.h"
 #include <notify.h>
+#import <os/lock.h>
 
 UIInterfaceOrientation LCOrientationLock = UIInterfaceOrientationUnknown;
 NSMutableArray<NSString*>* LCSupportedUrlSchemes = nil;
@@ -543,6 +544,98 @@ static LCControlAppURLHandling LCHandleControlAppURL(NSURL *url, NSString** modi
     return LCControlAppURLHandlingStop;
 }
 
+// Re-entry and worker-thread queries use a locked geometry snapshot. UIKit
+// traversal is main-thread-only; never synchronously wait for the main queue.
+static __thread BOOL gHookStatusBarFrameEntered = NO;
+static os_unfair_lock gStatusBarFrameLock = OS_UNFAIR_LOCK_INIT;
+static CGRect gCachedStatusBarFrame = {{0, 0}, {0, 0}};
+static BOOL gStatusBarFrameRefreshPending = NO;
+
+static CGRect LCCachedGuestStatusBarFrame(void) {
+    os_unfair_lock_lock(&gStatusBarFrameLock);
+    CGRect frame = gCachedStatusBarFrame;
+    os_unfair_lock_unlock(&gStatusBarFrameLock);
+    return frame;
+}
+
+static CGRect LCCacheGuestStatusBarFrame(CGRect frame) {
+    os_unfair_lock_lock(&gStatusBarFrameLock);
+    gCachedStatusBarFrame = frame;
+    os_unfair_lock_unlock(&gStatusBarFrameLock);
+    return frame;
+}
+
+static CGRect LCGuestStatusBarFrame(UIApplication *application) {
+    // No defaults, safeAreaInsets, or UIApplication.statusBarFrame here:
+    // each can synchronously re-enter the swizzled selector.
+    if (gHookStatusBarFrameEntered) return LCCachedGuestStatusBarFrame();
+    gHookStatusBarFrameEntered = YES;
+    @try {
+        if (![NSThread isMainThread]) {
+            os_unfair_lock_lock(&gStatusBarFrameLock);
+            CGRect frame = gCachedStatusBarFrame;
+            BOOL shouldRefresh = !gStatusBarFrameRefreshPending;
+            gStatusBarFrameRefreshPending = YES;
+            os_unfair_lock_unlock(&gStatusBarFrameLock);
+            if (shouldRefresh) {
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    @try {
+                        LCGuestStatusBarFrame(application);
+                    } @finally {
+                        os_unfair_lock_lock(&gStatusBarFrameLock);
+                        gStatusBarFrameRefreshPending = NO;
+                        os_unfair_lock_unlock(&gStatusBarFrameLock);
+                    }
+                });
+            }
+            return frame;
+        }
+
+        UIWindow *keyWindow = nil;
+        UIWindowScene *keyScene = nil;
+        NSInteger bestPriority = -1;
+        for (UIScene *scene in application.connectedScenes) {
+            if (![scene isKindOfClass:UIWindowScene.class]) continue;
+            UISceneActivationState state = scene.activationState;
+            if (state != UISceneActivationStateForegroundActive &&
+                state != UISceneActivationStateForegroundInactive) continue;
+            UIWindowScene *candidateScene = (UIWindowScene *)scene;
+            UIWindow *candidateWindow = candidateScene.keyWindow;
+            BOOL hasKeyWindow = candidateWindow && !candidateWindow.hidden;
+            if (!hasKeyWindow) {
+                candidateWindow = nil;
+                for (UIWindow *window in candidateScene.windows) {
+                    if (window.hidden) continue;
+                    if (!candidateWindow || window.windowLevel == UIWindowLevelNormal) {
+                        candidateWindow = window;
+                    }
+                    if (window.windowLevel == UIWindowLevelNormal) break;
+                }
+            }
+            // Do not let an arbitrary scene's visible fallback beat another
+            // active scene's key window. Inactive scenes cover transitions.
+            NSInteger priority = (state == UISceneActivationStateForegroundActive ? 3 : 0)
+                + (hasKeyWindow ? 2 : (candidateWindow ? 1 : 0));
+            if (priority <= bestPriority) continue;
+            bestPriority = priority;
+            keyWindow = candidateWindow;
+            keyScene = candidateScene;
+            if (state == UISceneActivationStateForegroundActive && hasKeyWindow) break;
+        }
+
+        if (!keyScene) return LCCacheGuestStatusBarFrame(CGRectZero);
+        CGFloat width = keyWindow ? keyWindow.bounds.size.width : keyScene.coordinateSpace.bounds.size.width;
+        CGRect fallback = width > 0 ? CGRectMake(0, 0, width, 20) : CGRectZero;
+        // Publish this scene's current geometry before asking the manager:
+        // recursive queries must not receive the previous scene/rotation's rect.
+        LCCacheGuestStatusBarFrame(fallback);
+        CGRect frame = keyScene.statusBarManager.statusBarFrame;
+        return CGRectIsEmpty(frame) ? fallback : LCCacheGuestStatusBarFrame(frame);
+    } @finally {
+        gHookStatusBarFrameEntered = NO;
+    }
+}
+
 // Handler for AppDelegate
 @implementation UIApplication(LiveContainerHook)
 /// A touch beginning on the app brings its multitasking window to the front,
@@ -698,57 +791,9 @@ static BOOL gLCLegacyAppHooksInstalled = NO;
     return YES;
 }
 
-// In a virtual multitask window the guest scene has its status bar
-// disabled, so its status bar manager reports a zero frame; apps without a
-// scene delegate read UIApplication.statusBarFrame and lay out under the
-// host's own status bar. Answer the real device inset instead, WITHOUT
-// calling anything that re-enters this swizzle:
-//   UIApplication.statusBarFrame IS this hooked method — calling it here
-//   recursed 10k deep (LiveProcess-2026-11-19-161900.ips, RCT createView).
-// 1.1.55 的 fallback 取 keyWindow.safeAreaInsets.top 拿到真实高度(59pt), 但
-// **宽度仍用 UIScreen.mainScreen.bounds.width** —— 多任务窗口里访客的窗口比
-// 全屏窄, App 按全屏宽排版状态栏, 图四(唱吧)的状态栏图标因此被挤到右边.
-// 现在宽度也用访客自己的 keyWindow 宽度, 高度取该窗口的安全区顶部.
-// 1.1.54 的屏幕几何差(bounds - fixedCoordinateSpace)在 iOS 26 恒为 0, 不可用.
-static BOOL gHookStatusBarFrameEntered = NO;
+// A virtual scene may have no status bar; use its geometry, not the host screen.
 - (CGRect)hook_statusBarFrame {
-    if (gHookStatusBarFrameEntered) {
-        return CGRectZero;
-    }
-    gHookStatusBarFrameEntered = YES;
-    CGRect result = CGRectZero;
-    @try {
-    // 先找访客自己的 keyWindow: 它决定窗口宽度(状态栏按窗口宽排版)和安全区.
-    UIWindow *keyWin = nil;
-    UIWindowScene *keyScene = nil;
-    for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
-        if ([scene isKindOfClass:UIWindowScene.class] &&
-            scene.activationState == UISceneActivationStateForegroundActive) {
-            UIWindow *candidate = ((UIWindowScene *)scene).keyWindow;
-            if (candidate) {
-                keyWin = candidate;
-                keyScene = (UIWindowScene *)scene;
-                break;
-            }
-        }
-    }
-    if (keyScene) {
-        UIStatusBarManager *manager = keyScene.statusBarManager;
-        if (manager && !CGRectIsEmpty(manager.statusBarFrame)) {
-            result = manager.statusBarFrame;
-            return result;
-        }
-    }
-    CGFloat width = keyWin ? keyWin.bounds.size.width : UIScreen.mainScreen.bounds.size.width;
-    CGFloat height = keyWin ? keyWin.safeAreaInsets.top : 0;
-    if (height <= 0) {
-        height = 20;
-    }
-    result = CGRectMake(0, 0, width, height);
-    return result;
-    } @finally {
-        gHookStatusBarFrameEntered = NO;
-    }
+    return LCGuestStatusBarFrame(self);
 }
 
 @end

@@ -441,55 +441,41 @@ static NSDictionary* LCFileIdentity(NSString* path) {
 // without anything recording the value. So: our own record first, then the
 // original the switch kept, then the plist while it still says something that is
 // not the host, then the identity the guest's own provisioning profile claims.
-// Nil means nothing trustworthy is known and the caller has to decide.
+// A profile supplies only a claim. Nil means no concrete non-host ID was found.
 - (NSString*)originalBundleIdentifierForSigning {
     NSString* hostBundleId = NSBundle.mainBundle.bundleIdentifier;
     id recorded = _info[@"TDOriginalBundleIdentifier"];
-    if([recorded isKindOfClass:NSString.class] && [recorded length] > 0 && ![recorded isEqualToString:hostBundleId]) {
+    if([recorded isKindOfClass:NSString.class] && [recorded length] > 0 && ![recorded isEqualToString:hostBundleId] && [recorded rangeOfString:@"*"].location == NSNotFound) {
         return recorded;
     }
     NSString* found = nil;
     id keptByBundleIdSwitch = _info[@"LCOrignalBundleIdentifier"];
-    if([keptByBundleIdSwitch isKindOfClass:NSString.class] && [keptByBundleIdSwitch length] > 0 && ![keptByBundleIdSwitch isEqualToString:hostBundleId]) {
+    if([keptByBundleIdSwitch isKindOfClass:NSString.class] && [keptByBundleIdSwitch length] > 0 && ![keptByBundleIdSwitch isEqualToString:hostBundleId] && [keptByBundleIdSwitch rangeOfString:@"*"].location == NSNotFound) {
         found = keptByBundleIdSwitch;
     }
     if(!found) {
         id plistBundleId = _infoPlist[@"CFBundleIdentifier"];
-        if([plistBundleId isKindOfClass:NSString.class] && [plistBundleId length] > 0 && ![plistBundleId isEqualToString:hostBundleId]) {
+        if([plistBundleId isKindOfClass:NSString.class] && [plistBundleId length] > 0 && ![plistBundleId isEqualToString:hostBundleId] && [plistBundleId rangeOfString:@"*"].location == NSNotFound) {
             found = plistBundleId;
         }
     }
     if(!found) {
         found = [LCUtils guestBundleIdentifierFromProvisioningProfileInBundleAtPath:self.bundlePath];
     }
-    if([found isKindOfClass:NSString.class] && [found length] > 0) {
-        // Traceable from now on, whatever happens to Info.plist afterwards.
+    if([found isKindOfClass:NSString.class] && [found length] > 0 && ![found isEqualToString:hostBundleId]) {
+        // Retain the concrete identifier before Info.plist is rewritten.
         _info[@"TDOriginalBundleIdentifier"] = found;
         [self save];
         return found;
     }
+    if(recorded) {
+        // Older profile fallbacks could have cached the host ID or a wildcard.
+        [_info removeObjectForKey:@"TDOriginalBundleIdentifier"];
+        [self save];
+    }
     return nil;
 }
 
-// SecurityPresets.plist 是**签名资源**: 改写它就会与代码签名里的资源哈希不符,
-// 检测器据此判"权限配置文件被篡改". 但历史上只有两条路, 都是死路:
-//   · 读盘时改写字典 (1.1.50 及以前) -> 小红书 discover 的 plist 解析循环递归爆栈
-//     (LiveProcess-2026-11-18-211701.ips, 与 2026-11-20-170705.ips 同型)
-//   · 写盘时改写 (1.1.47 以后) -> 直接被判篡改
-// 正确做法: 装 App 时把原始 SecurityPresets.plist 备份成 .td-original.SecurityPresets.plist,
-// 之后**不改写**这个文件, 由访客读到原件. 这里做备份.
-- (void)ensureOriginalSecurityPresetsBackupForBundlePath:(NSString*)bundlePath {
-    NSFileManager* fm = [NSFileManager defaultManager];
-    NSString* plistPath = [bundlePath stringByAppendingPathComponent:@"SecurityPresets.plist"];
-    NSString* backupPath = [bundlePath stringByAppendingPathComponent:@".td-original.SecurityPresets.plist"];
-    if([fm fileExistsAtPath:backupPath]) {
-        return;
-    }
-    if(![fm fileExistsAtPath:plistPath]) {
-        return;
-    }
-    [fm copyItemAtPath:plistPath toPath:backupPath error:nil];
-}
 
 // Copies Info.plist before `doUseLCBundleId` or LCBootstrap rewrites its
 // bundle identifier. Existing backups may predate this feature (or be made
@@ -592,11 +578,6 @@ static NSDictionary* LCFileIdentity(NSString* path) {
         needPatch = true;
     }
     if (needPatch || forceSign) {
-        NSString *originalProfilePath = [appPath stringByAppendingPathComponent:@".td-original.mobileprovision"];
-        NSString *profilePath = [appPath stringByAppendingPathComponent:@"embedded.mobileprovision"];
-        if ([fm fileExistsAtPath:profilePath] && ![fm fileExistsAtPath:originalProfilePath]) {
-            [fm copyItemAtPath:profilePath toPath:originalProfilePath error:nil];
-        }
         if (needPatch) {
             // Anything below this line rewrites the executable, so the original
             // bytes have to be filed away first, together with the identifier the
@@ -604,9 +585,6 @@ static NSDictionary* LCFileIdentity(NSString* path) {
             [self ensureOriginalExecutableBackupForPath:execPath];
             [self ensureOriginalInfoPlistBackupForBundlePath:appPath
                                                 knownGuestId:_infoPlist[@"CFBundleIdentifier"]];
-            // SecurityPresets.plist 是签名资源, 改写即判篡改: 先留原件, 之后由
-            // 访客读到原件而不是我们改写过的版本.
-            [self ensureOriginalSecurityPresetsBackupForBundlePath:appPath];
             (void)[self originalBundleIdentifierForSigning];
             [self ensureOriginalInfoPlistBackupForBundlePath:appPath
                                                 knownGuestId:_info[@"TDOriginalBundleIdentifier"]];

@@ -116,10 +116,9 @@
     loaded = YES;
 }
 
-// A provisioning profile is a CMS blob with an XML plist inside; the identity the
-// app was published under lives in that plist's entitlements as
-// "<TEAM>.<bundle id>". Slicing the plist out of the bytes is all we need, and it
-// works on profiles we did not sign ourselves.
+// Read the application-identifier claim from the embedded profile's XML plist.
+// This does not verify the CMS signature or establish the original publishing
+// identity; a wildcard profile cannot identify a particular guest.
 static NSString* LCBundleIdentifierFromProvisioningProfileData(NSData* profileData) {
     if(profileData.length == 0) {
         return nil;
@@ -151,11 +150,11 @@ static NSString* LCBundleIdentifierFromProvisioningProfileData(NSData* profileDa
     }
     for(NSString* key in @[@"application-identifier", @"com.apple.application-identifier"]) {
         NSString* value = entitlements[key];
-        if(![value isKindOfClass:NSString.class]) {
+        if(![value isKindOfClass:NSString.class] || [value rangeOfString:@"*"].location != NSNotFound) {
             continue;
         }
         NSRange separator = [value rangeOfString:@"."];
-        if(separator.location != NSNotFound && separator.location + 1 < value.length) {
+        if(separator.location != NSNotFound && separator.location > 0 && separator.location + 1 < value.length) {
             return [value substringFromIndex:separator.location + 1];
         }
     }
@@ -166,20 +165,15 @@ static NSString* LCBundleIdentifierFromProvisioningProfileData(NSData* profileDa
     if(path.length == 0) {
         return nil;
     }
+    // Read only the claim in the profile currently embedded in the bundle. A
+    // hidden `.td-original.mobileprovision` can be stale or copied after patching;
+    // it is not evidence of the guest's original publishing identity.
+    NSString* profilePath = [path stringByAppendingPathComponent:@"embedded.mobileprovision"];
     NSFileManager* fm = NSFileManager.defaultManager;
-    // The backup taken at install time is the copy that still carries the guest's
-    // own identity; a profile-less app has none and we are not going to invent one.
-    for(NSString* name in @[@".td-original.mobileprovision", @"embedded.mobileprovision"]) {
-        NSString* profilePath = [path stringByAppendingPathComponent:name];
-        if(![fm fileExistsAtPath:profilePath]) {
-            continue;
-        }
-        NSString* bundleId = LCBundleIdentifierFromProvisioningProfileData([NSData dataWithContentsOfFile:profilePath]);
-        if(bundleId.length > 0) {
-            return bundleId;
-        }
+    if(![fm fileExistsAtPath:profilePath]) {
+        return nil;
     }
-    return nil;
+    return LCBundleIdentifierFromProvisioningProfileData([NSData dataWithContentsOfFile:profilePath]);
 }
 
 + (NSProgress *)signAppBundleWithZSign:(NSURL *)path completionHandler:(void (^)(BOOL success, NSError *error))completionHandler {

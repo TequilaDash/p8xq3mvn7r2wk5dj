@@ -24,19 +24,10 @@ static CGRect LCHomeSceneBounds(UIWindowScene *scene) {
 
 
 static id LCHomeButtonSettingObject(NSString *key) {
-    Class sharedUtils = NSClassFromString(@"LCSharedUtils");
-    NSString *groupID = nil;
-    if ([sharedUtils respondsToSelector:@selector(appGroupID)]) {
-        groupID = ((NSString *(*)(id, SEL))objc_msgSend)(sharedUtils, @selector(appGroupID));
-    }
-    NSUserDefaults *shared = groupID ? [[NSUserDefaults alloc] initWithSuiteName:groupID] : nil;
-    // 不再 synchronize: 那是**强制落盘**, 每次调用都要一次磁盘同步, 在触摸事件
-    // 热路径上足以让主线程被拖死. NSUserDefaults 读取本身就会经 CFPrefs
-    // 取到其它进程写入的最新值, synchronize 对"读到最新"并无必要.
-    id value = shared ? [shared objectForKey:key] : nil;
-    if (value != nil) return value;
-    // Suite may be unavailable or a pre-hook redirected it; the shared
-    // defaults singleton is what iManager itself writes and reads.
+    // Bootstrap captures this suite before guest preferences are redirected.
+    // Constructing a new suite here can instead resolve inside the guest's
+    // container (CFPrefsPlistSource2), shadowing the host's gesture settings.
+    // Do not create/synchronize preferences objects on every touch event.
     return [NSUserDefaults.lcSharedDefaults objectForKey:key];
 }
 
@@ -72,13 +63,6 @@ BOOL LCHomeButtonBoolSetting(NSString *key, BOOL fallback) {
 @property (nonatomic, weak, nullable) UITouch *globalEdgeTouch;
 @property (nonatomic) CGPoint globalEdgeStart;
 @property (nonatomic) BOOL globalEdgeFired;
-// Caches the setting between touch events; refreshed when a screen becomes
-// active or the overlay is shown, so edge detection doesn't reopen a suite
-// and synchronize for every touch.
-@property (nonatomic, copy) NSString *sideSwipeSetting;
-// True while a touch gesture is in flight: the setting is read once per
-// gesture instead of once per UIEvent.
-@property (nonatomic) BOOL sideSwipeTouchActive;
 @end
 
 @implementation LCHomeButtonController
@@ -105,6 +89,8 @@ BOOL LCHomeButtonBoolSetting(NSString *key, BOOL fallback) {
         return;
     }
     self.started = YES;
+    NSLog(@"[TDHome] guest controls started: liveProcess=%d assistive=%@ sideSwipe=%@",
+          NSUserDefaults.isLiveProcess, LCHomeButtonSetting(@"TDAssistiveTouchMode"), LCHomeButtonSetting(@"TDSideSwipeMode"));
     NSNotificationCenter *center = NSNotificationCenter.defaultCenter;
     [center addObserver:self selector:@selector(sceneDidActivate:) name:UISceneDidActivateNotification object:nil];
     [center addObserver:self selector:@selector(windowDidBecomeVisible:) name:UIWindowDidBecomeVisibleNotification object:nil];
@@ -133,7 +119,6 @@ BOOL LCHomeButtonBoolSetting(NSString *key, BOOL fallback) {
     UIWindowScene *scene = notification.object;
     if (![self isOwnScreen:scene]) return;
     [self.buttonController reloadSettings];
-    [self refreshSideSwipeSetting];
     if (self.window.windowScene == scene) {
         [self applyGeometry:LCHomeSceneBounds(scene) inScene:scene resetPlacement:NO];
     }
@@ -156,8 +141,7 @@ BOOL LCHomeButtonBoolSetting(NSString *key, BOOL fallback) {
     }
     UIWindowScene *scene = window.windowScene;
     if (scene && [self isOwnScreen:scene] &&
-        scene.activationState != UISceneActivationStateUnattached &&
-        self.window.windowScene != scene) {
+        scene.activationState != UISceneActivationStateUnattached) {
         [self showSoonInScene:scene];
     }
 }
@@ -221,6 +205,7 @@ BOOL LCHomeButtonBoolSetting(NSString *key, BOOL fallback) {
         self.showAttempts = 0;
         CGRect bounds = LCHomeSceneBounds(scene);
         if (self.window.windowScene == scene) {
+            self.window.hidden = NO;
             [self applyGeometry:bounds inScene:scene resetPlacement:NO];
             return;
         }
@@ -270,44 +255,53 @@ BOOL LCHomeButtonBoolSetting(NSString *key, BOOL fallback) {
     }
 }
 
-// LiveProcess 必须保留访客画面和进程，由宿主现有 Dock 动画收纳窗口。
-// 普通全屏访客仍通过 launchToGuestAppWithClassicMode 返回并结束进程。
+// LiveProcess returns to the host without killing any guest window. Opening
+// an application is not proof the stack appeared; the host logs attachment.
 - (void)openHostKeepingExtension {
-    NSString *bundleID = NSUserDefaults.lcMainBundle.bundleIdentifier ?: NSBundle.mainBundle.bundleIdentifier;
+    NSString *bundleID = NSUserDefaults.lcMainBundle.bundleIdentifier;
     NSString *suffix = @".LiveProcess";
     if ([bundleID hasSuffix:suffix]) {
         bundleID = [bundleID substringToIndex:bundleID.length - suffix.length];
     }
     Class workspaceClass = NSClassFromString(@"LSApplicationWorkspace");
     id workspace = workspaceClass ? ((id (*)(id, SEL))objc_msgSend)(workspaceClass, @selector(defaultWorkspace)) : nil;
+    void (^openHostURL)(void) = ^{
+        NSString *scheme = NSUserDefaults.lcAppUrlScheme;
+        NSURL *url = scheme.length ? [NSURL URLWithString:[scheme stringByAppendingString:@"://"]] : nil;
+        if (!url) {
+            NSLog(@"[TDHome] cannot activate host: no host URL scheme");
+            return;
+        }
+        // UIApplication's guest URL hook intentionally handles control links
+        // locally. Ask the workspace to open the actual host application.
+        if ([workspace respondsToSelector:@selector(openURL:)]) {
+            BOOL opened = ((BOOL (*)(id, SEL, NSURL *))objc_msgSend)(workspace, @selector(openURL:), url);
+            NSLog(@"[TDHome] host URL activation accepted=%d", opened);
+        } else {
+            UIApplication *application = [NSClassFromString(@"UIApplication") sharedApplication];
+            [application openURL:url options:@{} completionHandler:^(BOOL success) {
+                NSLog(@"[TDHome] host URL activation accepted=%d", success);
+            }];
+        }
+    };
     SEL openSel = NSSelectorFromString(@"openApplicationWithBundleIdentifier:configuration:completionHandler:");
-    if (workspace && [workspace respondsToSelector:openSel]) {
+    if (bundleID.length && [workspace respondsToSelector:openSel]) {
         void (^done)(BOOL, NSError *) = ^(BOOL success, NSError *error) {
-            NSLog(@"[LC] home button reopened zContainer: success=%d error=%@", success, error);
+            NSLog(@"[TDHome] host activation accepted=%d error=%@", success, error);
+            if (!success) dispatch_async(dispatch_get_main_queue(), openHostURL);
         };
         ((void (*)(id, SEL, NSString *, id, id))objc_msgSend)(workspace, openSel, bundleID, nil, done);
-        return;
+    } else {
+        openHostURL();
     }
-    // 回退: 用宿主 URL scheme 交给系统打开.
-    NSURL *url = [NSURL URLWithString:@"zcontainer://"];
-    UIApplication *application = [NSClassFromString(@"UIApplication") sharedApplication];
-    [application openURL:url options:@{} completionHandler:nil];
 }
 
 static const CGFloat LCHomeButtonGlobalEdgeWidth = 36;
 static const CGFloat LCHomeButtonGlobalEdgeTravel = 80;
 
-// 侧滑开关的读取时机: 每次手势**开始时**读一次, 手势进行中复用缓存值.
-// 1.1.54 的写法是每个 UIEvent 都读一次, 而 LCHomeButtonSettingObject 每次都要
-// 新建 suite 并 synchronize (强制落盘) —— handleApplicationEvent 对每个事件
-// (含 move) 都走这里, 主线程被拖死, 手势失去响应.
-// 1.1.56 的首次改法有缺陷: 读取点在函数开头, 而标志位在 Began 分支里才置位,
-// 于是每个 Began 事件仍然触发一次读取. 现在读取只在 Began 分支内发生, 一次手势
-// 只读一次, 开关实时性保留(下一个手势即生效).
-
-- (void)refreshSideSwipeSetting {
-    self.sideSwipeSetting = LCHomeButtonSetting(@"TDSideSwipeMode");
-}
+// Native edge recognizers observe the app window without an intercepting
+// overlay. This event-stream fallback also works before the button controller
+// has a window, and reads the current host setting when a touch starts at an edge.
 
 - (void)handleApplicationEvent:(UIEvent *)event {
     if (self.isLeaving || self.globalEdgeFired) {
@@ -320,9 +314,9 @@ static const CGFloat LCHomeButtonGlobalEdgeTravel = 80;
         UIView *view = touch.view;
         if (!window || !view) continue;
 
-        // Never treat a touch that starts on the overlay controls as a system
-        // edge gesture; it belongs to the button/edge recognizer already.
-        if ([view isDescendantOfView:self.window.rootViewController.view]) {
+        // The button owns its taps and drags. Other views still use this
+        // fallback if a downward-only touch never starts a native edge pan.
+        if (window == self.window && [view isKindOfClass:UIControl.class]) {
             continue;
         }
 
@@ -330,17 +324,11 @@ static const CGFloat LCHomeButtonGlobalEdgeTravel = 80;
         CGFloat width = window.bounds.size.width;
         switch (touch.phase) {
             case UITouchPhaseBegan: {
-                // 设置在**手势开始时**读一次, 手势过程中复用缓存值.
-                // 开关关闭时直接跳过整个事件处理, 避免任何设置读取开销.
-                self.sideSwipeTouchActive = YES;
-                self.sideSwipeSetting = LCHomeButtonSetting(@"TDSideSwipeMode");
-                if (![self.sideSwipeSetting isEqualToString:@"always"]) {
-                    break;
-                }
                 if (self.globalEdgeTouch || (location.x > LCHomeButtonGlobalEdgeWidth &&
                                              location.x < width - LCHomeButtonGlobalEdgeWidth)) {
                     break;
                 }
+                if (![LCHomeButtonSetting(@"TDSideSwipeMode") isEqualToString:@"always"]) break;
                 self.globalEdgeTouch = touch;
                 self.globalEdgeStart = location;
                 break;
@@ -350,15 +338,8 @@ static const CGFloat LCHomeButtonGlobalEdgeTravel = 80;
                 CGFloat travel = location.y - self.globalEdgeStart.y;
                 CGFloat horizontal = fabs(location.x - self.globalEdgeStart.x);
                 if (travel > LCHomeButtonGlobalEdgeTravel && travel > horizontal) {
-                    self.globalEdgeFired = YES;
                     self.globalEdgeTouch = nil;
                     [self handleEdgeSwipe];
-                    __weak LCHomeButtonController *weakSelf = self;
-                    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-                        LCHomeButtonController *controller = weakSelf;
-                        controller.globalEdgeFired = NO;
-                        controller.globalEdgeTouch = nil;
-                    });
                 }
                 break;
             case UITouchPhaseEnded:
@@ -366,7 +347,6 @@ static const CGFloat LCHomeButtonGlobalEdgeTravel = 80;
                 if (touch == self.globalEdgeTouch) {
                     self.globalEdgeTouch = nil;
                 }
-                self.sideSwipeTouchActive = NO;
                 break;
             default:
                 break;
@@ -375,19 +355,35 @@ static const CGFloat LCHomeButtonGlobalEdgeTravel = 80;
 }
 
 - (void)handleEdgeSwipe {
-    // “全局应用”只要求返回 zContainer；设置页跳转必须来自设置入口，
-    // 不能在这里写 TDPendingOpenSettings / post openSettings 通知。
+    if (self.isLeaving || self.globalEdgeFired) return;
+    self.globalEdgeFired = YES;
+    self.globalEdgeTouch = nil;
+    NSLog(@"[TDHome] downward edge swipe recognized; requesting host home");
     [self goBackToZContainer];
+    __weak LCHomeButtonController *weakSelf = self;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        weakSelf.globalEdgeFired = NO;
+    });
 }
 
-// 双击辅助触控: 让宿主打开堆叠后台界面(图五). 堆叠界面由宿主的
-// MultitaskStackManager 呈现(它才有各访客窗口的信息), 访客进程只发通知.
+// Persist the intent before notifying: Darwin delivery alone cannot activate a
+// background host, and a classic guest must restart the host process first.
 - (void)handleDoubleTap {
     if (self.isLeaving) return;
-    CFNotificationCenterRef center = CFNotificationCenterGetDarwinNotifyCenter();
-    CFStringRef name = CFSTR("com.kdt.livecontainer.showAppStack");
-    CFNotificationCenterPostNotification(center, name, NULL, NULL, true);
-    NSLog(@"[LC] home button double tapped -> request app stack");
+    NSDictionary *request = @{@"identifier": NSUUID.UUID.UUIDString,
+                              @"timestamp": @(NSDate.date.timeIntervalSince1970)};
+    NSUserDefaults *defaults = NSUserDefaults.lcSharedDefaults;
+    [defaults setObject:request forKey:@"LCPendingAppStackRequest"];
+    BOOL saved = [defaults synchronize];
+    CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),
+                                        CFSTR("com.kdt.livecontainer.showAppStack"), NULL, NULL, true);
+    NSLog(@"[TDHome] double tap requested app stack: request=%@ saved=%d liveProcess=%d",
+          request[@"identifier"], saved, NSUserDefaults.isLiveProcess);
+    if (NSUserDefaults.isLiveProcess) {
+        [self openHostKeepingExtension];
+    } else {
+        [self goBackToZContainer];
+    }
 }
 - (void)handlePress {
     // “始终显示”只有单击回到主界面这一个功能；不再弹确认框。
@@ -455,29 +451,20 @@ static const CGFloat LCHomeButtonGlobalEdgeTravel = 80;
 // settings turn it off. TweakLoader also loads into zContainer's own screens
 // when tweaks are set to load there, which have no app chosen and keep their
 // own Home button.
+static void LCHomeButtonStartWhenReady(NSUInteger attemptsRemaining) {
+    if (NSUserDefaults.lcGuestAppId) {
+        [LCHomeButtonController.sharedController start];
+    } else if (attemptsRemaining > 0) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            LCHomeButtonStartWhenReady(attemptsRemaining - 1);
+        });
+    }
+}
+
 __attribute__((constructor))
 static void LCHomeButtonInit(void) {
-    if (!NSUserDefaults.lcGuestAppId) {
-        // TweakLoader normally loads with the guest already identified, but a
-        // hot-loaded/relaunched loader can race the bootstrap globals. Poll a
-        // bounded number of times instead of giving up after one attempt.
-        __block NSUInteger attempts = 0;
-        dispatch_async(dispatch_get_main_queue(), ^{
-            __block void (^tryAgain)(void) = ^{
-                if (NSUserDefaults.lcGuestAppId) {
-                    [LCHomeButtonController.sharedController start];
-                    return;
-                }
-                attempts += 1;
-                if (attempts >= 10) return;
-                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)),
-                               dispatch_get_main_queue(), tryAgain);
-            };
-            tryAgain();
-        });
-        return;
-    }
-    // 始终注册控制器; 具体显示按键或响应侧边下滑由当前 app group 设置决定,
-    // 这样从 zContainer 改设置后回到应用不需要重启访客进程.
-    [LCHomeButtonController.sharedController start];
+    // No self-retaining recursive block, and all UIKit work starts on main.
+    dispatch_async(dispatch_get_main_queue(), ^{
+        LCHomeButtonStartWhenReady(10);
+    });
 }

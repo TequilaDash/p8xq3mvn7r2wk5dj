@@ -8,6 +8,7 @@
 #include <stdatomic.h>
 #include <stdlib.h>
 #include <sys/mman.h>
+#include <unistd.h>
 #import "../../litehook/src/litehook.h"
 #import "LCMachOUtils.h"
 #include "mach_excServer.h"
@@ -18,7 +19,7 @@
 @import MachO;
 
 extern void TDConsoleLog(NSString *format, ...) NS_FORMAT_FUNCTION(1, 2);
-extern NSString *TDCurrentModeTag(void);
+extern NSString *TDConsoleLogDirectory(void);
 
 typedef uint32_t dyld_platform_t;
 
@@ -195,7 +196,6 @@ static uint32_t gTDVRemap[2][TDV_HIDE_CAP];
 static uint32_t gTDVRemapCount[2];
 static _Atomic int gTDVRemapActive = 0;
 static bool gTDVRemapEnabled = false;
-static bool gTDVMapLogged = false;
 // 隐藏开关只控制 LiveContainer 自身镜像是否对访客可见; 注入的 tweak 镜像
 // (TweakLoader / Documents/Tweaks) 一律不进枚举表 —— 全能签一类的自检会
 // 枚举已加载镜像的 load command, 关掉"隐藏"不应该把注入面暴露出来.
@@ -280,37 +280,6 @@ static void tdv_rebuild_image_remap(void) {
     }
     gTDVRemapCount[inactive] = n;
     atomic_store(&gTDVRemapActive, inactive);
-
-    // 首次拿到访客主可执行时把"访客能看到的镜像清单"打一遍: 检测器报"注入库"
-    // 时用它直接对号, 不用再猜是哪条路径没被裁掉.
-    if (!gTDVMapLogged && guest != UINT32_MAX) {
-        gTDVMapLogged = true;
-        for (uint32_t k = 0; k < n; k++) {
-            const char *name = orig_dyld_get_image_name(buf[k]);
-            NSLog(@"[TDImageMap] %u %s", k, name ? name : "?");
-        }
-        // NSLog 在设备上难取, 再落一份盘: 全屏访客(宿主进程)与多任务访客(LiveProcess
-        // 扩展)各写一份, 用户可直接对比两种模式下访客看到的镜像清单差异.
-        {
-            extern NSString *TDConsoleLogDirectory(void);
-            NSString *dir = TDConsoleLogDirectory();
-            if (dir.length) {
-                const char *mode = getenv("TD_LAUNCH_MODE");
-                NSString *tag = mode ? @(mode) : @"unknown";
-                NSMutableString *body = [NSMutableString string];
-                [body appendFormat:@"# 可见镜像清单 mode=%s hide=%d guest=%s total=%u visible=%u\n",
-                 tag.UTF8String, (int)gTDVHideLCImages,
-                 guest != UINT32_MAX ? "yes" : "no", total, n];
-                for (uint32_t k = 0; k < n; k++) {
-                    const char *name = orig_dyld_get_image_name(buf[k]);
-                    [body appendFormat:@"%u %s\n", k, name ? name : "?"];
-                }
-                NSString *path = [dir stringByAppendingPathComponent:
-                                 [NSString stringWithFormat:@"imagemap-%@.txt", tag]];
-                [body writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil];
-            }
-        }
-    }
 }
 
 static inline bool tdv_map_image_index(uint32_t image_index, uint32_t *real_index) {
@@ -631,6 +600,10 @@ void DyldHookLoadableIntoProcess(void) {
 }
 #endif
 
+// Bootstrap owns this per-launch diagnostic state; remap rebuilds never touch it.
+static bool gTDVMapLogged = false;
+static NSString *gTDVMapLogSession = nil;
+
 void DyldHooksInit(bool hideLiveContainer, bool hookDlopen, uint32_t spoofSDKVersion) {
     // 每次启动访客都重置裁剪状态: 同一个进程里可能先后以"隐藏开/关"启动不同访客,
     // 而 litehook 的符号重绑不可逆. 不重置的话, 先开隐藏再关隐藏的那次启动仍会
@@ -641,6 +614,7 @@ void DyldHooksInit(bool hideLiveContainer, bool hookDlopen, uint32_t spoofSDKVer
     gTDVRemapCount[1] = 0;
     atomic_store(&gTDVRemapActive, 0);
     gTDVMapLogged = false;
+    gTDVMapLogSession = nil;
     gLCVisibleGuestHeader = NULL;
     lcImageIndex = UINT32_MAX;
     
@@ -754,6 +728,81 @@ uint32_t LCGuestImageIndexForPath(const char *path) {
 
 void LCRebuildImageRemap(void) {
     tdv_rebuild_image_remap();
+}
+
+static bool tdv_guest_image_path_matches(const char *guestPath, const char *imagePath) {
+    if (!guestPath || !guestPath[0] || !imagePath || !imagePath[0]) return false;
+    if (strcmp(guestPath, imagePath) == 0) return true;
+    if (guestPath[0] != '/' || imagePath[0] != '/') return false;
+
+    // dyld may return a canonical path (e.g. /private/var instead of /var).
+    // The launch resolver's basename fallback alone is not proof of identity.
+    char guestRealPath[PATH_MAX];
+    char imageRealPath[PATH_MAX];
+    return realpath(guestPath, guestRealPath) && realpath(imagePath, imageRealPath) &&
+           strcmp(guestRealPath, imageRealPath) == 0;
+}
+
+static void tdv_log_image_map_failure(NSString *fileName, NSString *reason) {
+    NSLog(@"[TDImageMap] %@ failed: %@", fileName, reason);
+    TDConsoleLog(@"[TDImageMap] %@ failed: %@", fileName, reason);
+}
+
+void LCSampleGuestImageMap(const char *guestPath, uint32_t resolvedGuestIndex) {
+    if (gTDVMapLogged) return;
+    if (!gTDVMapLogSession) gTDVMapLogSession = [NSUUID UUID].UUIDString;
+    const char *launchMode = getenv("TD_LAUNCH_MODE");
+    NSString *mode = @"unknown";
+    if (launchMode && strcmp(launchMode, "fullscreen") == 0) mode = @"fullscreen";
+    if (launchMode && strcmp(launchMode, "multitask") == 0) mode = @"multitask";
+    int pid = (int)getpid();
+    NSString *fileName = [NSString stringWithFormat:@"imagemap-%@-pid%d-%@.txt",
+                           mode, pid, gTDVMapLogSession];
+
+    uint32_t total = orig_dyld_image_count();
+    const char *imagePath = resolvedGuestIndex < total
+        ? orig_dyld_get_image_name(resolvedGuestIndex) : NULL;
+    if (!tdv_guest_image_path_matches(guestPath, imagePath)) {
+        tdv_log_image_map_failure(fileName, [NSString stringWithFormat:
+            @"guest path not confirmed: expected=%s index=%u actual=%s",
+            guestPath ?: "?", resolvedGuestIndex, imagePath ?: "?"]);
+        return;
+    }
+
+    int active = atomic_load(&gTDVRemapActive);
+    uint32_t count = gTDVRemapCount[active];
+    if (!gTDVRemapEnabled || !count || gTDVRemap[active][0] != resolvedGuestIndex) {
+        tdv_log_image_map_failure(fileName, [NSString stringWithFormat:
+            @"visible index 0 does not map to the confirmed guest: index=%u path=%s",
+            resolvedGuestIndex, guestPath]);
+        return;
+    }
+
+    NSMutableString *body = [NSMutableString stringWithFormat:
+        @"# 可见镜像清单 mode=%@ pid=%d session=%@ hide=%d guest=yes guestPath=%s guestIndex=%u total=%u visible=%u\n",
+        mode, pid, gTDVMapLogSession, (int)gTDVHideLCImages, guestPath, resolvedGuestIndex, total, count];
+    for (uint32_t i = 0; i < count; i++) {
+        const char *name = orig_dyld_get_image_name(gTDVRemap[active][i]);
+        [body appendFormat:@"%u %s\n", i, name ?: "?"];
+    }
+    if (active != atomic_load(&gTDVRemapActive)) {
+        tdv_log_image_map_failure(fileName, @"visible image map changed during sampling");
+        return;
+    }
+
+    NSString *directory = TDConsoleLogDirectory();
+    if (!directory.length) {
+        tdv_log_image_map_failure(fileName, @"no writable ConsoleLog directory");
+        return;
+    }
+    NSString *path = [directory stringByAppendingPathComponent:fileName];
+    NSError *error = nil;
+    if (![body writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:&error]) {
+        tdv_log_image_map_failure(fileName, [NSString stringWithFormat:
+            @"write to %@: %@", path, error.description ?: @"unknown write error"]);
+        return;
+    }
+    gTDVMapLogged = true;
 }
 
 #pragma mark - Fix black screen

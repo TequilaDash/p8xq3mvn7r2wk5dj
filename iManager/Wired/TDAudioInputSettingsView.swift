@@ -9,7 +9,6 @@ struct TDAudioInputSettingsView: View {
     @State private var enabled: Bool = {
         (Self.defaults?.object(forKey: "TDAudioInputBridge") as? Bool) ?? false
     }()
-    @State private var animate = false
     @State private var showLog = false
 
     var body: some View {
@@ -21,7 +20,7 @@ struct TDAudioInputSettingsView: View {
             }
 
             Section {
-                Toggle("修复音频输入", isOn: $enabled)
+                Toggle("记录访客音频会话日志", isOn: $enabled)
                     .onChange(of: enabled) { _, value in
                         Self.defaults?.set(value, forKey: "TDAudioInputBridge")
                         Self.defaults?.synchronize()
@@ -31,7 +30,7 @@ struct TDAudioInputSettingsView: View {
                     }
             }
         }
-        .navigationTitle("修复音频输入")
+        .navigationTitle("音频会话诊断")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
@@ -45,65 +44,33 @@ struct TDAudioInputSettingsView: View {
         .sheet(isPresented: $showLog) {
             TDAudioBridgeLogView()
         }
-        .onAppear { animate = true }
     }
 
     private var demoCard: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .fill(enabled ? AnyShapeStyle(Color.green.opacity(0.12)) : AnyShapeStyle(Color.red.opacity(0.10)))
-            HStack(spacing: 16) {
-                beforeAfterCard
-                Spacer()
-                micGlyph
+        HStack(spacing: 16) {
+            Image(systemName: enabled ? "waveform" : "waveform.slash")
+                .font(.system(size: 32, weight: .medium))
+                .foregroundStyle(enabled ? Color.green : Color.secondary)
+            VStack(alignment: .leading, spacing: 6) {
+                Text(enabled ? "会话诊断日志已开启" : "会话诊断日志已关闭")
+                    .font(.headline)
+                Text("只记录访客 AVAudioSession 调用；不传输麦克风音频。")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
             }
-            .padding(20)
+            Spacer(minLength: 0)
         }
-        .frame(height: 170)
-        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .frame(maxWidth: .infinity, minHeight: 110, alignment: .leading)
+        .padding(20)
+        .background(enabled ? Color.green.opacity(0.10) : Color.secondary.opacity(0.08),
+                    in: RoundedRectangle(cornerRadius: 20, style: .continuous))
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
     }
-
-    private var beforeAfterCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                Image(systemName: enabled ? "checkmark.circle.fill" : "xmark.circle.fill")
-                    .foregroundStyle(enabled ? Color.green : Color.red)
-                    .font(.title3)
-                Text(enabled ? "after" : "before")
-                    .font(.title3.bold())
-                    .monospaced()
-            }
-            HStack(spacing: 6) {
-                ForEach(0..<5, id: \.self) { i in
-                    Capsule()
-                        .fill(enabled ? Color.green : Color.red)
-                        .frame(width: 5, height: waveHeight(index: i))
-                        .animation(.easeInOut(duration: 0.6).repeatForever(autoreverses: true).delay(Double(i) * 0.12),
-                                   value: animate && enabled)
-                }
-            }
-            Text(enabled ? "宿主桥接输入 ✓" : "无输入 ✗")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-        }
-    }
-
-    private func waveHeight(index: Int) -> CGFloat {
-        let levels: [CGFloat] = [10, 22, 34, 20, 12]
-        return animate && enabled ? levels[index] : 8
-    }
-
-    private var micGlyph: some View {
-        Image(systemName: enabled ? "mic.badge.checkmark" : "mic.slash")
-            .font(.system(size: 40, weight: .medium))
-            .foregroundStyle(enabled ? Color.green : Color.red)
-    }
 }
 
-/// 音频桥独立日志：app group 根 TDAudioBridge/bridge.log，右上角弹窗查看，
-/// 带导出（分享）与删除。不与 ConsoleLog/exploit 日志混用。
+/// 仅查看当前访客进程的 AVAudioSession 诊断日志，不包含跨进程音频传输。
+/// 文件位于 app group 的 TDAudioBridge/bridge.log。
 struct TDAudioBridgeLogView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var logText = ""
@@ -129,7 +96,7 @@ struct TDAudioBridgeLogView: View {
         NavigationStack {
             Group {
                 if logText.isEmpty {
-                    ContentUnavailableView("暂无音频桥日志", systemImage: "waveform.badge.mic")
+                    ContentUnavailableView("暂无音频会话日志", systemImage: "waveform.badge.mic")
                 } else {
                     ScrollView {
                         Text(logText)
@@ -139,7 +106,7 @@ struct TDAudioBridgeLogView: View {
                     }
                 }
             }
-            .navigationTitle("音频桥日志")
+            .navigationTitle("音频会话日志")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
@@ -167,7 +134,7 @@ struct TDAudioBridgeLogView: View {
             .fileExporter(isPresented: $showExporter,
                           document: TextFileDocument(text: logText),
                           contentType: .plainText,
-                          defaultFilename: "audio-bridge.log") { _ in }
+                          defaultFilename: "audio-session-diagnostics.log") { _ in }
         }
     }
 }

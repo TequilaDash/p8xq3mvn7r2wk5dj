@@ -11,8 +11,8 @@
 static NSString *TDAppGroupID(void);
 static NSUserDefaults *TDAppGroupDefaults(void);
 
-// 独立音频桥日志：只记本桥的调用（guest 请求 + 宿主代答结果），不与
-// ConsoleLog/exploit 日志混用。文件在 app group 根 TDAudioBridge/ 下。
+// Guest AVAudioSession diagnostics only; no audio samples cross process boundaries.
+// The text log lives under the app-group TDAudioBridge directory.
 static NSString *TDAudioBridgeLogDir(void) {
     NSString *groupID = TDAppGroupID();
     if (!groupID) return nil;
@@ -99,7 +99,9 @@ static BOOL TD_hook_setActive_withOptions_error(id self, SEL _cmd, BOOL active, 
 
 static void TD_hook_requestRecordPermission(id self, SEL _cmd, void (^completion)(BOOL)) {
     void (*orig)(id, SEL, void (^)(BOOL)) = (void *)orig_requestRecordPermission;
-    TDAudioBridgeLog(@"requestRecordPermission -> direct (LiveProcess own TCC)");
+    if (TDAudioBridgeEnabled()) {
+        TDAudioBridgeLog(@"requestRecordPermission -> direct to current process; result is not captured");
+    }
     orig(self, _cmd, completion);
 }
 
