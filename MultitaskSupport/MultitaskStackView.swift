@@ -24,6 +24,8 @@ public class MultitaskStackManager: NSObject, ObservableObject {
     @Published public var selectedIndex = 0
     @Published private(set) var apps: [DockAppModel] = []
     @Published private(set) var message: String?
+    /// The app whose settings sheet is open over the stack.
+    @Published var settingsTarget: StackSettingsTarget?
 
     // A window retains its root controller, and the manager owns both until
     // dismissal. Retaining only host.view does not retain a hosting controller.
@@ -298,6 +300,9 @@ public class MultitaskStackManager: NSObject, ObservableObject {
 
     @objc public func selectApp(uuid: String) {
         DispatchQueue.main.async {
+            // Settings and other host screens sit above guest windows; close
+            // them first so tapping a card really reveals its window.
+            DataManager.shared.model.showHomeScreen()
             let controllers = self.appControllers()
             guard let controller = controllers.first(where: { $0.dataUUID == uuid }),
                   self.closingControllers[uuid] != ObjectIdentifier(controller) else {
@@ -364,7 +369,76 @@ public class MultitaskStackManager: NSObject, ObservableObject {
             self.refreshApps()
         }
     }
+
+    /// The Home Screen's model for the app in a stack card, when the app is
+    /// still installed.
+    private func appModel(for uuid: String) -> LCAppModel? {
+        DataManager.shared.model.apps.values.first { app in
+            (app.appInfo.dataUUID as String?) == uuid
+        }
+    }
+
+    /// Closes every running window; each card leaves only after its guest ends.
+    @objc public func closeAll() {
+        for uuid in apps.map(\.appUUID) {
+            closeApp(uuid: uuid)
+        }
+    }
+
+    @objc public func showAppInfo(uuid: String) {
+        DispatchQueue.main.async {
+            guard let app = self.appModel(for: uuid) else {
+                self.message = "找不到该应用的信息"
+                return
+            }
+            self.settingsTarget = StackSettingsTarget(id: uuid, app: app)
+        }
+    }
+
+    @objc public func openInSplitScreen(uuid: String) {
+        DispatchQueue.main.async {
+            guard let app = self.appModel(for: uuid) else {
+                self.message = "找不到该应用的信息"
+                return
+            }
+            guard DataManager.shared.model.canOpenInSplitScreen(app) else {
+                self.message = "该应用不能分屏运行"
+                return
+            }
+            DataManager.shared.model.showHomeScreen()
+            self.dismiss()
+            DataManager.shared.model.openInSplitScreen(app)
+        }
+    }
+
+    @objc public func togglePictureInPicture(uuid: String) {
+        DispatchQueue.main.async {
+            guard let controller = self.appControllers().first(where: { $0.dataUUID == uuid }) else {
+                self.message = "窗口已经关闭"
+                self.refreshApps()
+                return
+            }
+            guard let pip = PiPManager.shared else {
+                self.message = "系统不支持画中画"
+                return
+            }
+            if pip.isPiP(withVC: controller) {
+                pip.stopPiP()
+            } else {
+                pip.startPiP(withVC: controller)
+            }
+            self.dismiss()
+        }
+    }
 }
+
+/// The app whose settings sheet is open over the stack.
+@available(iOS 16.0, *)
+struct StackSettingsTarget: Identifiable {
+    let id: String
+    let app: LCAppModel
+}
+
 
 @available(iOS 16.0, *)
 struct MultitaskStackView: View {
@@ -375,10 +449,12 @@ struct MultitaskStackView: View {
 
     var body: some View {
         ZStack {
-            Color.black.opacity(0.65)
+            Rectangle()
+                .fill(.ultraThinMaterial)
+                .overlay(Color.black.opacity(0.35))
                 .ignoresSafeArea()
                 .onTapGesture { manager.dismiss() }
-            VStack(spacing: 16) {
+            VStack(spacing: 14) {
                 HStack {
                     Text("多任务后台").font(.title2.bold())
                     Spacer()
@@ -402,12 +478,29 @@ struct MultitaskStackView: View {
                             .disabled(manager.selectedIndex >= manager.apps.count - 1)
                             .accessibilityLabel("下一个窗口")
                     }
-                    Text("左右滑动切换 · 点按打开 · 上滑关闭").font(.footnote)
+                    Text("左右滑动切换 · 点按打开 · 长按更多 · 上滑关闭")
+                        .font(.footnote)
+                        .foregroundStyle(.white.opacity(0.7))
+                    Button {
+                        manager.closeAll()
+                    } label: {
+                        Label("全部清除", systemImage: "trash")
+                            .font(.subheadline.weight(.semibold))
+                            .padding(.horizontal, 22)
+                            .padding(.vertical, 11)
+                            .background(.ultraThinMaterial, in: Capsule())
+                            .overlay(Capsule().stroke(.white.opacity(0.2), lineWidth: 1))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("关闭全部多任务窗口")
                 }
                 if let message = manager.message { Text(message).font(.footnote).accessibilityAddTraits(.updatesFrequently) }
             }
             .foregroundStyle(.white)
             .padding(.vertical, 24)
+        }
+        .sheet(item: $manager.settingsTarget) { target in
+            HomeAppSettingsScreen(app: target.app)
         }
     }
 
@@ -418,8 +511,12 @@ struct MultitaskStackView: View {
     }
 
     private func deck(in size: CGSize) -> some View {
+        // The card follows the phone's aspect, so a full-screen guest picture
+        // fills it without black bars above and below.
+        let screen = UIScreen.main.bounds
+        let phoneRatio = screen.height / max(screen.width, 1)
         let width = min(420, size.width * 0.72)
-        let height = min(620, size.height * 0.86)
+        let height = min(size.height * 0.84, width * phoneRatio)
         let stride = max(1, width * 0.48)
         let horizontal = dragAxis == .horizontal ? dragOffset.width : 0
         return ZStack {
@@ -430,7 +527,10 @@ struct MultitaskStackView: View {
                 AppStackCard(app: app, size: CGSize(width: width, height: height),
                              preview: manager.previewSnapshot(for: app.appUUID),
                              onSelect: { manager.selectApp(uuid: app.appUUID) },
-                             onClose: { manager.closeApp(uuid: app.appUUID) })
+                             onClose: { manager.closeApp(uuid: app.appUUID) },
+                             onAppInfo: { manager.showAppInfo(uuid: app.appUUID) },
+                             onSplit: { manager.openInSplitScreen(uuid: app.appUUID) },
+                             onPictureInPicture: { manager.togglePictureInPicture(uuid: app.appUUID) })
                     .scaleEffect(1 - depth * 0.055)
                     .offset(x: distance * stride + horizontal, y: depth * 14 + vertical)
                     .zIndex(Double(manager.apps.count) - Double(abs(distance)))
@@ -484,6 +584,9 @@ struct AppStackCard: View {
     let preview: UIView?
     var onSelect: () -> Void
     var onClose: () -> Void
+    var onAppInfo: () -> Void
+    var onSplit: () -> Void
+    var onPictureInPicture: () -> Void
     @State private var icon: UIImage?
 
     var body: some View {
@@ -521,6 +624,21 @@ struct AppStackCard: View {
         .overlay(RoundedRectangle(cornerRadius: 26, style: .continuous).stroke(.white.opacity(0.25), lineWidth: 1))
         .contentShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
         .onTapGesture(perform: onSelect)
+        .contextMenu {
+            Button(action: onAppInfo) {
+                Label("应用信息", systemImage: "info.circle")
+            }
+            Button(action: onSplit) {
+                Label("分屏", systemImage: "rectangle.split.1x2")
+            }
+            Button(action: onPictureInPicture) {
+                Label("画中画模式", systemImage: "pip")
+            }
+            Divider()
+            Button(role: .destructive, action: onClose) {
+                Label("清除", systemImage: "xmark")
+            }
+        }
         .overlay(alignment: .topTrailing) {
             Button(action: onClose) { Image(systemName: "xmark.circle.fill").font(.title2).padding(16) }
                 .accessibilityLabel("关闭 \(app.appName)")
@@ -586,7 +704,9 @@ private struct ScaledSnapshotView: UIViewRepresentable {
             guard bounds.width > 0, bounds.height > 0, source.width > 0, source.height > 0 else { return }
             snapshot.transform = .identity
             snapshot.bounds = CGRect(origin: .zero, size: source)
-            let scale = min(bounds.width / source.width, bounds.height / source.height)
+            // Aspect fill: the phone picture covers the card, so no black
+            // letterbox shows above and below the guest screenshot.
+            let scale = max(bounds.width / source.width, bounds.height / source.height)
             snapshot.transform = CGAffineTransform(scaleX: scale, y: scale)
             snapshot.center = CGPoint(x: bounds.midX, y: bounds.midY)
         }

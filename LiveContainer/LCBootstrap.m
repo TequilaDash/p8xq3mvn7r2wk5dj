@@ -286,6 +286,146 @@ static void *getAppEntryPoint(void *handle) {
 
 
 
+static NSString *LCDataSHA256Hex(NSData *data) {
+    if (!data) return nil;
+    unsigned char digest[CC_SHA256_DIGEST_LENGTH] = {0};
+    CC_SHA256(data.bytes, (CC_LONG)data.length, digest);
+    NSMutableString *hex = [NSMutableString stringWithCapacity:CC_SHA256_DIGEST_LENGTH * 2];
+    for (int i = 0; i < CC_SHA256_DIGEST_LENGTH; i++) [hex appendFormat:@"%02x", digest[i]];
+    return hex;
+}
+
+static NSString *LCExecutableTextSectionSHA256(NSString *path) {
+    if (![[NSFileManager defaultManager] fileExistsAtPath:path]) return nil;
+    __block NSString *hash = nil;
+    LCParseMachO(path.UTF8String, true, ^(const char *slicePath, struct mach_header_64 *header, int fd, void *filePtr) {
+        if (!header || header->magic != MH_MAGIC_64) return;
+        struct stat st = {0};
+        if (fstat(fd, &st) != 0) return;
+        uint64_t sliceOffset = (uint8_t *)header - (uint8_t *)filePtr;
+        uint8_t *cursor = (uint8_t *)header + sizeof(struct mach_header_64);
+        for (uint32_t i = 0; i < header->ncmds; i++) {
+            struct load_command lc = {0};
+            if ((uint8_t *)cursor + sizeof(lc) > (uint8_t *)filePtr + st.st_size) return;
+            memcpy(&lc, cursor, sizeof(lc));
+            if (lc.cmdsize < sizeof(lc)) return;
+            if (lc.cmd == LC_SEGMENT_64 && lc.cmdsize >= sizeof(struct segment_command_64)) {
+                struct segment_command_64 seg = {0};
+                memcpy(&seg, cursor, sizeof(seg));
+                if (strncmp(seg.segname, "__TEXT", sizeof(seg.segname)) == 0) {
+                    uint8_t *sectCursor = cursor + sizeof(struct segment_command_64);
+                    for (uint32_t j = 0; j < seg.nsects; j++) {
+                        struct section_64 sect = {0};
+                        memcpy(&sect, sectCursor, sizeof(sect));
+                        uint64_t fileOffset = sliceOffset + sect.offset;
+                        if (strncmp(sect.sectname, "__text", sizeof(sect.sectname)) == 0 &&
+                            sect.size > 0 && fileOffset + sect.size <= (uint64_t)st.st_size) {
+                            NSData *text = [NSData dataWithBytes:(uint8_t *)filePtr + fileOffset length:(NSUInteger)sect.size];
+                            hash = LCDataSHA256Hex(text);
+                            return;
+                        }
+                        sectCursor += sizeof(struct section_64);
+                    }
+                }
+            }
+            cursor += lc.cmdsize;
+        }
+    });
+    return hash;
+}
+
+static NSArray *LCCollectExecutableEntitlementKeys(NSString *path) {
+    if (!path || ![[NSFileManager defaultManager] fileExistsAtPath:path]) return nil;
+    NSString *entitlementsXML = getExecutableEntitlementXML(path);
+    if (![entitlementsXML isKindOfClass:NSString.class] || entitlementsXML.length <= 0) return nil;
+    NSDictionary *entitlements = [NSPropertyListSerialization propertyListWithData:[entitlementsXML dataUsingEncoding:NSUTF8StringEncoding]
+                                                                            options:0 format:NULL error:nil];
+    if (![entitlements isKindOfClass:NSDictionary.class] || entitlements.count <= 0) return nil;
+    return entitlements.allKeys;
+}
+
+/// Feed the guest's own tamper baselines the values its installed copy really has.
+/// Re-signing changes the main executable, the profile and the bundle id; leaving
+/// the factory baselines in place makes the app's own integrity check red even
+/// though nothing malicious happened. The profile hash list keeps the factory
+/// "empty string = trust" marker: writing a real hash there never matches the
+/// hash of the signed profile blob and was itself reported as tampering.
+static void LCAdaptSecurityPresets(NSString *bundlePath, NSString *guestId, NSString *execName) {
+    if (!bundlePath || execName.length == 0) return;
+    NSFileManager *fm = NSFileManager.defaultManager;
+    NSString *path = [bundlePath stringByAppendingPathComponent:@"SecurityPresets.plist"];
+    NSString *backup = [bundlePath stringByAppendingPathComponent:@".td-original.SecurityPresets.plist"];
+
+    // Restore the factory plist if an older build rewrote it.
+    if ([fm fileExistsAtPath:backup] && [fm fileExistsAtPath:path]) {
+        NSData *orig = [NSData dataWithContentsOfFile:backup];
+        NSData *cur = [NSData dataWithContentsOfFile:path];
+        if (orig && cur && ![orig isEqualToData:cur]) {
+            [orig writeToFile:path atomically:YES];
+        }
+    }
+
+    // Older builds could leave a 0-byte profile; that alone reads as a tampered
+    // distribution configuration. Drop the empty files and keep a real one.
+    NSString *profileBackup = [bundlePath stringByAppendingPathComponent:@".td-original.mobileprovision"];
+    NSString *profileCurrent = [bundlePath stringByAppendingPathComponent:@"embedded.mobileprovision"];
+    for (NSString *profile in @[profileBackup, profileCurrent]) {
+        NSDictionary *attrs = [fm attributesOfItemAtPath:profile error:nil];
+        if (attrs && attrs.fileSize == 0) [fm removeItemAtPath:profile error:nil];
+    }
+    if (![fm fileExistsAtPath:profileBackup] && [fm fileExistsAtPath:profileCurrent]) {
+        [fm copyItemAtPath:profileCurrent toPath:profileBackup error:nil];
+    }
+    if (![fm fileExistsAtPath:profileCurrent] && [fm fileExistsAtPath:profileBackup]) {
+        [fm copyItemAtPath:profileBackup toPath:profileCurrent error:nil];
+    }
+
+    if (![fm fileExistsAtPath:path]) return;
+    NSMutableDictionary *presets = [NSMutableDictionary dictionaryWithContentsOfFile:path];
+    if (!presets) return;
+    BOOL changed = NO;
+
+    if (guestId.length > 0) {
+        presets[@"secureMainBundleIdentifiers"] = @[guestId];
+        changed = YES;
+    }
+    if (![presets[@"secureMobileProvisioningProfileHashes"] isEqual:@[@""]]) {
+        presets[@"secureMobileProvisioningProfileHashes"] = @[@""];
+        changed = YES;
+    }
+
+    NSString *currentExec = [bundlePath stringByAppendingPathComponent:execName];
+    NSString *execHash = LCExecutableTextSectionSHA256(currentExec);
+    if (execHash) {
+        presets[@"secureMainExecutableMachOHashes"] = @[execHash];
+        changed = YES;
+    }
+
+    // Union of the factory lists, the installed executable's entitlements and
+    // the pre-install backup, so keys added during migration stay covered.
+    NSMutableSet *entitlementKeys = [NSMutableSet set];
+    id existingKeys = presets[@"secureEntitlementKeys"];
+    if ([existingKeys isKindOfClass:NSArray.class] || [existingKeys isKindOfClass:NSSet.class]) {
+        for (id key in existingKeys) {
+            if ([key isKindOfClass:NSString.class]) [entitlementKeys addObject:key];
+        }
+    }
+    NSArray *currentEntitlementKeys = LCCollectExecutableEntitlementKeys(currentExec);
+    if (currentEntitlementKeys) [entitlementKeys addObjectsFromArray:currentEntitlementKeys];
+    NSArray *originalEntitlementKeys = LCCollectExecutableEntitlementKeys(
+        [currentExec stringByAppendingString:@".td-original.executable"]);
+    if (originalEntitlementKeys) [entitlementKeys addObjectsFromArray:originalEntitlementKeys];
+    if (entitlementKeys.count > 0) {
+        presets[@"secureEntitlementKeys"] = [entitlementKeys.allObjects sortedArrayUsingSelector:@selector(compare:)];
+        changed = YES;
+    }
+
+    if (changed) {
+        [presets writeToFile:path atomically:YES];
+        NSLog(@"[LC] adapted SecurityPresets baseline guest=%@ exec=%@", guestId, execHash);
+    }
+}
+
 static void LCEnsureOriginalInfoPlistBackup(NSString* bundlePath,
                                             NSString* knownGuestId) {
     NSFileManager* fm = NSFileManager.defaultManager;
@@ -481,6 +621,7 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
     } else {
         lcGuestAppId = appBundle.bundleIdentifier;
     }
+    LCAdaptSecurityPresets(bundlePath, lcGuestAppId, appBundle.executablePath.lastPathComponent);
     NSBundleGuestHooksInit();
 
     // Overwrite home and tmp path

@@ -775,8 +775,10 @@ static kern_return_t tdv_mach_port_get_refs_impl(mach_port_t task, mach_port_nam
     kern_return_t kr = tdv_real_mach_port_get_refs(task, name, right, refs);
     if (kr != KERN_SUCCESS || !refs) return kr;
     if (!TDVProcSpoofEnabled()) return kr;
-    if (right != MACH_PORT_RIGHT_SEND) return kr;
+    if (right != MACH_PORT_RIGHT_SEND && right != MACH_PORT_RIGHT_RECEIVE) return kr;
     if (task != mach_task_self() || name != mach_task_self()) return kr;
+    // Both SEND and RECEIVE refer to the same task port; detectors have used
+    // either right. Factory processes report 1-2 refs.
     if (*refs > 2) *refs = 2;
     return kr;
 }
