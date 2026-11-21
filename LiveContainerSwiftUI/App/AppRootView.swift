@@ -111,12 +111,12 @@ private struct TDGlobalHomeOverlay: View {
                                     }
                                 }
                         )
-                        .accessibilityAction(.activate) {
+                        .accessibilityAction {
                             action()
                             scheduleDim()
                         }
                         .background(TDOverlayHitRegion())
-                    .position(center)
+                        .position(center)
                     .opacity(dimmed && dimEnabled ? max(0.15, min(1.0, dimAlpha)) : 1)
                     .simultaneousGesture(
                         DragGesture(minimumDistance: 4)
