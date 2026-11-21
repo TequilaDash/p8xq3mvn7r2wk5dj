@@ -1,6 +1,6 @@
 20261121-223500 1.1.61 Update：
 1. 通用处理“检测自身可执行被改”类 App：安装补丁时扫描主可执行是否带自校验守卫（AISGuard_ / AISPromptThenAbort / AISAntiHook / verifyTextIntegrityOrAbort 等），命中则**不注入 TweakLoader 的 LC_LOAD_DYLIB**；启动时也跳过 fallback dlopen TweakLoader。全能签（NSKSign）属于此类，签名功能本身不依赖 TweakLoader。
-2. 该判断是通用签名匹配，不按 bundle id 写死；普通 App 不受影响。
+2. 该判断是通用签名匹配，不按 bundle id 硬编码；普通 App 不受影响。
 3. 说明：只解决“因为被改主可执行而拒绝运行”的路径，不等于伪造它的检测结果；其它环境的 SEC-2 类检查仍按实际环境判定。
 
 20261121-214500 1.1.60 Update：
