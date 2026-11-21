@@ -81,11 +81,33 @@ struct AppSceneViewSwiftUI: UIViewControllerRepresentable {
         
         /// One line per activation in the exportable log, so fullscreen and
         /// multitask geometry can be compared instead of inferred.
+        /// Same resolution order as TDConsoleLog: the env override, then the
+        /// guest's Documents. A missing app group must not silently disable
+        /// diagnostics: a sideloaded group can be unavailable while the app
+        /// still runs.
+        private static func consoleLogDirectory() -> URL? {
+            var paths: [String] = []
+            if let override = ProcessInfo.processInfo.environment["TD_CONSOLE_LOG_DIR"], override.hasPrefix("/") {
+                paths.append(override)
+            }
+            if let home = ProcessInfo.processInfo.environment["LC_HOME_PATH"], home.hasPrefix("/") {
+                paths.append(home + "/Documents/ConsoleLog")
+            }
+            if let group = LCSharedUtils.appGroupID(),
+               let container = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: group) {
+                paths.append(container.appendingPathComponent("LiveContainer/ConsoleLog").path)
+            }
+            for path in paths {
+                let url = URL(fileURLWithPath: path, isDirectory: true)
+                if (try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)) != nil {
+                    return url
+                }
+            }
+            return nil
+        }
+
         private static func logGeometry(vc: AppSceneViewController, window: UIWindow?) {
-            guard let group = LCSharedUtils.appGroupID(),
-                  let container = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: group) else { return }
-            let dir = container.appendingPathComponent("LiveContainer/ConsoleLog")
-            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            guard let dir = consoleLogDirectory() else { return }
             let line = "[geometry] mode=multitask pid=\(getpid()) view=\(vc.view.frame) window=\(window?.bounds.debugDescription ?? "(none)") safe=\(String(describing: window?.safeAreaInsets)) scene=\(String(describing: window?.windowScene?.interfaceOrientation.rawValue))\n"
             let path = dir.appendingPathComponent("geometry-\(getpid()).log")
             if let handle = try? FileHandle(forWritingTo: path) {

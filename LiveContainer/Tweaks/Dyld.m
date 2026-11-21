@@ -275,7 +275,12 @@ static void tdv_rebuild_image_remap(void) {
     for (uint32_t i = 0; i < total && n < TDV_HIDE_CAP; i++) {
         if (i == guest) continue;
         const struct mach_header *h = orig_dyld_get_image_header(i);
+        const char *name = orig_dyld_get_image_name(i);
         if (!h || tdv_header_is_hidden(h)) continue;
+        if (tdv_is_hidden_path(name)) {
+            tdv_mark_hidden(h);
+            continue;
+        }
         buf[n++] = i;
     }
     gTDVRemapCount[inactive] = n;

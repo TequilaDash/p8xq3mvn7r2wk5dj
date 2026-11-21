@@ -745,6 +745,10 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
                                tweakLoaderPath, loaderError ?: "unknown"]);
         }
     }
+    // Fullscreen does not install the JIT-less dlopen hook. Rebuild after the
+    // fallback loader so images loaded after DyldHooksInit get the same trim
+    // pass as LiveProcess.
+    LCRebuildImageRemap();
     // Fix dynamic properties of some apps
     [NSUserDefaults performSelector:@selector(initialize)];
 

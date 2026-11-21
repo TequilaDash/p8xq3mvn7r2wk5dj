@@ -5,6 +5,7 @@
 
 import SwiftUI
 import CoreFoundation
+import Combine
 
 /// The main window's root: the Home Screen, with onboarding over it while it
 /// shows. Onboarding sits in the same view tree rather than being presented,
@@ -81,7 +82,6 @@ private struct TDGlobalHomeOverlay: View {
     @State private var dimmed = false
     @State private var dimGeneration = 0
     @State private var dragBase: CGSize?
-    @State private var pendingPress: DispatchWorkItem?
 
     var body: some View {
         Group {
@@ -95,27 +95,27 @@ private struct TDGlobalHomeOverlay: View {
                         y: min(max(base.y + offsetY, margin), proxy.size.height - margin)
                     )
 
-                    HomeButton {
-                        // Wait for a possible second tap: one tap goes home,
-                        // a double tap opens the stack and cancels the single.
-                        pendingPress?.cancel()
-                        let work = DispatchWorkItem {
+                    HomeButton(action: {})
+                        .highPriorityGesture(
+                            TapGesture(count: 2)
+                                .exclusively(before: TapGesture(count: 1))
+                                .onEnded { tap in
+                                    switch tap {
+                                    case .first(_):
+                                        if #available(iOS 16.0, *) {
+                                            MultitaskStackManager.shared.present()
+                                        }
+                                    case .second(_):
+                                        action()
+                                        scheduleDim()
+                                    }
+                                }
+                        )
+                        .accessibilityAction(.activate) {
                             action()
                             scheduleDim()
                         }
-                        pendingPress = work
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.28, execute: work)
-                    }
-                    .simultaneousGesture(
-                        TapGesture(count: 2).onEnded {
-                            pendingPress?.cancel()
-                            pendingPress = nil
-                            if #available(iOS 16.0, *) {
-                                MultitaskStackManager.shared.present()
-                            }
-                        }
-                    )
-                    .background(TDOverlayHitRegion())
+                        .background(TDOverlayHitRegion())
                     .position(center)
                     .opacity(dimmed && dimEnabled ? max(0.15, min(1.0, dimAlpha)) : 1)
                     .simultaneousGesture(
@@ -224,6 +224,8 @@ private final class TDHostHomeOverlayController {
     private var window: TDHostHomeOverlayWindow?
     private var hosting: UIHostingController<TDGlobalHomeOverlay>?
     private var observer: NSObjectProtocol?
+    private var stackVisibilitySubscription: AnyCancellable?
+    private var stackIsVisible = false
 
     private init() {
         observer = NotificationCenter.default.addObserver(
@@ -234,10 +236,14 @@ private final class TDHostHomeOverlayController {
     }
 
     func attach() {
+        observeStackVisibility()
         guard let scene = UIApplication.shared.connectedScenes
             .compactMap({ $0 as? UIWindowScene })
             .first(where: { $0.activationState == .foregroundActive }) else { return }
-        if let window, window.windowScene === scene, !window.isHidden { return }
+        if let window, window.windowScene === scene {
+            window.isHidden = stackIsVisible
+            return
+        }
 
         window?.isHidden = true
         let host = UIHostingController(rootView: TDGlobalHomeOverlay(action: {
@@ -254,8 +260,24 @@ private final class TDHostHomeOverlayController {
         overlay.windowLevel = UIWindow.Level.alert + 2
         overlay.backgroundColor = .clear
         overlay.rootViewController = host
-        overlay.isHidden = false
+        overlay.isHidden = stackIsVisible
         hosting = host
         window = overlay
+    }
+    private func observeStackVisibility() {
+        guard #available(iOS 16.0, *) else { return }
+        let manager = MultitaskStackManager.shared
+        stackIsVisible = manager.isVisible
+        guard stackVisibilitySubscription == nil else { return }
+        stackVisibilitySubscription = manager.$isVisible.sink { [weak self] visible in
+            Task { @MainActor [weak self] in
+                self?.setStackVisible(visible)
+            }
+        }
+    }
+
+    private func setStackVisible(_ visible: Bool) {
+        stackIsVisible = visible
+        window?.isHidden = visible
     }
 }

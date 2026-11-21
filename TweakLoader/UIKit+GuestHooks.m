@@ -569,7 +569,17 @@ static void LCLogStatusBarGeometry(UIWindowScene *scene, UIWindow *window, CGRec
     lastReported = reported;
     lastScene = scene;
     const char *dir = getenv("TD_CONSOLE_LOG_DIR");
-    if (!dir || !dir[0]) return;
+    NSString *directory = (dir && dir[0] == '/') ? [NSString stringWithUTF8String:dir] : nil;
+    if (!directory) {
+        // Sideloaded installs can lack the app group while still running.
+        // Match TDConsoleLog's fallback instead of dropping the diagnostic.
+        const char *home = getenv("LC_HOME_PATH");
+        if (home && home[0] == '/') {
+            directory = [NSString stringWithFormat:@"%s/Documents/ConsoleLog", home];
+        }
+    }
+    if (!directory) return;
+    if (![[NSFileManager defaultManager] createDirectoryAtPath:directory withIntermediateDirectories:YES attributes:nil error:nil]) return;
     NSString *line = [NSString stringWithFormat:
         @"[geometry] mode=%s pid=%d scene=%@ bounds=%@ keyWindow=%@ safeTop=%.1f safeBottom=%.1f statusBar=%@ reported=%@\n",
         getenv("TD_LAUNCH_MODE") ?: "-", getpid(),
@@ -580,7 +590,7 @@ static void LCLogStatusBarGeometry(UIWindowScene *scene, UIWindow *window, CGRec
         window ? window.safeAreaInsets.bottom : -1,
         scene.statusBarManager ? NSStringFromCGRect(scene.statusBarManager.statusBarFrame) : @"(none)",
         NSStringFromCGRect(reported)];
-    NSString *path = [[NSString stringWithUTF8String:dir] stringByAppendingPathComponent:
+    NSString *path = [directory stringByAppendingPathComponent:
                       [NSString stringWithFormat:@"geometry-%d.log", getpid()]];
     NSData *data = [line dataUsingEncoding:NSUTF8StringEncoding];
     int fd = open(path.fileSystemRepresentation, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0600);
