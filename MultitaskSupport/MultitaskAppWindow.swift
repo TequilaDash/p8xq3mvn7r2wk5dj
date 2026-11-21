@@ -158,7 +158,7 @@ struct AppSceneViewSwiftUI: UIViewControllerRepresentable {
                 settings.setFrame(applied)
                 // Log exactly what the guest scene receives, not just the host
                 // view: Via/status-bar layout is decided from these values.
-                Self.appendGeometryLine("[geometry] mode=multitask-applied pid=\(getpid()) frame=\(NSStringFromCGRect(applied)) insets=\(String(describing: defaultInsets)) orientation=\(settings.interfaceOrientation().rawValue)\n")
+                Self.appendGeometryLine("[geometry] mode=multitask-applied pid=\(getpid()) frame=\(applied.debugDescription) insets=\(String(describing: defaultInsets)) orientation=\(settings.interfaceOrientation().rawValue)\n")
             }
             // fix live resize
             vc.contentView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
