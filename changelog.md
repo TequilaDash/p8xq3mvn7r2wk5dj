@@ -1,3 +1,8 @@
+20261121-214500 1.1.60 Update：
+1. 多任务“窗口”模式（Decorated 窗口）此前从未下发设备安全区 inset，也没写几何日志：Via/状态栏在窗口里和在独立 scene 里表现不同。现在窗口模式与独立 scene 走同一套 `peripheryInsets`/`safeAreaInsetsPortrait` 和 frame 计算，并写 `geometry-<pid>.log`（tag=decorated，含 view/window/safe/frame/maximized/方向）。
+2. 1.1.59 的“应用信息”崩溃修复、包文件名菜单、宿主屏幕隐藏悬浮按钮保持不变。
+3. 说明：本版让窗口模式与独立 scene 对齐并补齐可测日志；Via/状态栏是否完全恢复，需用本版 geometry 日志和截图确认。
+
 20261121-211500 1.1.59 Update：
 1. 修复从堆叠后台打开“应用信息”时的 SIGTRAP：设置页改由宿主 AppRootView 用完整 SwiftUI 环境打开，不再在堆叠的独立 hosting 窗口里创建缺 EnvironmentObject 的页面（20:30 崩溃栈即 EnvironmentObject.error ← Picker/Menu/Form）。
 2. 堆叠长按菜单新增“包文件名”（bundle identifier）显示，直接复用 App 设置里的值。

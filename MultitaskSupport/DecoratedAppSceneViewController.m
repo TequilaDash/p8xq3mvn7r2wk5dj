@@ -500,6 +500,7 @@ static NSNotificationName const LCWindowTouchedNotification = @"LCWindowTouchedN
 /// goes.
 @property(nonatomic, weak) UIView *dockFlyer;
 @property(nonatomic, strong, readwrite) UIView *stackPreview;
+- (void)logGeometryWithInsets:(UIEdgeInsets)insets frame:(CGRect)frame;
 @end
 
 @implementation DecoratedAppSceneViewController
@@ -1058,20 +1059,59 @@ static NSNotificationName const LCWindowTouchedNotification = @"LCWindowTouchedN
         settings.interfaceOrientation = baseSettings.interfaceOrientation;
         settings.deviceOrientation = baseSettings.deviceOrientation;
         settings.foreground = YES;
-        
+
+        // Decorated (in-app) windows never went through the Swift coordinator,
+        // so they got no device safe-area insets. Via and other guests then
+        // laid their chrome out against the host's bars.
+        UIWindow *hostWindow = self.view.window;
+        UIEdgeInsets hostInsets = hostWindow ? hostWindow.safeAreaInsets : UIEdgeInsetsZero;
+        settings.peripheryInsets = hostInsets;
+        settings.safeAreaInsetsPortrait = hostInsets;
+
         if(self.isMaximized) {
             [self updateMaximizedFrameWithSettings:settings];
         } else {
             [self updateWindowedFrameWithSettings:settings];
         }
         CGRect newFrame = CGRectMake(0, 0, self.view.bounds.size.width, self.view.bounds.size.height - self.navigationBar.frame.size.height/self.scaleRatio);
-        
+        CGRect sceneFrame;
         if(UIInterfaceOrientationIsLandscape(baseSettings.interfaceOrientation)) {
-            settings.frame = CGRectMake(0, 0, newFrame.size.height, newFrame.size.width);
+            sceneFrame = CGRectMake(0, 0, newFrame.size.height, newFrame.size.width);
         } else {
-            settings.frame = CGRectMake(0, 0, newFrame.size.width, newFrame.size.height);
+            sceneFrame = CGRectMake(0, 0, newFrame.size.width, newFrame.size.height);
         }
+        settings.frame = sceneFrame;
+        [self logGeometryWithInsets:hostInsets frame:sceneFrame];
     }];
+}
+
+- (void)logGeometryWithInsets:(UIEdgeInsets)insets frame:(CGRect)frame {
+    const char *dir = getenv("TD_CONSOLE_LOG_DIR");
+    NSString *directory = (dir && dir[0] == '/') ? [NSString stringWithUTF8String:dir] : nil;
+    if (!directory) {
+        const char *home = getenv("LC_HOME_PATH");
+        if (home && home[0] == '/') {
+            directory = [NSString stringWithFormat:@"%s/Documents/ConsoleLog", home];
+        }
+    }
+    if (!directory) return;
+    [[NSFileManager defaultManager] createDirectoryAtPath:directory withIntermediateDirectories:YES attributes:nil error:nil];
+    NSString *line = [NSString stringWithFormat:
+        @"[geometry] mode=decorated pid=%d view=%@ window=%@ safe=%@ frame=%@ maximized=%d orientation=%ld\n",
+        getpid(), NSStringFromCGRect(self.view.bounds),
+        self.view.window ? NSStringFromCGRect(self.view.window.bounds) : @"(none)",
+        NSStringFromUIEdgeInsets(insets), NSStringFromCGRect(frame),
+        (int)self.isMaximized, (long)UIApplication.sharedApplication.statusBarOrientation];
+    NSString *path = [directory stringByAppendingPathComponent:
+                      [NSString stringWithFormat:@"geometry-%d.log", getpid()]];
+    if ([[NSFileManager defaultManager] fileExistsAtPath:path]) {
+        NSFileHandle *handle = [NSFileHandle fileHandleForWritingAtPath:path];
+        [handle seekToEndOfFile];
+        [handle writeData:[line dataUsingEncoding:NSUTF8StringEncoding]];
+        [handle closeFile];
+    } else {
+        [line writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    }
 }
 
 - (void)observeValueForKeyPath:(NSString *)keyPath ofObject:(id)object change:(NSDictionary *)change context:(void *)context {
