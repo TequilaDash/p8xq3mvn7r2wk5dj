@@ -131,7 +131,7 @@ struct TDAppStackSettingsView: View {
                     .onChange(of: enabled) { _, _ in
                         // The guest button reads the app group in another
                         // process; flush it so a double tap sees the change.
-                        LCUtils.appGroupUserDefault?.synchronize()
+                        LCUtils.appGroupUserDefault.synchronize()
                     }
             } footer: {
                 Text("开启后，双击辅助触控打开堆叠后台；卡片显示应用当前界面（缩小显示），图标在左上角。关闭后双击不再响应。")
