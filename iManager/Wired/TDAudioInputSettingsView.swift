@@ -29,8 +29,28 @@ struct TDAudioInputSettingsView: View {
                                                              nil, nil, true)
                     }
             }
+
+            Section {
+                Label {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("多任务窗口无法录音")
+                            .font(.headline)
+                        Text("多任务窗口运行在 LiveProcess 扩展进程里。按 Apple 扩展编程指南，这类非 iMessage 扩展不能访问麦克风，所以授权、输入路由都正常时 record() 仍会返回 false。这是系统限制，不是本应用可以桥接的会话问题。")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                        Text("需要录音的应用请在该应用的长按菜单里关闭「在窗口中打开」，以全屏模式启动；全屏访客运行在宿主进程里，可以正常申请麦克风。")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                } icon: {
+                    Image(systemName: "mic.slash")
+                        .foregroundStyle(.orange)
+                }
+            } header: {
+                Text("为什么多任务下录不了音")
+            }
         }
-        .navigationTitle("音频会话诊断")
+        .navigationTitle("音频输入")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {

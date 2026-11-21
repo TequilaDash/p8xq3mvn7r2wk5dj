@@ -31,10 +31,12 @@ struct AppRootView: View {
                     .zIndex(1)
             }
 
-            TDGlobalHomeOverlay(action: home.goHome)
-                .zIndex(2)
         }
         .onChange(of: onboarding.isPresented, onboardingChanged)
+        .onAppear { TDHostHomeOverlayController.shared.attach() }
+        .onReceive(NotificationCenter.default.publisher(for: .lcHostHomePressed)) { _ in
+            home.goHome()
+        }
         // Where the Home button goes, on the Home Screen and every screen
         // over it: beside an iPad's Home button, as the iPad is turned.
         .environment(\.homeButtonEdge, HomeButtonEdge(sceneDelegate.interfaceOrientation))
@@ -74,6 +76,7 @@ private struct TDGlobalHomeOverlay: View {
     @State private var dimmed = false
     @State private var dimGeneration = 0
     @State private var dragBase: CGSize?
+    @State private var pendingPress: DispatchWorkItem?
 
     var body: some View {
         Group {
@@ -88,9 +91,25 @@ private struct TDGlobalHomeOverlay: View {
                     )
 
                     HomeButton {
-                        action()
-                        scheduleDim()
+                        // Wait for a possible second tap: one tap goes home,
+                        // a double tap opens the stack and cancels the single.
+                        pendingPress?.cancel()
+                        let work = DispatchWorkItem {
+                            action()
+                            scheduleDim()
+                        }
+                        pendingPress = work
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.28, execute: work)
                     }
+                    .simultaneousGesture(
+                        TapGesture(count: 2).onEnded {
+                            pendingPress?.cancel()
+                            pendingPress = nil
+                            if #available(iOS 16.0, *) {
+                                MultitaskStackManager.shared.present()
+                            }
+                        }
+                    )
                     .position(center)
                     .opacity(dimmed && dimEnabled ? max(0.15, min(1.0, dimAlpha)) : 1)
                     .simultaneousGesture(

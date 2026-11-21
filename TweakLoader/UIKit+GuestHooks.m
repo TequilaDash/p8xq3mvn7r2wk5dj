@@ -625,7 +625,15 @@ static CGRect LCGuestStatusBarFrame(UIApplication *application) {
 
         if (!keyScene) return LCCacheGuestStatusBarFrame(CGRectZero);
         CGFloat width = keyWindow ? keyWindow.bounds.size.width : keyScene.coordinateSpace.bounds.size.width;
-        CGRect fallback = width > 0 ? CGRectMake(0, 0, width, 20) : CGRectZero;
+        // A hardcoded 20pt is the pre-notch height; on a Dynamic Island
+        // device it leaves guest content under the clock. Prefer the guest
+        // window's own top inset and keep 20pt only as the true zero case.
+        CGFloat height = 20;
+        if (keyWindow) {
+            CGFloat top = keyWindow.safeAreaInsets.top;
+            if (top > 0 && top < 200) height = top;
+        }
+        CGRect fallback = width > 0 ? CGRectMake(0, 0, width, height) : CGRectZero;
         // Publish this scene's current geometry before asking the manager:
         // recursive queries must not receive the previous scene/rotation's rect.
         LCCacheGuestStatusBarFrame(fallback);

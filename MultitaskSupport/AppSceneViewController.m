@@ -494,10 +494,22 @@ static void LCShowAppStackNotification(CFNotificationCenterRef center, void *obs
                                        CFStringRef name, const void *object,
                                        CFDictionaryRef userInfo) {
     dispatch_async(dispatch_get_main_queue(), ^{
-        if (NSUserDefaults.lcGuestAppId || NSUserDefaults.isLiveProcess) return;
-        if (@available(iOS 16.0, *)) {
-            NSLog(@"[TDHome] app stack request received; waiting for an active host window if needed");
-            [MultitaskStackManager.shared present];
+        // A fullscreen guest runs inside this process, so its double tap can
+        // open the stack over the guest window directly. A multitask guest's
+        // LiveProcess has no manager; the host receives this notification.
+        // A fullscreen guest posts this and then goes home; delay so the stack
+        // opens on the Home Screen instead of racing the guest window.
+        BOOL insideGuest = NSUserDefaults.lcGuestAppId != nil || NSUserDefaults.isLiveProcess;
+        void (^open)(void) = ^{
+            if (@available(iOS 16.0, *)) {
+                NSLog(@"[TDHome] app stack request received; opening");
+                [MultitaskStackManager.shared present];
+            }
+        };
+        if (insideGuest) {
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.6 * NSEC_PER_SEC)), dispatch_get_main_queue(), open);
+        } else {
+            open();
         }
     });
 }
