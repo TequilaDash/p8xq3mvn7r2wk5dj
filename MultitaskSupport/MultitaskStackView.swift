@@ -24,8 +24,6 @@ public class MultitaskStackManager: NSObject, ObservableObject {
     @Published public var selectedIndex = 0
     @Published private(set) var apps: [DockAppModel] = []
     @Published private(set) var message: String?
-    /// The app whose settings sheet is open over the stack.
-    @Published var settingsTarget: StackSettingsTarget?
 
     // A window retains its root controller, and the manager owns both until
     // dismissal. Retaining only host.view does not retain a hosting controller.
@@ -387,11 +385,12 @@ public class MultitaskStackManager: NSObject, ObservableObject {
 
     @objc public func showAppInfo(uuid: String) {
         DispatchQueue.main.async {
-            guard let app = self.appModel(for: uuid) else {
+            guard self.appModel(for: uuid) != nil else {
                 self.message = "找不到该应用的信息"
                 return
             }
-            self.settingsTarget = StackSettingsTarget(id: uuid, app: app)
+            self.dismiss()
+            NotificationCenter.default.post(name: .lcStackShowAppSettings, object: nil, userInfo: ["uuid": uuid])
         }
     }
 
@@ -427,19 +426,15 @@ public class MultitaskStackManager: NSObject, ObservableObject {
     }
 }
 
-/// The app whose settings sheet is open over the stack.
-@available(iOS 16.0, *)
-struct StackSettingsTarget: Identifiable {
-    let id: String
-    let app: LCAppModel
-}
-
 extension Notification.Name {
     /// Posted when the stack opens a window, so the Home Screen closes its own
     /// sheet before the guest comes forward.
     static let lcCloseHostScreens = Notification.Name("LCCloseHostScreens")
     /// Posted with `userInfo["uuid"]` when the stack asks for an app's split.
     static let lcStackSplitApp = Notification.Name("LCStackSplitApp")
+    /// Posted with `userInfo["uuid"]` to open an app's settings on the host,
+    /// where the SwiftUI environment objects exist.
+    static let lcStackShowAppSettings = Notification.Name("LCStackShowAppSettings")
 }
 
 
@@ -501,9 +496,6 @@ struct MultitaskStackView: View {
             }
             .foregroundStyle(.white)
             .padding(.vertical, 24)
-        }
-        .sheet(item: $manager.settingsTarget) { target in
-            HomeAppSettingsScreen(app: target.app)
         }
     }
 
@@ -628,6 +620,13 @@ struct AppStackCard: View {
         .contentShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
         .onTapGesture(perform: onSelect)
         .contextMenu {
+            if let bundleId = app.appInfo?.bundleIdentifier(), !bundleId.isEmpty {
+                Button {
+                } label: {
+                    Label(bundleId, systemImage: "shippingbox")
+                }
+                .disabled(true)
+            }
             Button(action: onAppInfo) {
                 Label("应用信息", systemImage: "info.circle")
             }

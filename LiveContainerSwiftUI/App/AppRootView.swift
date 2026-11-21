@@ -36,6 +36,9 @@ struct AppRootView: View {
         }
         .onChange(of: onboarding.isPresented, onboardingChanged)
         .onAppear { TDHostHomeOverlayController.shared.attach() }
+        .onChange(of: home.isCoveredByScreen) { _, covered in
+            TDHostHomeOverlayController.shared.setHostScreenCovered(covered)
+        }
         .onReceive(NotificationCenter.default.publisher(for: .lcHostHomePressed)) { _ in
             if #available(iOS 16.0, *) {
                 MultitaskStackManager.shared.dismiss()
@@ -45,6 +48,13 @@ struct AppRootView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .lcCloseHostScreens)) { _ in
             home.showHomeScreen()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .lcStackShowAppSettings)) { note in
+            guard let uuid = note.userInfo?["uuid"] as? String,
+                  let app = home.apps.values.first(where: {
+                      ($0.appInfo.dataUUID as String?) == uuid
+                  }) else { return }
+            home.showSettings(for: app)
         }
         .onReceive(NotificationCenter.default.publisher(for: .lcStackSplitApp)) { note in
             guard let uuid = note.userInfo?["uuid"] as? String,
@@ -239,6 +249,9 @@ private final class TDHostHomeOverlayController {
     private var observer: NSObjectProtocol?
     private var stackVisibilitySubscription: AnyCancellable?
     private var stackIsVisible = false
+    private var hostScreenCovered = false
+
+    private var overlayShouldHide: Bool { stackIsVisible || hostScreenCovered }
 
     private init() {
         observer = NotificationCenter.default.addObserver(
@@ -254,7 +267,7 @@ private final class TDHostHomeOverlayController {
             .compactMap({ $0 as? UIWindowScene })
             .first(where: { $0.activationState == .foregroundActive }) else { return }
         if let window, window.windowScene === scene {
-            window.isHidden = stackIsVisible
+            window.isHidden = overlayShouldHide
             return
         }
 
@@ -273,7 +286,7 @@ private final class TDHostHomeOverlayController {
         overlay.windowLevel = UIWindow.Level.alert + 2
         overlay.backgroundColor = .clear
         overlay.rootViewController = host
-        overlay.isHidden = stackIsVisible
+        overlay.isHidden = overlayShouldHide
         hosting = host
         window = overlay
     }
@@ -291,6 +304,13 @@ private final class TDHostHomeOverlayController {
 
     private func setStackVisible(_ visible: Bool) {
         stackIsVisible = visible
-        window?.isHidden = visible
+        window?.isHidden = overlayShouldHide
+    }
+
+    /// Host screens such as Settings already have their own back button; the
+    /// floating control would sit over their rows, so it steps aside.
+    func setHostScreenCovered(_ covered: Bool) {
+        hostScreenCovered = covered
+        window?.isHidden = overlayShouldHide
     }
 }
