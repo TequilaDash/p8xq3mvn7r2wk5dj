@@ -5,7 +5,8 @@
 4. 状态栏兜底从固定 20pt 改为访客窗口顶部安全区，Dynamic Island 机型不再把内容压到时钟下。
 5. 音频：多任务窗口运行在 LiveProcess 扩展进程，按 Apple 扩展编程指南不能访问麦克风；设置页说明原因，并给出关闭「在窗口中打开」改用全屏的可行方案，不再伪装成功。
 6. 仍未修复/未证实：两份新崩溃均在来宾自身代码（discover 递归 +0xd92f41c；llykwai 断言 View must not be nil +0x4784c），未落在保留的宿主帧；Via 界面异常和两种模式环境差异仍未定位，不宣称已解决。
-7. 构建证据：源码 36eb45a9，Xcode 26.6 / iPhoneOS 26.5，Archive/IPA/上传成功；IPA SHA256 ba0cd12cff281807411d96bed4ddb213026ac9bf7fc558371244b1cecb321727。包内版本仍 1.1.57，未发布、未覆盖旧 tag。
+7. 多任务启动载荷补传 per-app「隐藏 LiveContainer」等门控，并给 hostUrlScheme/选中项/bookmark 加 nil 防护，避免字典字面量与 addObject:nil 崩溃；全屏与多任务现在读同一组 per-app 门控。
+8. 构建证据：源码 35b407a3，Xcode 26.6 / iPhoneOS 26.5，Archive/IPA成功；IPA SHA256 0776c4f6625cff1bab08fa5e7009ee26c16ee173440ac071907b4a95b07fe635。包内版本仍 1.1.57，未发布、未覆盖旧 tag。
 
 20261121-083358 未发布验证分支（不是 v1.1.57 发行更新）：
 1. 用户在 v1.1.57 真机上仍复现崩溃、双击堆叠入口、侧滑、状态栏及音频问题；此前条目中的“已修复”不作为真机通过结论。
