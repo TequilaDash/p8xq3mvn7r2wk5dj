@@ -82,15 +82,15 @@ struct AppSceneViewSwiftUI: UIViewControllerRepresentable {
         /// One line per activation in the exportable log, so fullscreen and
         /// multitask geometry can be compared instead of inferred.
         private static func logGeometry(vc: AppSceneViewController, window: UIWindow?) {
-            let group = LCSharedUtils.appGroupID()
-            guard let container = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: group) else { return }
+            guard let group = LCSharedUtils.appGroupID(),
+                  let container = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: group) else { return }
             let dir = container.appendingPathComponent("LiveContainer/ConsoleLog")
             try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-            let line = "[geometry] mode=multitask pid=\(getpid()) view=\(vc.view.frame) window=\(window?.bounds.debugDescription ?? "(none)") safe=\(window?.safeAreaInsets.debugDescription ?? "(none)") scene=\(String(describing: window?.windowScene?.interfaceOrientation.rawValue))\n"
+            let line = "[geometry] mode=multitask pid=\(getpid()) view=\(vc.view.frame) window=\(window?.bounds.debugDescription ?? "(none)") safe=\(String(describing: window?.safeAreaInsets)) scene=\(String(describing: window?.windowScene?.interfaceOrientation.rawValue))\n"
             let path = dir.appendingPathComponent("geometry-\(getpid()).log")
             if let handle = try? FileHandle(forWritingTo: path) {
                 handle.seekToEndOfFile()
-                handle.write(line.data(using: .utf8) ?? Data())
+                handle.write(line.data(using: String.Encoding.utf8) ?? Data())
                 try? handle.close()
             } else {
                 try? line.write(to: path, atomically: true, encoding: .utf8)
