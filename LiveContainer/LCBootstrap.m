@@ -424,6 +424,11 @@ static void LCAdaptSecurityPresets(NSString *bundlePath, NSString *guestId, NSSt
         [presets writeToFile:path atomically:YES];
         NSLog(@"[LC] adapted SecurityPresets baseline guest=%@ exec=%@", guestId, execHash);
     }
+    TDAppendLaunchLog([NSString stringWithFormat:
+        @"securitypresets bundle=%@ exists=%d changed=%d bundleId=%@ execHash=%d profileBackup=%d",
+        bundlePath, (int)[fm fileExistsAtPath:path], (int)changed, guestId ?: @"-",
+        execHash ? (int)execHash.length : 0,
+        (int)[fm fileExistsAtPath:profileBackup]]);
 }
 
 static void LCEnsureOriginalInfoPlistBackup(NSString* bundlePath,
