@@ -1,8 +1,8 @@
-20261121-184500 未发布验证分支（R25，构建 44895610023）：
+20261121-184500 未发布验证分支（R25，构建 44896691755）：
 1. 辅助触控单击/双击改为真正的互斥手势（双击优先，单等双击失败），消除“双击既开堆叠又回主屏、堆叠一闪而过”；堆叠窗口显示时隐藏宿主按钮，避免挡住卡片。
-2. 几何诊断不再因缺少 app-group 而静默丢失：状态栏与多任务激活日志按 TD_CONSOLE_LOG_DIR → LC_HOME_PATH/Documents/ConsoleLog → app-group 顺序落盘，下次导出应出现 geometry-<pid>.log。
+2. 几何诊断不再因缺少 app-group 而静默丢失：状态栏与多任务激活日志按 TD_CONSOLE_LOG_DIR → LC_HOME_PATH/Documents/ConsoleLog → app-group 顺序落盘；另新增 `mode=multitask-applied` 行，记录实际送入访客 scene 的 frame、安全区 inset 与方向。下次导出应出现 geometry-<pid>.log。
 3. 全屏模式在 fallback TweakLoader 加载后重建 dyld 可见镜像映射，并在重建时按路径再次裁剪晚期加载的隐藏镜像，收紧全屏/多任务的枚举面差异（不伪造检测结果）。
-4. 构建证据：源码 0ca8b36d，Archive/IPA 成功，IPA SHA256 8ca4171ea07f9c4e6d03fffaf139497edacdfa97e05ccc72da0294af05630b68。版本仍 1.1.57，未发布。
+4. 构建证据：源码 817de092，Archive/IPA 成功，IPA SHA256 4afc6c78114e569a75cd95290b4ec7ad25653fbbc5909f4e3a86a412c7f01e0c。版本仍 1.1.57，未发布。
 5. 崩溃归因更新：全能签 NSKSign +0x714514 = swift_Concurrency_fatalError，唯一调用点 swift56override_swift_task_future_wait，即其自带 Swift 5.6 并发兼容层在 async 任务报错时 abort；不是反注入 abort，尚未定位具体失败操作。另一崩溃仍是 guest llykwai.dylib 的 “View must not be nil” 断言，非宿主帧。
 6. 状态栏/Via/底栏：本次未改几何数值；旧构建未产出 geometry 日志，无法用实测证明改对。新包需导出 geometry 日志和同 bundle 全屏/多任务对照截图后再定位。
 20261121-141000 未发布验证分支（R24，构建 44880898284）：
