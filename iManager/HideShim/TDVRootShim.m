@@ -152,7 +152,8 @@ static void tdv_log_tweaks_hit(const char *fn, const char *path) {
 // 把 path 映射到 vroot 或访客包内原件; 命中返回映射指针, 否则返回原指针.
 // TDVGuestFileMapHidden 以 NULL + ENOENT 通知 path hook.
 static inline const char *tdv_mapped_for_caller(const char *path, char *buf, size_t bufSize,
-                                                void *caller) {
+                                                void *caller, bool *originalArtifact) {
+    *originalArtifact = false;
     if (!path || path[0] != '/') {
         return path;
     }
@@ -160,6 +161,7 @@ static inline const char *tdv_mapped_for_caller(const char *path, char *buf, siz
     const char *callerImage = caller && dladdr(caller, &info) ? info.dli_fname : NULL;
     TDVGuestFileMapResult guestMap = TDVGuestMapBundleFile(path, callerImage, buf, bufSize);
     if (guestMap == TDVGuestFileMapTo) {
+        *originalArtifact = true;
         return buf;
     }
     if (guestMap == TDVGuestFileMapHidden) {
@@ -172,9 +174,6 @@ static inline const char *tdv_mapped_for_caller(const char *path, char *buf, siz
     return path;
 }
 
-static inline const char *tdv_mapped(const char *path, char *buf, size_t bufSize) {
-    return tdv_mapped_for_caller(path, buf, bufSize, NULL);
-}
 
 static inline const char *tdv_vroot_mapped(const char *path, char *buf, size_t bufSize) {
     if (path && path[0] == '/' && TDVRootMapPath(path, buf, bufSize)) {
@@ -198,6 +197,11 @@ static inline bool tdv_hidden_path_result(const char *mapped) {
     return mapped == NULL;
 }
 
+static inline bool tdv_open_mutates_file(int flags) {
+    return (flags & O_ACCMODE) != O_RDONLY ||
+           (flags & (O_CREAT | O_TRUNC | O_APPEND)) != 0;
+}
+
 static int tdv_open(const char *path, int flags, ...) {
     mode_t mode = 0;
     bool hasMode = (flags & O_CREAT) != 0;
@@ -214,9 +218,10 @@ static int tdv_open(const char *path, int flags, ...) {
         errno = ENOENT;
         return -1;
     }
-    const char *use = tdv_mapped_for_caller(path, buf, sizeof(buf), caller);
+    bool originalArtifact;
+    const char *use = tdv_mapped_for_caller(path, buf, sizeof(buf), caller, &originalArtifact);
     if (tdv_hidden_path_result(use)) return -1;
-    if (use != path && (flags & O_ACCMODE) != O_RDONLY) {
+    if (originalArtifact && tdv_open_mutates_file(flags)) {
         errno = EROFS;
         return -1;
     }
@@ -243,9 +248,10 @@ static int tdv_openat(int fd, const char *path, int flags, ...) {
         return -1;
     }
     // 相对路径不映射: 语义取决于 dirfd, 无法安全改写.
-    const char *use = tdv_mapped_for_caller(path, buf, sizeof(buf), caller);
+    bool originalArtifact;
+    const char *use = tdv_mapped_for_caller(path, buf, sizeof(buf), caller, &originalArtifact);
     if (tdv_hidden_path_result(use)) return -1;
-    if (path && path[0] == '/' && use != path && (flags & O_ACCMODE) != O_RDONLY) {
+    if (originalArtifact && tdv_open_mutates_file(flags)) {
         errno = EROFS;
         return -1;
     }
@@ -266,9 +272,10 @@ static int tdv_open_nocancel(const char *path, int flags, ...) {
     }
     char buf[PATH_MAX];
     void *caller = __builtin_return_address(0);
-    const char *use = tdv_mapped_for_caller(path, buf, sizeof(buf), caller);
+    bool originalArtifact;
+    const char *use = tdv_mapped_for_caller(path, buf, sizeof(buf), caller, &originalArtifact);
     if (tdv_hidden_path_result(use)) return -1;
-    if (use != path && (flags & O_ACCMODE) != O_RDONLY) {
+    if (originalArtifact && tdv_open_mutates_file(flags)) {
         errno = EROFS;
         return -1;
     }
@@ -609,94 +616,136 @@ static int tdv_sysctl_impl(int *name, u_int namelen, void *oldp, size_t *oldlenp
 
 #pragma mark - SecTask entitlement 隐藏 (TD_SECTASK_SPOOF)
 
-// 检测器经 SecTaskCopyValueForEntitlement 读宿主任务 entitlement: 命中宿主私有键
-// (get-task-allow / com.apple.private.* / com.apple.developer.* / 注入框架前缀)
-// 即暴露侧载+注入宿主身份. 隐藏语义 = 返回 NULL 且 *error 清空 (与"键不存在"
-// 完全同形). 合法键 (application-groups / team-identifier 等) 透传 —— 宿主自身
-// 的 td_signed_app_groups (worse_query.m:133) 依赖 application-groups, 不能误伤.
-// 门控与键表在 TDVRootConfig (TDVSecTaskSpoofEnabled / TDVSecTaskHideEntitlement).
+// Compatibility views apply only to guest queries of tasks created explicitly
+// from this process. Audit-token and unknown tasks retain native API semantics.
 typedef struct __SecTask *tdv_SecTaskRef;
 
+extern tdv_SecTaskRef tdv_real_sectask_create_self(CFAllocatorRef allocator)
+    __asm("_SecTaskCreateFromSelf");
 extern void *tdv_real_sectask_copy(tdv_SecTaskRef task, CFStringRef entitlement,
                                    void **error)
     __asm("_SecTaskCopyValueForEntitlement");
+extern CFDictionaryRef tdv_real_sectask_copy_values(tdv_SecTaskRef task,
+                                                    CFArrayRef entitlements,
+                                                    void **error)
+    __asm("_SecTaskCopyValuesForEntitlements");
+// Load-time function-address relocations are independent of mutable GOT slots.
+static tdv_SecTaskRef (*gTDVRealSecTaskCreateSelf)(CFAllocatorRef) = tdv_real_sectask_create_self;
+static void *(*gTDVRealSecTaskCopy)(tdv_SecTaskRef, CFStringRef, void **) = tdv_real_sectask_copy;
+static CFDictionaryRef (*gTDVRealSecTaskCopyValues)(tdv_SecTaskRef, CFArrayRef, void **) = tdv_real_sectask_copy_values;
+
+// Retaining a bounded set prevents pointer reuse from classifying a foreign task
+// as self. Evicted but still-live objects deliberately fall back to native reads.
+#define TDV_SELF_TASK_CAP 16
+static tdv_SecTaskRef gTDVSelfTasks[TDV_SELF_TASK_CAP];
+static unsigned gTDVSelfTaskNext;
+static pthread_mutex_t gTDVSelfTaskLock = PTHREAD_MUTEX_INITIALIZER;
+
+static tdv_SecTaskRef tdv_sectask_create_self_impl(CFAllocatorRef allocator) {
+    tdv_SecTaskRef task = gTDVRealSecTaskCreateSelf(allocator);
+    if (!task || !TDVSecTaskSpoofEnabled()) return task;
+    CFRetain(task);
+    pthread_mutex_lock(&gTDVSelfTaskLock);
+    unsigned slot = gTDVSelfTaskNext++ % TDV_SELF_TASK_CAP;
+    tdv_SecTaskRef evicted = gTDVSelfTasks[slot];
+    gTDVSelfTasks[slot] = task;
+    pthread_mutex_unlock(&gTDVSelfTaskLock);
+    if (evicted) CFRelease(evicted);
+    return task;
+}
+
+static bool tdv_sectask_is_tracked_self(tdv_SecTaskRef task) {
+    if (!task) return false;
+    bool found = false;
+    pthread_mutex_lock(&gTDVSelfTaskLock);
+    for (unsigned i = 0; i < TDV_SELF_TASK_CAP; ++i) {
+        if (gTDVSelfTasks[i] == task) {
+            found = true;
+            break;
+        }
+    }
+    pthread_mutex_unlock(&gTDVSelfTaskLock);
+    return found;
+}
+
+static const char *tdv_sectask_guest_caller(tdv_SecTaskRef task, void *caller, Dl_info *info) {
+    if (!TDVSecTaskSpoofEnabled() || !tdv_sectask_is_tracked_self(task) ||
+        !caller || !dladdr(caller, info) || !TDVGuestCallerIsGuestImage(info->dli_fname)) {
+        return NULL;
+    }
+    return info->dli_fname;
+}
+
 
 static void *tdv_sectask_copy_impl(tdv_SecTaskRef task, CFStringRef entitlement,
                                    void **error) {
-    // entitlement 是 CFStringRef (Foundation 已 import, CF 类型直接可用);
-    // CFStringGetCString 不经 interpose, 无递归风险.
+    void *value = gTDVRealSecTaskCopy(task, entitlement, error);
+    if (!value || !entitlement || CFGetTypeID(entitlement) != CFStringGetTypeID()) return value;
+    Dl_info info = {0};
+    const char *callerImage = tdv_sectask_guest_caller(task, __builtin_return_address(0), &info);
+    if (!callerImage) return value;
     char name[256];
-    Boolean ok = false;
-    if (entitlement) {
-        ok = CFStringGetCString(entitlement, name, sizeof(name), kCFStringEncodingUTF8);
+    if (!CFStringGetCString(entitlement, name, sizeof(name), kCFStringEncodingUTF8)) return value;
+    void *replacement = TDVSecTaskReplacementForEntitlement(name, callerImage);
+    if (replacement) {
+        CFRelease(value);
+        return replacement;
     }
-    if (ok) {
-        Dl_info info = {0};
-        const char *callerImage = dladdr(__builtin_return_address(0), &info) ? info.dli_fname : NULL;
-        void *replacement = TDVSecTaskReplacementForEntitlement(name, callerImage);
-        if (replacement) {
-            if (error) *error = NULL;
-            return replacement;
-        }
-    }
-    if (ok && TDVSecTaskHideEntitlement(name)) {
-        if (error) *error = NULL;
+    if (TDVSecTaskHideEntitlement(name)) {
+        CFRelease(value);
         return NULL;
     }
-    return tdv_real_sectask_copy(task, entitlement, error);
+    return value;
 }
 
 #pragma mark - csops 伪 CS flags (TD_CSOPS_SPOOF)
 
-// 检测器两个通道读同一组内核 flags: csops(pid, CS_OPS_STATUS) 与
-// csops_audittoken(token, CS_OPS_STATUS). 拦 CS_OPS_STATUS, 清
-// CS_GET_TASK_ALLOW (侧载宿主必有, 必露) 与 CS_DEBUGGED (调试器判据,
-// TD_CSOPS_KEEP_DEBUGGED=1 时保留给宿主自己的调试器探测链路).
-// 其余 ops (CS_OPS_MARKINVALID 等) 与 pid!=self 的查询透传.
-// 位定义与门控在 TDVRootConfig (TDVCsopsSpoofEnabled / TDVCsopsSpoofLookup).
+// Status compatibility is guest/self only. All other operations, especially
+// CS_OPS_CDHASH, return the kernel's identity rather than a package-file hash.
 extern int tdv_real_csops(int pid, unsigned int ops, void *useraddr, size_t usersize)
     __asm("_csops");
 extern int tdv_real_csops_audittoken(int pid, unsigned int ops, void *useraddr,
                                      size_t usersize, void *token)
     __asm("_csops_audittoken");
+static int (*gTDVRealCsops)(int, unsigned int, void *, size_t) = tdv_real_csops;
+static int (*gTDVRealCsopsAuditToken)(int, unsigned int, void *, size_t, void *) = tdv_real_csops_audittoken;
 
 static int tdv_csops_apply(unsigned int ops, void *useraddr, size_t usersize,
                            int realRc, void *caller) {
-    if (realRc != 0 || !useraddr) {
-        return realRc;
-    }
+    if (realRc != 0 || !useraddr || !TDVCsopsSpoofEnabled()) return realRc;
+    Dl_info info = {0};
+    if (!caller || !dladdr(caller, &info) || !TDVGuestCallerIsGuestImage(info.dli_fname)) return realRc;
     if (ops == 0 /*CS_OPS_STATUS*/ && usersize >= sizeof(unsigned int)) {
         unsigned int fake = 0;
         memcpy(&fake, useraddr, sizeof(unsigned int));
         if (TDVCsopsSpoofLookup(fake, &fake)) {
             memcpy(useraddr, &fake, sizeof(unsigned int));
         }
-    } else if (ops == 5 /*CS_OPS_CDHASH*/ && usersize >= 20) {
-        Dl_info info = {0};
-        const char *callerImage = caller && dladdr(caller, &info) ? info.dli_fname : NULL;
-        if (callerImage) {
-            (void)TDVOriginalExecutableCodeDirectoryHash(callerImage, useraddr, usersize);
-        }
     }
     return realRc;
 }
 
+static int tdv_csops_for_caller(int pid, unsigned int ops, void *useraddr,
+                                 size_t usersize, void *caller) {
+    int rc = gTDVRealCsops(pid, ops, useraddr, usersize);
+    if (pid != getpid()) return rc;
+    return tdv_csops_apply(ops, useraddr, usersize, rc, caller);
+}
+
+static int tdv_csops_audittoken_for_caller(int pid, unsigned int ops, void *useraddr,
+                                            size_t usersize, void *token, void *caller) {
+    int rc = gTDVRealCsopsAuditToken(pid, ops, useraddr, usersize, token);
+    if (pid != getpid()) return rc;
+    return tdv_csops_apply(ops, useraddr, usersize, rc, caller);
+}
+
 static int tdv_csops_impl(int pid, unsigned int ops, void *useraddr, size_t usersize) {
-    // 仅伪化自身 pid 查询 (getpid 同进程恒等; 跨 pid 查询给真值 —— 访客无权跨进程读).
-    if (pid != getpid()) {
-        return tdv_real_csops(pid, ops, useraddr, usersize);
-    }
-    int rc = tdv_real_csops(pid, ops, useraddr, usersize);
-    return tdv_csops_apply(ops, useraddr, usersize, rc, __builtin_return_address(0));
+    return tdv_csops_for_caller(pid, ops, useraddr, usersize, __builtin_return_address(0));
 }
 
 static int tdv_csops_audittoken_impl(int pid, unsigned int ops, void *useraddr,
                                      size_t usersize, void *token) {
-    if (pid != getpid()) {
-        return tdv_real_csops_audittoken(pid, ops, useraddr, usersize, token);
-    }
-    int rc = tdv_real_csops_audittoken(pid, ops, useraddr, usersize, token);
-    return tdv_csops_apply(ops, useraddr, usersize, rc, __builtin_return_address(0));
+    return tdv_csops_audittoken_for_caller(pid, ops, useraddr, usersize, token, __builtin_return_address(0));
 }
 
 // Exported for hook_dlsym(): some detectors call dlsym(RTLD_DEFAULT, "csops")
@@ -704,13 +753,13 @@ static int tdv_csops_audittoken_impl(int pid, unsigned int ops, void *useraddr,
 // makes the same spoofing logic apply to that API path too.
 __attribute__((visibility("default")))
 int TDVReplacementCsops(int pid, unsigned int ops, void *useraddr, size_t usersize) {
-    return tdv_csops_impl(pid, ops, useraddr, usersize);
+    return tdv_csops_for_caller(pid, ops, useraddr, usersize, __builtin_return_address(0));
 }
 
 __attribute__((visibility("default")))
 int TDVReplacementCsopsAuditToken(int pid, unsigned int ops, void *useraddr,
                                   size_t usersize, void *token) {
-    return tdv_csops_audittoken_impl(pid, ops, useraddr, usersize, token);
+    return tdv_csops_audittoken_for_caller(pid, ops, useraddr, usersize, token, __builtin_return_address(0));
 }
 
 #pragma mark - proc 族伪值 (TD_PROC_SPOOF)
@@ -845,16 +894,10 @@ TDV_INTERPOSE(tdv_getegid, tdv_real_getegid);
 TDV_INTERPOSE(tdv_sysctlbyname, tdv_real_sysctlbyname);
 TDV_INTERPOSE(tdv_sysctl_impl, tdv_real_sysctl);
 TDV_INTERPOSE(tdv_sectask_copy_impl, tdv_real_sectask_copy);
-static void tdv_sectask_apply_replacement(const void *key, const void *value, void *context) {
-    CFDictionarySetValue((CFMutableDictionaryRef)context, key, value);
-}
 static CFDictionaryRef tdv_sectask_copy_values_impl(tdv_SecTaskRef task,
                                                      CFArrayRef entitlements,
                                                      void **error);
-extern CFDictionaryRef tdv_real_sectask_copy_values(tdv_SecTaskRef task,
-                                                    CFArrayRef entitlements,
-                                                    void **error)
-    __asm("_SecTaskCopyValuesForEntitlements");
+TDV_INTERPOSE(tdv_sectask_create_self_impl, tdv_real_sectask_create_self);
 TDV_INTERPOSE(tdv_sectask_copy_values_impl, tdv_real_sectask_copy_values);
 TDV_INTERPOSE(tdv_csops_impl, tdv_real_csops);
 TDV_INTERPOSE(tdv_csops_audittoken_impl, tdv_real_csops_audittoken);
@@ -865,67 +908,43 @@ TDV_INTERPOSE(tdv_mach_port_get_refs_impl, tdv_real_mach_port_get_refs);
 TDV_INTERPOSE(tdv_bootstrap_look_up2_impl, tdv_real_bootstrap_look_up);
 #pragma mark - SecTask 复数/audit-token 通道 (TD_SECTASK_SPOOF 同门控)
 
-// 绕过口子封堵: 单数 CopyValueForEntitlement 拦了, 但检测器可用
-//   · SecTaskCopyValuesForEntitlements (CFDictionaryRef 一次拿多键)
-//   · SecTaskCreateWithAuditToken + CopyValueForEntitlement (经 token 建任务再查)
-// 两条通道绕过. 复数通道策略: 逐键过 TDVSecTaskHideEntitlement, 命中键从入参
-// entitlements 数组剔除后调原实现 (返回字典少键 = 键不存在同形); 全部命中则
-// 传空数组. WithAuditToken 通道: Create 本身不泄数据, 只需拦后续 Copy ——
-// Copy 的 task 参数与 self 同进程, 单数拦截天然覆盖, 无需额外处理.
+// Always query the complete native key set first, preserving validation errors,
+// missing keys and ownership. Copy the result only when an existing value changes.
 static CFDictionaryRef tdv_sectask_copy_values_impl(tdv_SecTaskRef task,
                                                     CFArrayRef entitlements,
                                                     void **error) {
-    if (!TDVSecTaskSpoofEnabled() || entitlements == NULL) {
-        return tdv_real_sectask_copy_values(task, entitlements, error);
-    }
-    CFIndex n = CFArrayGetCount(entitlements);
-    bool anyHidden = false, anyReplacement = false;
+    CFDictionaryRef result = gTDVRealSecTaskCopyValues(task, entitlements, error);
+    if (!result || !entitlements || CFGetTypeID(entitlements) != CFArrayGetTypeID()) return result;
     Dl_info info = {0};
-    const char *callerImage = dladdr(__builtin_return_address(0), &info) ? info.dli_fname : NULL;
-    CFMutableArrayRef filtered = CFArrayCreateMutableCopy(kCFAllocatorDefault, n, entitlements);
-    CFMutableDictionaryRef replacements = NULL;
-    if (filtered == NULL) {
-        return tdv_real_sectask_copy_values(task, entitlements, error);
-    }
-    replacements = CFDictionaryCreateMutable(kCFAllocatorDefault, 0,
-        &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
-    // 从后往前剔除命中键 (避免索引位移). 原始 profile 能替换的键保留并记录替换值,
-    // 只隐藏无原件对应项的宿主键.
-    for (CFIndex i = n - 1; i >= 0; i--) {
-        CFStringRef key = (CFStringRef)CFArrayGetValueAtIndex(entitlements, i);
+    const char *callerImage = tdv_sectask_guest_caller(task, __builtin_return_address(0), &info);
+    if (!callerImage) return result;
+    CFMutableDictionaryRef changed = NULL;
+    CFIndex count = CFArrayGetCount(entitlements);
+    for (CFIndex i = 0; i < count; ++i) {
+        CFTypeRef key = CFArrayGetValueAtIndex(entitlements, i);
+        if (!key || CFGetTypeID(key) != CFStringGetTypeID() || !CFDictionaryContainsKey(result, key)) continue;
         char name[256];
-        if (!key || !CFStringGetCString(key, name, sizeof(name), kCFStringEncodingUTF8)) {
-            continue;
-        }
-        void *replacement = TDVSecTaskReplacementForEntitlement(name, callerImage);
-        if (replacement) {
-            if (replacements) {
-                CFDictionarySetValue(replacements, key, replacement);
-                anyReplacement = true;
-            }
+        if (!CFStringGetCString((CFStringRef)key, name, sizeof(name), kCFStringEncodingUTF8)) continue;
+        CFTypeRef replacement = TDVSecTaskReplacementForEntitlement(name, callerImage);
+        if (replacement && CFEqual(replacement, CFDictionaryGetValue(result, key))) {
             CFRelease(replacement);
             continue;
         }
-        if (TDVSecTaskHideEntitlement(name)) {
-            CFArrayRemoveValueAtIndex(filtered, i);
-            anyHidden = true;
+        bool hide = !replacement && TDVSecTaskHideEntitlement(name);
+        if (!replacement && !hide) continue;
+        if (!changed) changed = CFDictionaryCreateMutableCopy(kCFAllocatorDefault, 0, result);
+        if (!changed) {
+            if (replacement) CFRelease(replacement);
+            return result;
+        }
+        if (replacement) {
+            CFDictionarySetValue(changed, key, replacement);
+            CFRelease(replacement);
+        } else {
+            CFDictionaryRemoveValue(changed, key);
         }
     }
-    if (!anyHidden && !anyReplacement) {
-        if (replacements) CFRelease(replacements);
-        CFRelease(filtered);
-        return tdv_real_sectask_copy_values(task, entitlements, error);
-    }
-    CFDictionaryRef result = tdv_real_sectask_copy_values(task, filtered, error);
-    CFRelease(filtered);
-    if (anyReplacement && result) {
-        CFDictionaryRef overridden = CFDictionaryCreateMutableCopy(kCFAllocatorDefault, 0, result);
-        if (overridden) {
-            CFDictionaryApplyFunction(replacements, tdv_sectask_apply_replacement, (void *)overridden);
-            CFRelease(result);
-            result = overridden;
-        }
-    }
-    if (replacements) CFRelease(replacements);
-    return result;
+    if (!changed) return result;
+    CFRelease(result);
+    return changed;
 }

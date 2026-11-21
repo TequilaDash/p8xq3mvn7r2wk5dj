@@ -15,7 +15,7 @@ uint32_t dyld_get_sdk_version(const struct mach_header* mh);
 
 + (void)validateJITLessSetupWithCompletionHandler:(void (^)(BOOL success, NSError *error))completionHandler;
 + (NSData *)certificateData;
-+ (void)launchMultitaskGuestApp:(NSString *)displayName completionHandler:(void (^)(NSNumber *pid, NSError *error))completionHandler API_AVAILABLE(ios(16.0));
++ (void)launchMultitaskGuestApp:(NSString *)displayName bundleId:(NSString *)bundleId dataUUID:(NSString *)dataUUID nativeWindow:(BOOL)nativeWindow completionHandler:(void (^)(NSNumber *pid, NSError *error))completionHandler API_AVAILABLE(ios(16.0));
 
 
 + (NSProgress *)signAppBundleWithZSign:(NSURL *)path completionHandler:(void (^)(BOOL success, NSError *error))completionHandler;

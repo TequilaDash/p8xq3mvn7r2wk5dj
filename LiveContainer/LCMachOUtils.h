@@ -11,10 +11,6 @@ NSString *LCParseMachO(const char *path, bool readOnly, NS_NOESCAPE LCParseMachO
 void LCPatchAddRPath(const char *path, struct mach_header_64 *header);
 int LCPatchExecSlice(const char *path, struct mach_header_64 *header, bool doInject);
 bool LCMachOExecutableHasDirtyTweakLoader(const char *path);
-/// True when the executable carries its own anti-hook/anti-tamper guard
-/// (currently the AISGuard family). Such binaries treat any injected
-/// TweakLoader load command as tampering, so they must stay unpatched.
-bool LCExecutableHasSelfIntegrityGuard(const char *path);
 void LCChangeMachOUUID(struct mach_header_64 *header);
 const uint8_t* LCGetMachOUUID(struct mach_header_64 *header);
 bool LCIsMachOEncrypted(struct mach_header_64 *header);

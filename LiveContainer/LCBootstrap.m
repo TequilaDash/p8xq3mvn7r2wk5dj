@@ -344,12 +344,10 @@ static NSArray *LCCollectExecutableEntitlementKeys(NSString *path) {
     return entitlements.allKeys;
 }
 
-/// Feed the guest's own tamper baselines the values its installed copy really has.
-/// Re-signing changes the main executable, the profile and the bundle id; leaving
-/// the factory baselines in place makes the app's own integrity check red even
-/// though nothing malicious happened. The profile hash list keeps the factory
-/// "empty string = trust" marker: writing a real hash there never matches the
-/// hash of the signed profile blob and was itself reported as tampering.
+/// Adapt only the observed installed identity and in-memory text baseline.
+/// Preserve the factory profile policy: an empty hash string does not make a
+/// missing embedded.mobileprovision valid. Original profile bytes are restored
+/// above the read boundary when a real backup exists; never synthesize one.
 static void LCAdaptSecurityPresets(NSString *bundlePath, NSString *guestId, NSString *execName) {
     if (!bundlePath || execName.length == 0) return;
     NSFileManager *fm = NSFileManager.defaultManager;
@@ -387,10 +385,6 @@ static void LCAdaptSecurityPresets(NSString *bundlePath, NSString *guestId, NSSt
 
     if (guestId.length > 0) {
         presets[@"secureMainBundleIdentifiers"] = @[guestId];
-        changed = YES;
-    }
-    if (![presets[@"secureMobileProvisioningProfileHashes"] isEqual:@[@""]]) {
-        presets[@"secureMobileProvisioningProfileHashes"] = @[@""];
         changed = YES;
     }
 
@@ -873,11 +867,7 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
     TDAppendLaunchLog([NSString stringWithFormat:@"guest index=%u total=%u path=%s",
                        appMainImageIndex, LCRealImageCount(), appExecPath]);
     
-    BOOL guestSelfGuarded = LCExecutableHasSelfIntegrityGuard(appExecPath);
-    if (guestSelfGuarded) {
-        TDAppendLaunchLog(@"tweakloader auto-skip: guest has self-integrity guard");
-    }
-    if (![guestAppInfo[@"dontLoadTweakLoader"] boolValue] && !guestSelfGuarded) {
+    if (![guestAppInfo[@"dontLoadTweakLoader"] boolValue]) {
         NSString *hostBundlePath = lcMainBundle.bundlePath;
         if ([hostBundlePath hasSuffix:@"/PlugIns/LiveProcess.appex"]) {
             hostBundlePath = hostBundlePath.stringByDeletingLastPathComponent.stringByDeletingLastPathComponent;
@@ -935,15 +925,13 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
         char *argv32[] = {(char*)appExecPath, (char*)*path, NULL};
         ret = appMain(sizeof(argv32)/sizeof(*argv32) - 1, argv32, environ);
     }
-    // code 0 是正常退出: 返回 nil, 不让上层把"访客自己退出"当成启动失败弹错误框.
-    if (ret == 0) {
-        NSString *reason = [NSString stringWithFormat:@"guest main returned 0 (normal exit) pid=%d path=%s",
-                            [[NSProcessInfo processInfo] processIdentifier], appExecPath];
-        NSLog(@"%@", reason);
-        TDAppendLaunchLog(reason);
-        return nil;
-    }
-    return [NSString stringWithFormat:@"App returned from its main function with code %d.", ret];
+    // Returning from a guest's main has normal C process-exit semantics.
+    // The guest already owns UIKit, dyld and worker threads: this process
+    // cannot fall through to the host's SwiftUI main and create UIApplication
+    // a second time. Exit also keeps LiveProcess out of libxpc's return trap.
+    TDAppendLaunchLog([NSString stringWithFormat:@"guest main returned %d; exiting guest process pid=%d path=%s",
+                       ret, getpid(), appExecPath]);
+    exit(ret);
 }
 
 static void exceptionHandler(NSException *exception) {

@@ -565,11 +565,9 @@ static NSDictionary* LCFileIdentity(NSString* path) {
     NSString *execPath = [NSString stringWithFormat:@"%@/%@", appPath, _infoPlist[@"CFBundleExecutable"]];
     
     // Update patch
-    // rev 8: keeps the untouched main executable next to the patched one, which
-    // is what lets the guest read original bytes instead of our patch; installs
-    // made by the host before this go through the patch pass once more so that
-    // backup gets created for them.
-    int currentPatchRev = 8;
+    // rev 9: restore the configured TweakLoader injection after rev 8 builds
+    // silently disabled it for executables matching self-integrity markers.
+    int currentPatchRev = 9;
     bool needPatch = [info[@"LCPatchRevision"] intValue] < currentPatchRev;
     // 旧版本可能已经把脏依赖名写进二进制; 版本号相同但名字损坏时必须重打并重签,
     // 否则 dlopen 会一直去找 TweakLoader.dylibC.
@@ -615,7 +613,7 @@ static NSDictionary* LCFileIdentity(NSString* path) {
         NSString *error = LCParseMachO(execPath.UTF8String, false, ^(const char *path, struct mach_header_64 *header, int fd, void* filePtr) {
             if(header->cputype == CPU_TYPE_ARM64) {
                 has64bitSlice |= YES;
-                int patchResult = LCPatchExecSlice(path, header, ![self dontInjectTweakLoader] && !LCExecutableHasSelfIntegrityGuard(path));
+                int patchResult = LCPatchExecSlice(path, header, ![self dontInjectTweakLoader]);
                 if(patchResult & PATCH_EXEC_RESULT_NO_SPACE_FOR_TWEAKLOADER) {
                     info[@"LCTweakLoaderCantInject"] = @YES;
                     info[@"dontInjectTweakLoader"] = @YES;

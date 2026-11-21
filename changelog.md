@@ -1,3 +1,12 @@
+20261121-224818 1.1.62 Update：
+1. 撤除 1.1.61 按自校验字符串自动关闭 TweakLoader 的方案；恢复遵循用户的注入/加载开关。安装补丁 revision 升为 9，使已受影响的应用重新应用用户配置；旧短占位命令重新启用注入时会扩容并保留后续 load commands，不再截断 TweakLoader 路径。不再用停用插件冒充兼容性修复。
+2. 修正访客 main 返回后的进程生命周期：保留返回码并退出访客进程，不再落入宿主 SwiftUI main 第二次创建 UIApplication。对应快手新日志中的 returned 0 → UIApplicationInstantiateSingleton 异常；不宣称覆盖第三方应用所有退出原因。
+3. 修正 iOS 18+ hosting 更新丢弃非 frame 设置的问题；按实际访客 viewport 发布安全区，尺寸不再重复扣除导航条。宿主挂载窗口限定为 Home Screen 的可见普通窗口，不再使用无序的第一个 scene/window。
+4. 实体状态栏遮挡与刘海/底部安全区分开计算：实体状态栏矩形转换到实际访客 viewport 后取交集，经 FrontBoard 传给旧 statusBarFrame API；保留虚拟访客禁画第二条状态栏，不用固定高度或 notch 高度代替状态栏。安全区变化也触发更新。
+5. 堆叠后台长按菜单新增目标应用“重新启动”：确认旧 PID 退出并清理窗口后，用原应用、原容器和原窗口类型走签名/JIT 启动。新原生窗口使用独立 launchID，每次启动独立消费 PID 回调；旧窗口的延迟断开/移除不影响后继窗口。失败显示原因，不靠等待时长假定退出。
+6. 环境兼容修复：Foundation 只读接口保留访客调用来源并读取真实原件，修正 framework 内部 open 漏映射；原件拒绝写入而 vroot 保持可写。SecTask 限定明确 self 任务和访客调用，保留未知/其它任务与合法权限；移除错误的 CDHash 替换。恢复 factory profile 策略，不再把空字符串哈希当成缺文件也可信。
+7. 仍未证明解决：任务端口红项、Reveil 配置检查全绿、全能签启动。Via/状态栏已修正具体源码路径，但外观未经真机复测；隔离行为证明、Xcode 构建与真机行为分开记录。
+
 20261121-223500 1.1.61 Update：
 1. 通用处理“检测自身可执行被改”类 App：安装补丁时扫描主可执行是否带自校验守卫（AISGuard_ / AISPromptThenAbort / AISAntiHook / verifyTextIntegrityOrAbort 等），命中则**不注入 TweakLoader 的 LC_LOAD_DYLIB**；启动时也跳过 fallback dlopen TweakLoader。全能签（NSKSign）属于此类，签名功能本身不依赖 TweakLoader。
 2. 该判断是通用签名匹配，不按 bundle id 硬编码；普通 App 不受影响。

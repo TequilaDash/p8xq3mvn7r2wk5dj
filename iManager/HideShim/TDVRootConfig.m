@@ -18,7 +18,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
-#include <sys/mman.h>
 #include <sys/stat.h>
 #include <sys/syslimits.h>
 #include <unistd.h>
@@ -191,7 +190,6 @@ static const char *kTDVSecTaskHideExact[] = {
 };
 static const char *kTDVSecTaskHidePrefixes[] = {
     "com.apple.private.",
-    "com.apple.developer.",
     "org.emexlabs.nyxian.",
     "org.tequila.",
     "td.tequila.",
@@ -288,76 +286,15 @@ bool TDVGuestBundleDirFromCallerImage(const char *callerImage, char *out, size_t
     return true;
 }
 
-// 访客 bundle 的原件备份按 bundle 目录缓存 (一个进程最多几个访客包, 轮换取代).
+// Small bounded profile cache, keyed by the guest bundle directory.
 #define TDVGuestCacheSlots 4
-typedef struct {
-    char bundle[PATH_MAX];
-    char execBackup[PATH_MAX]; // 空 = 这个 bundle 没有 `.td-original.executable`
-    bool resolved;
-} TDVGuestBundleEntry;
-static TDVGuestBundleEntry gTDVGuestBundles[TDVGuestCacheSlots];
-static unsigned gTDVGuestBundleNext = 0;
 static pthread_mutex_t gTDVGuestLock = PTHREAD_MUTEX_INITIALIZER;
-// The file-path helpers below call opendir/stat directly, and those libc symbols
-// are interposed by this same image. Without this guard the interposed helpers
-// re-enter TDVGuestMapBundleFile forever. One level is always enough: nested
-// path queries are made by our own backup lookup, not by the caller.
+// Backup lookups may re-enter interposed filesystem and Foundation APIs.
+// Nested queries belong to this mapper, not to a new guest request.
 static __thread bool gTDVGuestFileMapInProgress = false;
 
-// bundle 根目录里那份 `.td-original.executable` 的真实名字带上原可执行文件名,
-// 而这个名字在 shim 里不可靠 (CFBundleExecutable 可能被我们改写过), 所以在目录里找
-// 唯一一份带该后缀的文件. 只在首次访问某 bundle 时扫一次目录.
-static bool tdv_guest_exec_backup_locked(const char *bundle, char *out, size_t outSize) {
-    for (int i = 0; i < TDVGuestCacheSlots; i++) {
-        TDVGuestBundleEntry *entry = &gTDVGuestBundles[i];
-        if (!entry->resolved || strcmp(entry->bundle, bundle) != 0) {
-            continue;
-        }
-        if (entry->execBackup[0] == '\0') {
-            return false;
-        }
-        return snprintf(out, outSize, "%s", entry->execBackup) < (int)outSize;
-    }
-    char found[PATH_MAX];
-    found[0] = '\0';
-    DIR *dir = opendir(bundle);
-    if (dir) {
-        struct dirent *item;
-        while ((item = readdir(dir)) != NULL) {
-            if (item->d_name[0] == '.') {
-                continue;
-            }
-            if (tdv_string_ends_with(item->d_name, ".td-original.executable")) {
-                if (snprintf(found, sizeof(found), "%s/%s", bundle, item->d_name) >= (int)sizeof(found)) {
-                    found[0] = '\0';
-                }
-                break;
-            }
-        }
-        closedir(dir);
-    }
-    TDVGuestBundleEntry *slot = &gTDVGuestBundles[gTDVGuestBundleNext % TDVGuestCacheSlots];
-    gTDVGuestBundleNext++;
-    snprintf(slot->bundle, sizeof(slot->bundle), "%s", bundle);
-    snprintf(slot->execBackup, sizeof(slot->execBackup), "%s", found);
-    slot->resolved = true;
-    return found[0] != '\0' && snprintf(out, outSize, "%s", found) < (int)outSize;
-}
 
-bool TDVGuestOriginalExecutablePath(const char *callerImage, char *out, size_t outSize) {
-    char bundle[PATH_MAX];
-    if (!out || outSize == 0 || gTDVGuestFileMapInProgress ||
-        !TDVGuestBundleDirFromCallerImage(callerImage, bundle, sizeof(bundle))) {
-        return false;
-    }
-    gTDVGuestFileMapInProgress = true;
-    pthread_mutex_lock(&gTDVGuestLock);
-    bool found = tdv_guest_exec_backup_locked(bundle, out, outSize);
-    pthread_mutex_unlock(&gTDVGuestLock);
-    gTDVGuestFileMapInProgress = false;
-    return found;
-}
-
+__attribute__((visibility("default")))
 TDVGuestFileMapResult TDVGuestMapBundleFile(const char *path, const char *callerImage,
                                             char *out, size_t outSize) {
     if (!path || !out || outSize == 0 || gTDVGuestFileMapInProgress) {
@@ -390,14 +327,13 @@ TDVGuestFileMapResult TDVGuestMapBundleFile(const char *path, const char *caller
     gTDVGuestFileMapInProgress = true;
     TDVGuestFileMapResult result = TDVGuestFileMapNone;
     if (strcmp(child, "embedded.mobileprovision") == 0) {
-        // 只认安装时留下的原 profile. 没有原件就应答 ENOENT —— 重签后留在包里的
-        // embedded.mobileprovision 描述的是宿主身份, 访客读到它等于自证被篡改.
+        // A missing backup is not proof that the imported app had no profile.
+        // Leave the current file visible when no readable regular original exists.
         if (snprintf(backup, sizeof(backup), "%s/.td-original.mobileprovision", bundle) < (int)sizeof(backup)) {
             struct stat st;
-            if (stat(backup, &st) != 0) {
-                result = TDVGuestFileMapHidden;
-            } else {
-                result = snprintf(out, outSize, "%s", backup) < (int)sizeof(backup)
+            if (stat(backup, &st) == 0 && S_ISREG(st.st_mode) && st.st_size > 0) {
+                int length = snprintf(out, outSize, "%s", backup);
+                result = length >= 0 && (size_t)length < outSize
                     ? TDVGuestFileMapTo : TDVGuestFileMapNone;
             }
         }
@@ -406,8 +342,9 @@ TDVGuestFileMapResult TDVGuestMapBundleFile(const char *path, const char *caller
         // 时会立刻看到篡改; 有原件备份就交给它, 没备份则保持当前文件可用.
         if (snprintf(backup, sizeof(backup), "%s/.td-original.Info.plist", bundle) < (int)sizeof(backup)) {
             struct stat st;
-            if (stat(backup, &st) == 0) {
-                result = snprintf(out, outSize, "%s", backup) < (int)sizeof(backup)
+            if (stat(backup, &st) == 0 && S_ISREG(st.st_mode) && st.st_size > 0) {
+                int length = snprintf(out, outSize, "%s", backup);
+                result = length >= 0 && (size_t)length < outSize
                     ? TDVGuestFileMapTo : TDVGuestFileMapNone;
             }
         }
@@ -416,8 +353,9 @@ TDVGuestFileMapResult TDVGuestMapBundleFile(const char *path, const char *caller
         // LCAppInfo 的备份名就是 `<原名>.td-original.executable`, 因此存在即命中.
         if (snprintf(backup, sizeof(backup), "%s/%s.td-original.executable", bundle, child) < (int)sizeof(backup)) {
             struct stat st;
-            if (stat(backup, &st) == 0) {
-                result = snprintf(out, outSize, "%s", backup) < (int)outSize
+            if (stat(backup, &st) == 0 && S_ISREG(st.st_mode) && st.st_size > 0) {
+                int length = snprintf(out, outSize, "%s", backup);
+                result = length >= 0 && (size_t)length < outSize
                     ? TDVGuestFileMapTo : TDVGuestFileMapNone;
             }
         }
@@ -515,7 +453,8 @@ static const TDVSecTaskReplacementEntry kTDVSecTaskReplacements[] = {
 };
 
 void *TDVSecTaskReplacementForEntitlement(const char *entitlement, const char *callerImage) {
-    if (!entitlement || !TDVSecTaskSpoofEnabled() || !TDVGuestCallerIsGuestImage(callerImage)) {
+    if (!entitlement || gTDVGuestFileMapInProgress || !TDVSecTaskSpoofEnabled() ||
+        !TDVGuestCallerIsGuestImage(callerImage)) {
         return NULL;
     }
     char bundle[PATH_MAX];
@@ -582,176 +521,6 @@ bool TDVCsopsSpoofLookup(unsigned int flagsIn, unsigned int *flagsOut) {
     return true;
 }
 
-static uint32_t tdv_be32(uint32_t value) {
-    return ((value & 0x000000FFu) << 24) |
-           ((value & 0x0000FF00u) << 8) |
-           ((value & 0x00FF0000u) >> 8) |
-           ((value & 0xFF000000u) >> 24);
-}
-
-static uint64_t tdv_be64(uint64_t value) {
-    return ((uint64_t)tdv_be32((uint32_t)value) << 32) |
-           tdv_be32((uint32_t)(value >> 32));
-}
-
-#define TDV_MH_MAGIC_64     0xfeedfacfu
-#define TDV_MH_MAGIC        0xfeedfaceu
-#define TDV_FAT_MAGIC       0xcafebabeu
-#define TDV_FAT_MAGIC_64    0xcafebabfu
-#define TDV_LC_CODE_SIGNATURE 0x1du
-#define TDV_CS_EMBEDDED_SIGNATURE 0xfade0cc0u
-#define TDV_CS_CODEDIRECTORY    0xfade0c02u
-#define TDV_CPU_ARM64           0x0100000cu
-
-bool TDVOriginalExecutableCodeDirectoryHash(const char *callerImage, void *outHash,
-                                            size_t outSize) {
-    if (!TDVCsopsSpoofEnabled() || !callerImage || !outHash || outSize == 0) {
-        return false;
-    }
-    char backup[PATH_MAX];
-    if (!TDVGuestOriginalExecutablePath(callerImage, backup, sizeof(backup))) {
-        return false;
-    }
-    int fd = open(backup, O_RDONLY);
-    if (fd < 0) {
-        return false;
-    }
-    struct stat st;
-    if (fstat(fd, &st) != 0 || st.st_size < 0) {
-        close(fd);
-        return false;
-    }
-    uint8_t *map = mmap(NULL, (size_t)st.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
-    close(fd);
-    if (map == MAP_FAILED) {
-        return false;
-    }
-
-    uint8_t *base = map;
-    uint64_t fileSize = (uint64_t)st.st_size;
-    bool found = false;
-    bool copied = false;
-    uint64_t imageOffset = 0;
-    uint64_t imageLimit = fileSize;
-    if (fileSize >= 4) {
-        uint32_t magic = *(const uint32_t *)base;
-        if (magic == TDV_FAT_MAGIC_64 || magic == tdv_be32(TDV_FAT_MAGIC_64)) {
-            bool swap = magic != TDV_FAT_MAGIC_64;
-            uint32_t count = swap ? tdv_be32(((const uint32_t *)(base + 8))[0]) : ((const uint32_t *)(base + 8))[0];
-            for (uint32_t i = 0; i < count; i++) {
-                uint8_t *arch = base + 32 + (size_t)i * 32;
-                if ((uint64_t)(arch + 32 - map) > fileSize) break;
-                uint32_t cputype = swap ? tdv_be32(*(const uint32_t *)arch) : *(const uint32_t *)arch;
-                uint64_t offset = swap ? tdv_be64(*(const uint64_t *)(arch + 8)) : *(const uint64_t *)(arch + 8);
-                uint32_t size = swap ? tdv_be32(*(const uint32_t *)(arch + 16)) : *(const uint32_t *)(arch + 16);
-                if (cputype == TDV_CPU_ARM64 && offset + size <= fileSize) {
-                    imageOffset = offset;
-                    imageLimit = offset + size;
-                    found = true;
-                    break;
-                }
-            }
-        } else if (magic == TDV_FAT_MAGIC || magic == tdv_be32(TDV_FAT_MAGIC)) {
-            bool swap = magic != TDV_FAT_MAGIC;
-            uint32_t count = swap ? tdv_be32(((const uint32_t *)(base + 8))[0]) : ((const uint32_t *)(base + 8))[0];
-            for (uint32_t i = 0; i < count; i++) {
-                uint8_t *arch = base + 8 + (size_t)i * 20;
-                if ((uint64_t)(arch + 20 - map) > fileSize) break;
-                uint32_t cputype = swap ? tdv_be32(*(const uint32_t *)arch) : *(const uint32_t *)arch;
-                uint32_t offset = swap ? tdv_be32(((const uint32_t *)(arch + 8))[0]) : ((const uint32_t *)(arch + 8))[0];
-                uint32_t size = swap ? tdv_be32(((const uint32_t *)(arch + 12))[0]) : ((const uint32_t *)(arch + 12))[0];
-                if (cputype == TDV_CPU_ARM64 && offset + size <= fileSize) {
-                    imageOffset = offset;
-                    imageLimit = offset + size;
-                    found = true;
-                    break;
-                }
-            }
-        } else if (magic == TDV_MH_MAGIC_64 || magic == TDV_MH_MAGIC ||
-                   magic == tdv_be32(TDV_MH_MAGIC_64) || magic == tdv_be32(TDV_MH_MAGIC)) {
-            imageOffset = 0;
-            found = true;
-        }
-    }
-    if (found && imageOffset + 64 <= fileSize) {
-        uint8_t *image = map + imageOffset;
-        uint32_t headerMagic = *(const uint32_t *)image;
-        bool swap = headerMagic == tdv_be32(TDV_MH_MAGIC_64) || headerMagic == tdv_be32(TDV_MH_MAGIC);
-        uint32_t sizeofCmds = *(const uint32_t *)(image + 20);
-        uint32_t ncmds = *(const uint32_t *)(image + 16);
-        if (swap) {
-            sizeofCmds = tdv_be32(sizeofCmds);
-            ncmds = tdv_be32(ncmds);
-        }
-        if (imageOffset + 64 + sizeofCmds <= fileSize) {
-            uint8_t *cmd = image + 64;
-            uint8_t *end = cmd + sizeofCmds;
-            for (uint32_t i = 0; i < ncmds && cmd < end; i++) {
-                uint32_t cmdType = *(const uint32_t *)cmd;
-                uint32_t cmdSize = *(const uint32_t *)(cmd + 4);
-                if (swap) {
-                    cmdType = tdv_be32(cmdType);
-                    cmdSize = tdv_be32(cmdSize);
-                }
-                if (cmdSize < 8 || cmd + cmdSize > end) break;
-                if (cmdType == TDV_LC_CODE_SIGNATURE && cmdSize >= 16) {
-                    uint32_t dataOffset = *(const uint32_t *)(cmd + 8);
-                    uint32_t dataSize = *(const uint32_t *)(cmd + 12);
-                    if (swap) {
-                        dataOffset = tdv_be32(dataOffset);
-                        dataSize = tdv_be32(dataSize);
-                    }
-                    uint64_t sliceSize = imageLimit - imageOffset;
-                    if ((uint64_t)dataOffset + 12 <= sliceSize && dataSize >= 12) {
-                        uint8_t *blob = image + dataOffset;
-                        uint8_t *blobEnd = image + sliceSize;
-                        uint32_t superMagic = tdv_be32(*(const uint32_t *)blob);
-                        uint32_t superLength = tdv_be32(*(const uint32_t *)(blob + 4));
-                        if (superMagic == TDV_CS_EMBEDDED_SIGNATURE &&
-                            superLength >= 12 && superLength <= dataSize &&
-                            blob + superLength <= blobEnd) {
-                            uint32_t count = tdv_be32(*(const uint32_t *)(blob + 8));
-                            uint8_t *cd = NULL;
-                            if (count > 0 && (uint64_t)12 + (uint64_t)count * 8 <= superLength) {
-                                for (uint32_t i = 0; i < count; i++) {
-                                    uint8_t *entry = blob + 12 + i * 8;
-                                    uint32_t type = tdv_be32(*(const uint32_t *)entry);
-                                    uint32_t offset = tdv_be32(*(const uint32_t *)(entry + 4));
-                                    if (type == 0 && offset + 36 <= superLength) {
-                                        cd = blob + offset;
-                                        break;
-                                    }
-                                }
-                            }
-                            if (cd) {
-                                uint32_t cdMagic = tdv_be32(*(const uint32_t *)cd);
-                                uint32_t cdLength = tdv_be32(*(const uint32_t *)(cd + 4));
-                                uint8_t hashSize = cd[32];
-                                uint32_t hashOffset = tdv_be32(*(const uint32_t *)(cd + 16));
-                                if (cdMagic == TDV_CS_CODEDIRECTORY && cdLength >= 36 &&
-                                    hashSize > 0 && hashSize <= 32 &&
-                                    (uint64_t)hashOffset + hashSize <= cdLength &&
-                                    cd + cdLength <= blobEnd) {
-                                    size_t copy = hashSize < outSize ? hashSize : outSize;
-                                    if (cd + hashOffset + copy <= cd + cdLength) {
-                                        memcpy(outHash, cd + hashOffset, copy);
-                                        if (copy < outSize) {
-                                            memset((uint8_t *)outHash + copy, 0, outSize - copy);
-                                        }
-                                        copied = true;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                cmd += cmdSize;
-            }
-        }
-    }
-    munmap(map, (size_t)fileSize);
-    return copied;
-}
 
 bool TDVProcSpoofEnabled(void) {
     // True live read, bypassing tdv_init_once entirely: the resident

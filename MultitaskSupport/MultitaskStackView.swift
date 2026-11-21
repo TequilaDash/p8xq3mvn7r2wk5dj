@@ -33,6 +33,10 @@ public class MultitaskStackManager: NSObject, ObservableObject {
     private var pendingPresentation = false
     private var selectedUUID: String?
     private var closingControllers: [String: ObjectIdentifier] = [:]
+    // These survive removal of a card. A menu action is bound to the launch
+    // it displayed, never merely to a container a newer guest might reuse.
+    private var displayedControllers: [String: AppSceneViewController] = [:]
+    private var restartingControllers: [String: ObjectIdentifier] = [:]
     private var dockSubscription: AnyCancellable?
     // Static pictures taken while the guest windows are still on screen. The
     // cards show what each app actually looks like, shrunk, instead of an icon.
@@ -166,6 +170,7 @@ public class MultitaskStackManager: NSObject, ObservableObject {
         isVisible = false
         apps.removeAll()
         previews.removeAll()
+        displayedControllers.removeAll()
         focus(index: 0)
         if let previous, !previous.isHidden, previous.windowScene?.activationState == .foregroundActive {
             previous.makeKey()
@@ -203,11 +208,19 @@ public class MultitaskStackManager: NSObject, ObservableObject {
     // controller hierarchy as well, including native scenes and minimized views.
     private func appControllers() -> [AppSceneViewController] {
         var result: [AppSceneViewController] = []
-        var seen = Set<String>()
+        var indices: [String: Int] = [:]
         func visit(_ controller: UIViewController) {
             if let app = controller as? AppSceneViewController,
-               let uuid = app.dataUUID, !uuid.isEmpty, seen.insert(uuid).inserted {
-                result.append(app)
+               let uuid = app.dataUUID, !uuid.isEmpty {
+                if let index = indices[uuid] {
+                    let old = result[index]
+                    if (closingControllers[uuid] == ObjectIdentifier(old) && closingControllers[uuid] != ObjectIdentifier(app)) || (old.isTerminated && !app.isTerminated) {
+                        result[index] = app
+                    }
+                } else {
+                    indices[uuid] = result.count
+                    result.append(app)
+                }
             }
             for child in controller.children { visit(child) }
             if let presented = controller.presentedViewController { visit(presented) }
@@ -240,6 +253,7 @@ public class MultitaskStackManager: NSObject, ObservableObject {
             guard let uuid = controller.dataUUID else { return nil }
             return (uuid, controller)
         })
+        displayedControllers = byUUID
         closingControllers = closingControllers.filter { uuid, identifier in
             byUUID[uuid].map { ObjectIdentifier($0) == identifier } ?? false
         }
@@ -276,7 +290,13 @@ public class MultitaskStackManager: NSObject, ObservableObject {
         apps = order.compactMap { uuid in
             let controller = byUUID[uuid]
             if let controller, closingControllers[uuid] == ObjectIdentifier(controller) { return nil }
-            if let existing = dockByUUID[uuid], existing.view != nil { return existing }
+            if let existing = dockByUUID[uuid], existing.view != nil {
+                if let controller {
+                    if existing.view === decoratedController(for: controller)?.viewIfLoaded { return existing }
+                } else {
+                    return existing
+                }
+            }
             guard let controller else { return dockByUUID[uuid] }
             let existing = dockByUUID[uuid]
             let info = existing?.appInfo ?? AppInfoProvider.shared.findAppInfo(appName: existing?.appName ?? controller.bundleId ?? "", dataUUID: uuid)
@@ -338,6 +358,10 @@ public class MultitaskStackManager: NSObject, ObservableObject {
 
     @objc public func closeApp(uuid: String) {
         DispatchQueue.main.async {
+            guard self.restartingControllers[uuid] == nil else {
+                self.message = "该应用正在重新启动，请稍候"
+                return
+            }
             guard let controller = self.appControllers().first(where: { $0.dataUUID == uuid }) else {
                 self.message = "窗口已经关闭"
                 self.refreshApps()
@@ -364,6 +388,154 @@ public class MultitaskStackManager: NSObject, ObservableObject {
             }
             // Only a real close above removes a card; Dock cleanup remains the
             // controller's responsibility when the guest actually exits.
+            self.refreshApps()
+        }
+    }
+
+    func restartTarget(for uuid: String) -> AppSceneViewController? {
+        displayedControllers[uuid]
+    }
+
+    private func restartModel(bundleId: String, uuid: String) -> LCAppModel? {
+        func matches(_ app: LCAppModel) -> Bool {
+            app.appInfo.relativeBundlePath == bundleId && app.uiContainers.contains { $0.folderName == uuid }
+        }
+        let model = DataManager.shared.model
+        return model.apps.first(where: matches) ?? model.hiddenApps.first(where: matches)
+    }
+
+    private func showRestartMessage(_ text: String) {
+        message = text
+        // Keep async failures visible even if the user dismissed the stack
+        // while waiting for process exit, signing or JIT.
+        pendingPresentation = true
+        presentIfPossible()
+    }
+
+    private func restartFailed(uuid: String, identifier: ObjectIdentifier, detail: String) {
+        guard restartingControllers[uuid] == identifier else { return }
+        restartingControllers.removeValue(forKey: uuid)
+        if closingControllers[uuid] == identifier { closingControllers.removeValue(forKey: uuid) }
+        showRestartMessage("重新启动失败：\(detail)")
+    }
+
+    func restartApp(uuid: String, controller expectedController: AppSceneViewController?) {
+        DispatchQueue.main.async {
+            guard self.restartingControllers[uuid] == nil else {
+                self.showRestartMessage("该应用正在重新启动，请勿重复操作")
+                return
+            }
+            guard let expectedController,
+                  let controller = self.appControllers().first(where: { $0.dataUUID == uuid }),
+                  controller === expectedController,
+                  self.closingControllers[uuid] != ObjectIdentifier(controller),
+                  !controller.isUserTerminating || controller.isTerminated else {
+                self.showRestartMessage("窗口已经关闭或已更改，请重新选择要启动的应用")
+                return
+            }
+            guard let bundleId = controller.bundleId, !bundleId.isEmpty, controller.pid > 0,
+                  let app = self.restartModel(bundleId: bundleId, uuid: uuid) else {
+                self.showRestartMessage("找不到原来的应用或容器，未重新启动")
+                return
+            }
+            guard !app.isAppRunning, app.appInfo.defaultClassicMode == 0 else {
+                self.showRestartMessage("应用正在启动或已改为非多任务模式，请稍后重试")
+                return
+            }
+            let mode: MultitaskMode = controller.isNativeWindow ? .nativeWindow : .virtualWindow
+            let decorated = self.decoratedController(for: controller)
+            let oldScene = mode == .nativeWindow ? controller.viewIfLoaded?.window?.windowScene : nil
+            var removeNativeEntry: (() -> Bool)?
+            if mode == .nativeWindow {
+                guard #available(iOS 16.1, *), oldScene != nil,
+                      let info = MultitaskWindowManager.appDict[uuid], info.bundleId == bundleId else {
+                    self.showRestartMessage("原生窗口已经关闭，无法确认要重新启动的窗口")
+                    return
+                }
+                removeNativeEntry = {
+                    guard MultitaskWindowManager.appDict[uuid]?.launchID == info.launchID else { return false }
+                    MultitaskWindowManager.removeAppInfo(info)
+                    return true
+                }
+            } else if decorated == nil {
+                self.showRestartMessage("找不到该应用的多任务窗口，未重新启动")
+                return
+            }
+            // Snapshot identity before closeWindow can release its wrapper.
+            let identifier = ObjectIdentifier(controller)
+            let oldPID = controller.pid
+            self.restartingControllers[uuid] = identifier
+            self.closingControllers[uuid] = identifier
+            self.message = "正在重新启动 \(app.appInfo.displayName() ?? bundleId)…"
+            if let pip = PiPManager.shared, pip.isPiP(withVC: controller) { pip.stopPiP() }
+            decorated?.closeWindow()
+            controller.terminate { error in
+                guard self.restartingControllers[uuid] == identifier else { return }
+                if let error {
+                    self.restartFailed(uuid: uuid, identifier: identifier, detail: error.localizedDescription)
+                    return
+                }
+                guard !self.appControllers().contains(where: { $0.dataUUID == uuid && $0 !== controller }) else {
+                    self.restartFailed(uuid: uuid, identifier: identifier, detail: "该容器已经出现新的窗口，未重复启动")
+                    return
+                }
+                if let removeNativeEntry, !removeNativeEntry() {
+                    self.restartFailed(uuid: uuid, identifier: identifier, detail: "原生窗口的启动记录已更改，未重复启动")
+                    return
+                }
+                MultitaskDockManager.shared.removeRunningApp(uuid)
+                Task { @MainActor in
+                    // The native successor uses a new launchID scene value,
+                    // so destroying the old session late cannot close it.
+                    defer {
+                        if let oldScene {
+                            UIApplication.shared.requestSceneSessionDestruction(oldScene.session, options: nil) { error in
+                                DispatchQueue.main.async {
+                                    self.showRestartMessage("原窗口关闭失败：\(error.localizedDescription)")
+                                }
+                            }
+                        }
+                    }
+                    do {
+                        guard self.restartModel(bundleId: bundleId, uuid: uuid) === app else {
+                            throw "应用或容器已被移除，未重新启动"
+                        }
+                        try await app.runApp(multitask: true, containerFolderName: uuid, bundleIdOverride: bundleId, multitaskWindowMode: mode)
+                        guard let replacement = self.appControllers().first(where: { $0.dataUUID == uuid }),
+                              replacement !== controller, replacement.bundleId == bundleId,
+                              replacement.isNativeWindow == (mode == .nativeWindow),
+                              replacement.pid > 0, !replacement.isTerminated else {
+                            throw "应用未能建立新的多任务窗口"
+                        }
+                        self.restartingControllers.removeValue(forKey: uuid)
+                        if self.closingControllers[uuid] == identifier { self.closingControllers.removeValue(forKey: uuid) }
+                        self.message = nil
+                        self.pendingPresentation = false
+                        self.clearStoredRequest()
+                        NotificationCenter.default.post(name: .lcCloseHostScreens, object: nil)
+                        self.detachWindow()
+                        // Bring only the replacement forward; selectApp's
+                        // minimize-other-windows policy is not a restart.
+                        if let window = self.decoratedController(for: replacement),
+                           let view = window.viewIfLoaded, let container = view.superview {
+                            if view.isHidden { window.restoreFromDock() }
+                            container.bringSubviewToFront(view)
+                            window.revealWindowControls()
+                        } else if let scene = replacement.viewIfLoaded?.window?.windowScene {
+                            UIApplication.shared.requestSceneSessionActivation(scene.session, userActivity: nil, options: nil) { error in
+                                DispatchQueue.main.async {
+                                    self.showRestartMessage("应用已重新启动，但窗口打开失败：\(error.localizedDescription)")
+                                }
+                            }
+                        } else {
+                            self.showRestartMessage("应用已重新启动，但暂时没有可显示的窗口")
+                        }
+                        NSLog("[LC][Multitask] restarted bundle=%@ container=%@ oldPID=%d newPID=%d mode=%ld", bundleId, uuid, oldPID, replacement.pid, mode.rawValue)
+                    } catch {
+                        self.restartFailed(uuid: uuid, identifier: identifier, detail: error.localizedDescription)
+                    }
+                }
+            }
             self.refreshApps()
         }
     }
@@ -519,10 +691,12 @@ struct MultitaskStackView: View {
                 let distance = CGFloat(index - manager.selectedIndex)
                 let depth = min(4, abs(distance))
                 let vertical = app.appUUID == draggedUUID && dragAxis == .vertical ? min(0, dragOffset.height) : 0
+                let restartController = manager.restartTarget(for: app.appUUID)
                 AppStackCard(app: app, size: CGSize(width: width, height: height),
                              preview: manager.previewSnapshot(for: app.appUUID),
                              onSelect: { manager.selectApp(uuid: app.appUUID) },
                              onClose: { manager.closeApp(uuid: app.appUUID) },
+                             onRestart: { manager.restartApp(uuid: app.appUUID, controller: restartController) },
                              onAppInfo: { manager.showAppInfo(uuid: app.appUUID) },
                              onSplit: { manager.openInSplitScreen(uuid: app.appUUID) },
                              onPictureInPicture: { manager.togglePictureInPicture(uuid: app.appUUID) })
@@ -579,6 +753,7 @@ struct AppStackCard: View {
     let preview: UIView?
     var onSelect: () -> Void
     var onClose: () -> Void
+    var onRestart: () -> Void
     var onAppInfo: () -> Void
     var onSplit: () -> Void
     var onPictureInPicture: () -> Void
@@ -636,6 +811,9 @@ struct AppStackCard: View {
             Button(action: onPictureInPicture) {
                 Label("画中画模式", systemImage: "pip")
             }
+            Button(action: onRestart) {
+                Label("重新启动", systemImage: "arrow.clockwise")
+            }
             Divider()
             Button(role: .destructive, action: onClose) {
                 Label("清除", systemImage: "xmark")
@@ -648,6 +826,7 @@ struct AppStackCard: View {
         .shadow(color: .black.opacity(0.4), radius: 12, y: 6)
         .accessibilityAction(named: Text("打开窗口"), onSelect)
         .accessibilityAction(named: Text("关闭窗口"), onClose)
+        .accessibilityAction(named: Text("重新启动"), onRestart)
         .onAppear(perform: loadIcon)
     }
 

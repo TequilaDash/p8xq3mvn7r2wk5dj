@@ -29,6 +29,8 @@ API_AVAILABLE(ios(16.0))
 @property(nonatomic) id<AppSceneViewControllerDelegate> delegate;
 @property(nonatomic) BOOL isAppRunning;
 @property(nonatomic) BOOL isUserTerminating;
+@property(nonatomic, readonly) BOOL isTerminated;
+@property(nonatomic, readonly) bool isNativeWindow;
 @property(nonatomic) BOOL shouldIgnoreSceneUpdates, shouldSkipDebounceOnce;
 @property(nonatomic) CGFloat scaleRatio;
 @property(nonatomic) UIView* contentView;
@@ -40,6 +42,9 @@ API_AVAILABLE(ios(16.0))
 - (void)updateSettingsWithBlock:(void(^)(UIMutableApplicationSceneSettings *settings))block;
 - (void)appTerminationCleanUp;
 - (void)terminate;
+/// Completes on the main queue only after this PID exited and its scene was
+/// invalidated, or with an error. A timeout never counts as a successful exit.
+- (void)terminateWithCompletion:(void (^)(NSError * _Nullable error))completion NS_SWIFT_NAME(terminate(completion:));
 - (void)openURLScheme:(NSString *)urlString;
 - (void)handleStatusBarTapAction:(UIAction *)action;
 - (BOOL)usesHostingControllerAPI;

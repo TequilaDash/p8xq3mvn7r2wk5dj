@@ -175,6 +175,7 @@ extern const UIApplication *UIApp;
 - (void)setFrame:(CGRect)frame;
 - (void)setLevel:(NSInteger)level;
 - (void)setStatusBarDisabled:(BOOL)disabled;
+- (BOOL)statusBarDisabled;
 - (void)setInterfaceOrientation:(UIInterfaceOrientation)o;
 - (BSSettings *)otherSettings;
 @end
@@ -325,4 +326,9 @@ API_AVAILABLE(ios(17.4)) // 17.0
 
 // Not really private ones
 UIEdgeInsets LCUIEdgeInsetsRotateToOrientation(UIEdgeInsets insets, UIInterfaceOrientation orientation);
+/// Insets in the viewport's coordinates, from its own window and container.
+UIEdgeInsets LCGuestSceneSafeAreaInsets(UIView *viewport, UIView *container, UIEdgeInsets additionalInsets);
+void LCApplyGuestSceneSafeAreaInsets(UIMutableApplicationSceneSettings *settings, UIEdgeInsets insets);
+/// The physical host bar's overlap, independently of safe-area clearance.
+void LCApplyGuestSceneStatusBarFrame(UIMutableApplicationSceneSettings *settings, UIView *viewport, CGFloat scale);
 void UIKitFixesInit(void);

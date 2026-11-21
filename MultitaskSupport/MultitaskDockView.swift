@@ -97,6 +97,8 @@ class AppInfoProvider {
     /// Picture, by their container. The dock fades them and drops their dot.
     @Published var hiddenAppUUIDs: Set<String> = []
     @Published var settingsChanged: Bool = false
+    private var visibilityGeneration: UInt = 0
+    private var isHidingDock = false
 
     /// The view the virtual windows live in, on the main window. Reading it
     /// first puts it there when it isn't yet, since the main window may not
@@ -281,15 +283,10 @@ class AppInfoProvider {
         return calculateIconSize(for: dockWidth)
     }
 
-    /// The main window, the one showing the Home Screen, which the virtual
-    /// windows and the dock go on. On iPad other scenes can be connected too,
-    /// so it isn't simply the first one. An iPhone has the one scene, whose
-    /// first window it has always used.
+    /// Resolve the Home Screen's app window on every device. An unordered
+    /// first connected window can be the floating overlay or a guest scene.
     public var keyWindow: UIWindow? {
-        if SharedModel.isPhone {
-            return (UIApplication.shared.connectedScenes.first as? UIWindowScene)?.windows.first
-        }
-        return MainWindow.window
+        MainWindow.window
     }
 
     public var safeAreaInsets: UIEdgeInsets {
@@ -348,8 +345,9 @@ class AppInfoProvider {
             return
         }
         let siblings = container.subviews
+        hostView.frame = rootView.frame
         if hostView.superview !== container {
-            hostView.frame = rootView.frame
+            hostView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
             container.insertSubview(hostView, aboveSubview: rootView)
         } else if let rootIndex = siblings.firstIndex(of: rootView), siblings.firstIndex(of: hostView) != rootIndex + 1 {
             container.insertSubview(hostView, aboveSubview: rootView)
@@ -520,7 +518,9 @@ class AppInfoProvider {
     @objc public func removeRunningApp(_ appUUID: String) {
         guard isDockEnabled() else { return }
         
-        DispatchQueue.main.async {
+        // Cleanup must remove the old entry before an exit completion can
+        // launch the same container again; a queued removal could erase it.
+        let remove = {
             withAnimation(Constants.appsAnimation) {
                 self.apps.removeAll { $0.appUUID == appUUID }
             }
@@ -536,15 +536,30 @@ class AppInfoProvider {
                 }
             }
         }
+        if Thread.isMainThread {
+            remove()
+        } else {
+            DispatchQueue.main.async(execute: remove)
+        }
     }
     
     @objc public func showDock() {
+        if !Thread.isMainThread {
+            DispatchQueue.main.async { self.showDock() }
+            return
+        }
         guard isDockEnabled() else { return }
-        guard !isVisible, let hostingController = hostingController else { return }
+        guard !isVisible || isHidingDock, let hostingController = hostingController else { return }
         
         guard let keyWindow = self.keyWindow else { return }
+        visibilityGeneration &+= 1
+        let generation = visibilityGeneration
+        isHidingDock = false
         
         DispatchQueue.main.async {
+            guard self.visibilityGeneration == generation else { return }
+            hostingController.view.layer.removeAllAnimations()
+            hostingController.view.transform = .identity
             self.isVisible = true
             
             let screenBounds = keyWindow.bounds
@@ -584,9 +599,17 @@ class AppInfoProvider {
     }
     
     @objc public func hideDock() {
+        if !Thread.isMainThread {
+            DispatchQueue.main.async { self.hideDock() }
+            return
+        }
         guard isVisible, let hostingController = hostingController else { return }
+        visibilityGeneration &+= 1
+        let generation = visibilityGeneration
+        isHidingDock = true
         
         DispatchQueue.main.async {
+            guard self.visibilityGeneration == generation else { return }
             UIView.animate(
                 withDuration: Constants.standardAnimationDuration,
                 delay: 0,
@@ -604,6 +627,10 @@ class AppInfoProvider {
                 let targetY = hostingController.view.frame.origin.y // Keep current Y
                 hostingController.view.frame.origin = CGPoint(x: targetX, y: targetY)
             } completion: { _ in
+                // A last-app restart may already have shown its replacement.
+                // The old fade-out must not hide that new Dock entry.
+                guard self.visibilityGeneration == generation else { return }
+                self.isHidingDock = false
                 self.isVisible = false
                 hostingController.view.transform = .identity
             }

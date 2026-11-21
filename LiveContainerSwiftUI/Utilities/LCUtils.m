@@ -54,15 +54,14 @@
     return nil;
 }
 
-+ (void)launchMultitaskGuestApp:(NSString *)displayName completionHandler:(void (^)(NSNumber *pid, NSError *error))completionHandler {
-    // Taken before anything can fail: left behind, zContainer's next start
-    // would turn into the app, without asking for Face ID for a locked one.
-    NSUserDefaults *lcUserDefaults = NSUserDefaults.standardUserDefaults;
-    NSString* bundleId = [lcUserDefaults stringForKey:@"selected"];
-    NSString* dataUUID = [lcUserDefaults stringForKey:@"selectedContainer"];
-    
-    [lcUserDefaults removeObjectForKey:@"selected"];
-    [lcUserDefaults removeObjectForKey:@"selectedContainer"];
++ (void)launchMultitaskGuestApp:(NSString *)displayName bundleId:(NSString *)bundleId dataUUID:(NSString *)dataUUID nativeWindow:(BOOL)nativeWindow completionHandler:(void (^)(NSNumber *pid, NSError *error))completionHandler {
+    // Identity and window mode belong to this request. Shared launch defaults
+    // could be overwritten by another app while signing/JIT work suspends.
+    if (bundleId.length == 0 || dataUUID.length == 0) {
+        NSError *error = [NSError errorWithDomain:@"LCMultitaskLaunch" code:1 userInfo:@{NSLocalizedDescriptionKey: @"应用或容器标识缺失，无法启动"}];
+        if (completionHandler) completionHandler(nil, error);
+        return;
+    }
 
     if(!self.liveProcessBundleIdentifier) {
         NSError *error = [NSError errorWithDomain:displayName code:2 userInfo:@{NSLocalizedDescriptionKey: @"LiveProcess extension not found. Please reinstall zContainer and select Keep Extensions"}];
@@ -71,13 +70,18 @@
     }
     
     dispatch_async(dispatch_get_main_queue(), ^{
-        if (@available(iOS 16.1, *)) {
-            if(UIApplication.sharedApplication.supportsMultipleScenes && [NSUserDefaults.lcSharedDefaults integerForKey:@"LCMultitaskMode"] == 1) {
-                [MultitaskWindowManager openAppWindowWithDisplayName:displayName dataUUID:dataUUID bundleId:bundleId pidCallback:completionHandler];
-                MultitaskDockManager *dock = [MultitaskDockManager shared];
-                [dock addRunningApp:displayName appUUID:dataUUID view:nil];
-                return;
+        if (nativeWindow) {
+            if (@available(iOS 16.1, *)) {
+                if (UIApplication.sharedApplication.supportsMultipleScenes) {
+                    [MultitaskWindowManager openAppWindowWithDisplayName:displayName dataUUID:dataUUID bundleId:bundleId pidCallback:completionHandler];
+                    MultitaskDockManager *dock = [MultitaskDockManager shared];
+                    [dock addRunningApp:displayName appUUID:dataUUID view:nil];
+                    return;
+                }
             }
+            NSError *error = [NSError errorWithDomain:@"LCMultitaskLaunch" code:3 userInfo:@{NSLocalizedDescriptionKey: @"系统当前无法打开原生多任务窗口"}];
+            if (completionHandler) completionHandler(nil, error);
+            return;
         }
         
         // The Home Screen's window: on iPad another scene, such as an app's own

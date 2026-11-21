@@ -269,6 +269,9 @@ int LCPatchExecSlice(const char *path, struct mach_header_64 *header, bool doInj
         if (freeLoadCommandCountLeft >= idDylibCommandSize) {
             freeLoadCommandCountLeft -= idDylibCommandSize;
             insertDylibCommand(LC_ID_DYLIB, path, header);
+            if (dylibLoaderCommand) {
+                dylibLoaderCommand = (struct dylib_command *)((char *)dylibLoaderCommand + idDylibCommandSize);
+            }
         } else if (dylinkerCommand) {
             // #1042 fix: if there's not enough space for LC_ID_DYLIB we resue LC_LOAD_DYLINKER's space for LC_ID_DYLIB
             replaceDylinkerWithIDDylibCommand(dylinkerCommand, path);
@@ -276,14 +279,33 @@ int LCPatchExecSlice(const char *path, struct mach_header_64 *header, bool doInj
     }
 
     if (dylibLoaderCommand) {
-        dylibLoaderCommand->cmd = doInject ? LC_LOAD_DYLIB : 0x114514;
         const char *targetPath = doInject ? tweakLoaderPath : libCppPath;
         size_t nameOffset = dylibLoaderCommand->dylib.name.offset;
-        size_t nameCapacity = dylibLoaderCommand->cmdsize > nameOffset ? dylibLoaderCommand->cmdsize - nameOffset : 0;
-        if (nameCapacity > 0) {
+        size_t nameLength = strlen(targetPath) + 1;
+        size_t oldSize = dylibLoaderCommand->cmdsize;
+        size_t nameCapacity = oldSize > nameOffset ? oldSize - nameOffset : 0;
+        if (nameOffset >= sizeof(struct dylib_command) && nameOffset <= oldSize && nameCapacity < nameLength) {
+            // A disabled loader was stored with the shorter libc++ name. Grow
+            // its command before re-enabling injection, never truncate a path.
+            size_t newSize = rnd32((uint32_t)(nameOffset + nameLength), 8);
+            size_t growth = newSize - oldSize;
+            if (growth <= (size_t)MAX(freeLoadCommandCountLeft, 0)) {
+                char *tail = (char *)dylibLoaderCommand + oldSize;
+                char *end = (char *)(header + 1) + header->sizeofcmds;
+                memmove(tail + growth, tail, (size_t)(end - tail));
+                dylibLoaderCommand->cmdsize = (uint32_t)newSize;
+                header->sizeofcmds += (uint32_t)growth;
+                freeLoadCommandCountLeft -= growth;
+                nameCapacity = newSize - nameOffset;
+            }
+        }
+        if (nameOffset >= sizeof(struct dylib_command) && nameCapacity >= nameLength) {
+            dylibLoaderCommand->cmd = doInject ? LC_LOAD_DYLIB : 0x114514;
             char *nameStorage = (char *)dylibLoaderCommand + nameOffset;
             bzero(nameStorage, nameCapacity);
-            strncpy(nameStorage, targetPath, nameCapacity - 1);
+            memcpy(nameStorage, targetPath, nameLength);
+        } else {
+            ans |= PATCH_EXEC_RESULT_NO_SPACE_FOR_TWEAKLOADER;
         }
     } else {
         if (freeLoadCommandCountLeft >= tweakLoaderLoadDylibCmdSize) {
@@ -326,28 +348,6 @@ int LCPatchExecSlice(const char *path, struct mach_header_64 *header, bool doInj
     return ans;
 }
 
-// 自带反注入/反篡改守卫的二进制（AISGuard 家族）会把任何注入的
-// TweakLoader load command 当成“被改”，因此安装/启动时都不能补它。
-bool LCExecutableHasSelfIntegrityGuard(const char *path) {
-    if (!path) return false;
-    NSData *data = [NSData dataWithContentsOfFile:@(path)
-                                          options:NSDataReadingMappedIfSafe
-                                            error:nil];
-    if (data.length == 0) return false;
-    const char *bytes = (const char *)data.bytes;
-    size_t length = data.length;
-    static const char *markers[] = {
-        "AISGuard_", "AISPromptThenAbort", "AISAntiHook",
-        "enforceNoInjectionOrAbort", "verifyTextIntegrityOrAbort",
-    };
-    for (size_t i = 0; i < sizeof(markers) / sizeof(markers[0]); i++) {
-        size_t n = strlen(markers[i]);
-        if (n <= length && memmem(bytes, length, markers[i], n)) {
-            return true;
-        }
-    }
-    return false;
-}
 
 // 旧版本往依赖名槽里写路径时没有终止符, 磁盘上留下
 // "@loader_path/../../Tweaks/TweakLoader.dylibC" 这类脏名. 这类二进制不会因为

@@ -15,10 +15,12 @@ extern const char *TDHostHomeDocumentsPath(void);
 #import "LCSharedUtils.h"
 #import "utils.h"
 #import "UIKitPrivate+MultitaskSupport.h"
+#include <errno.h>
+#include <signal.h>
 
 @interface AppSceneViewController()
 @property int resizeDebounceToken;
-@property bool isNativeWindow;
+@property(nonatomic, readwrite) bool isNativeWindow;
 @property NSUUID* identifier;
 @end
 
@@ -28,6 +30,11 @@ extern const char *TDHostHomeDocumentsPath(void);
 @property(nonatomic) NSString *sceneID;
 @property(nonatomic) NSExtension* extension;
 @property(nonatomic) bool isAppTerminationCleanUpCalled;
+@property(nonatomic, readwrite) BOOL isTerminated;
+@property(nonatomic) BOOL observedTerminationExit;
+@property(nonatomic) NSUInteger terminationWaitGeneration;
+@property(nonatomic, strong) dispatch_source_t terminationExitSource;
+@property(nonatomic, copy) void (^terminationCompletion)(NSError *error);
 @end
 
 @implementation AppSceneViewController
@@ -40,7 +47,9 @@ extern const char *TDHostHomeDocumentsPath(void);
     self.bundleId = bundleId;
     self.scaleRatio = 1.0;
     self.isAppTerminationCleanUpCalled = false;
-    self.isNativeWindow = [NSUserDefaults.lcSharedDefaults integerForKey:@"LCMultitaskMode" ] == 1;
+    // The caller chooses the window type per launch, not the current global
+    // preference (which may have changed while this guest was running).
+    self.isNativeWindow = ![delegate isKindOfClass:DecoratedAppSceneViewController.class];
     
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
@@ -120,7 +129,9 @@ extern const char *TDHostHomeDocumentsPath(void);
     __weak typeof(self) weakSelf = self;
     [_extension setRequestCancellationBlock:^(NSUUID *uuid, NSError *error) {
         [weakSelf appTerminationCleanUp];
-        [weakSelf.delegate appSceneVC:weakSelf didInitializeWithError:error];
+        if (!weakSelf.isUserTerminating) {
+            [weakSelf.delegate appSceneVC:weakSelf didInitializeWithError:error];
+        }
     }];
     [_extension setRequestInterruptionBlock:^(NSUUID *uuid) {
         [weakSelf appTerminationCleanUp];
@@ -149,6 +160,7 @@ extern const char *TDHostHomeDocumentsPath(void);
 }
 
 - (void)setUpAppPresenter {
+    if (self.isUserTerminating || self.isAppTerminationCleanUpCalled) return;
     RBSProcessPredicate* predicate = [PrivClass(RBSProcessPredicate) predicateMatchingIdentifier:@(self.pid)];
     FBProcessManager *manager = [PrivClass(FBProcessManager) sharedInstance];
     // At this point, the process is spawned and we're ready to create a scene to render in our app
@@ -250,6 +262,9 @@ extern const char *TDHostHomeDocumentsPath(void);
         [self.contentView addSubview:self.presenter.presentationView];
     }
     [self.view addSubview:_contentView];
+    if (@available(iOS 18.0, *)) {
+        [self.hostingController.sceneViewController didMoveToParentViewController:self];
+    }
     
     // If we have a staging URL scheme, pass it now
     NSString *launchUrl = [NSUserDefaults.standardUserDefaults stringForKey:@"launchAppUrlScheme"];
@@ -274,15 +289,105 @@ extern const char *TDHostHomeDocumentsPath(void);
 }
 
 - (void)terminate {
-    // Manual close is not a launch failure: mark it so the interruption block
-    // reports a normal exit instead of raising the "extension interrupted" alert.
-    self.isUserTerminating = YES;
-    if(self.isAppRunning) {
-        [self.extension _kill:SIGTERM];
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            [self.extension _kill:SIGKILL];
-        });
+    if (!NSThread.isMainThread) {
+        dispatch_async(dispatch_get_main_queue(), ^{ [self terminate]; });
+        return;
     }
+    // Keep the existing extension termination path, bound to this launch.
+    self.isUserTerminating = YES;
+    int pid = self.pid;
+    if (pid > 0 && (kill(pid, 0) == 0 || errno != ESRCH)) {
+        NSUUID *identifier = self.identifier;
+        NSExtension *extension = self.extension;
+        [extension _kill:SIGTERM];
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            if (!self.observedTerminationExit && self.pid == pid && [self.identifier isEqual:identifier] && (kill(pid, 0) == 0 || errno != ESRCH)) {
+                [extension _kill:SIGKILL];
+            }
+        });
+    } else if (pid > 0) {
+        [self appTerminationCleanUp];
+    }
+}
+
+- (void)finishTerminationWithError:(NSError *)error {
+    void (^completion)(NSError *) = self.terminationCompletion;
+    self.terminationCompletion = nil;
+    ++self.terminationWaitGeneration;
+    if (self.terminationExitSource) {
+        dispatch_source_cancel(self.terminationExitSource);
+        self.terminationExitSource = nil;
+    }
+    // Delegate/Dock cleanup queued by appTerminationCleanUp runs first.
+    if (completion) dispatch_async(dispatch_get_main_queue(), ^{ completion(error); });
+}
+
+- (void)finishTerminationIfPossible {
+    if (self.terminationCompletion && self.observedTerminationExit && self.isTerminated) {
+        [self finishTerminationWithError:nil];
+    }
+}
+
+- (void)terminateWithCompletion:(void (^)(NSError *))completion {
+    if (!completion) {
+        [self terminate];
+        return;
+    }
+    if (!NSThread.isMainThread) {
+        dispatch_async(dispatch_get_main_queue(), ^{ [self terminateWithCompletion:completion]; });
+        return;
+    }
+    if (self.terminationCompletion || self.pid <= 0) {
+        NSString *message = self.terminationCompletion ? @"该应用正在结束，请勿重复重新启动" : @"应用仍在启动，无法确认要结束的进程";
+        completion([NSError errorWithDomain:@"LCAppTermination" code:1 userInfo:@{NSLocalizedDescriptionKey: message}]);
+        return;
+    }
+    int pid = self.pid;
+    NSUInteger generation = ++self.terminationWaitGeneration;
+    self.terminationCompletion = completion;
+    self.observedTerminationExit = NO;
+    if (kill(pid, 0) == -1 && errno == ESRCH) {
+        self.isUserTerminating = YES;
+        self.observedTerminationExit = YES;
+        [self appTerminationCleanUp];
+        [self finishTerminationIfPossible];
+        return;
+    }
+    dispatch_source_t source = dispatch_source_create(DISPATCH_SOURCE_TYPE_PROC, (uintptr_t)pid, DISPATCH_PROC_EXIT, dispatch_get_main_queue());
+    if (!source) {
+        [self finishTerminationWithError:[NSError errorWithDomain:@"LCAppTermination" code:2 userInfo:@{NSLocalizedDescriptionKey: @"无法确认该应用是否退出，未重新启动"}]];
+        return;
+    }
+    self.terminationExitSource = source;
+    // This source retains the controller even when closing its card/window
+    // removes its last UI owner. Only an exit event (or ESRCH) proves exit.
+    dispatch_source_set_event_handler(source, ^{
+        if (self.terminationWaitGeneration != generation || !self.terminationExitSource) return;
+        if (dispatch_source_get_data(self.terminationExitSource) & DISPATCH_PROC_EXIT) {
+            self.observedTerminationExit = YES;
+            [self appTerminationCleanUp];
+            [self finishTerminationIfPossible];
+        }
+    });
+    dispatch_source_set_registration_handler(source, ^{
+        if (self.terminationWaitGeneration == generation && kill(pid, 0) == -1 && errno == ESRCH) {
+            self.observedTerminationExit = YES;
+            [self appTerminationCleanUp];
+            [self finishTerminationIfPossible];
+        }
+    });
+    dispatch_resume(source);
+    NSLog(@"[LC][Multitask] waiting for selected guest exit bundle=%@ container=%@ pid=%d", self.bundleId, self.dataUUID, pid);
+    // closeWindow may already have sent SIGTERM; observe that same close
+    // rather than sending a second signal/escalation sequence.
+    if (!self.isUserTerminating) [self terminate];
+    __weak typeof(self) weakSelf = self;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(10 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        typeof(self) self = weakSelf;
+        if (!self || self.terminationWaitGeneration != generation || !self.terminationCompletion) return;
+        NSString *message = [NSString stringWithFormat:@"等待应用进程退出超时（PID %d），未重新启动以避免重复运行", pid];
+        [self finishTerminationWithError:[NSError errorWithDomain:@"LCAppTermination" code:3 userInfo:@{NSLocalizedDescriptionKey: message}]];
+    });
 }
 
 - (void)_performActionsForUIScene:(UIScene *)scene withUpdatedFBSScene:(id)fbsScene settingsDiff:(FBSSceneSettingsDiff *)diff fromSettings:(UIApplicationSceneSettings *)settings transitionContext:(id)context lifecycleActionType:(uint32_t)actionType {
@@ -343,29 +448,57 @@ extern const char *TDHostHomeDocumentsPath(void);
     }
     
     if(!_hostingController && self.contentView) {
-        // Legacy path
-        [self.presenter.scene updateSettingsWithBlock:updateSettingsBlock];
+        // The legacy presenter has no view-geometry publisher. Apply the
+        // viewport's clearance at the end of every update, including resizes.
+        [self.presenter.scene updateSettingsWithBlock:^(UIMutableApplicationSceneSettings *settings) {
+            updateSettingsBlock(settings);
+            if (self.view.window && !CGRectIsEmpty(self.view.bounds)) {
+                UIEdgeInsets insets = LCGuestSceneSafeAreaInsets(self.view, self.view, self.additionalSafeAreaInsets);
+                CGFloat scale = self.scaleRatio;
+                LCApplyGuestSceneSafeAreaInsets(settings, UIEdgeInsetsMake(insets.top / scale, insets.left / scale, insets.bottom / scale, insets.right / scale));
+                LCApplyGuestSceneStatusBarFrame(settings, self.view, scale);
+            }
+        }];
         return;
     }
-    
-    /// iOS 18.0 path, most are automatically handled by setting values to _UISceneHostingViewController
-    /// This is also reachable on legacy path when contentView is nil during early setup
-    UIMutableApplicationSceneSettings *tempSettings = [self.presenter.scene.settings mutableCopy];
+
+    FBScene *scene = self.presenter.scene;
+    UIMutableApplicationSceneSettings *tempSettings = [scene.settings mutableCopy];
     if(!tempSettings) {
         tempSettings = [UIMutableApplicationSceneSettings new];
     }
     updateSettingsBlock(tempSettings);
-    CGRect frame = tempSettings.frame;
-    if(UIInterfaceOrientationIsLandscape(tempSettings.interfaceOrientation)) {
-        frame = CGRectMake(frame.origin.x, frame.origin.y, frame.size.height, frame.size.width);
-    }
-    
     if (self.contentView) {
-        // Discard position
-        frame.origin = CGPointZero;
-        self.contentView.frame = frame;
+        // UIKit owns the hosted scene's frame. Size its actual surface to the
+        // container instead of feeding a scene frame back into a transformed
+        // UIView.frame (which is undefined and shrinks again at non-unit scale).
+        CGFloat scale = self.scaleRatio;
+        if (!CGRectIsEmpty(self.view.bounds)) {
+            CGRect bounds = CGRectMake(0, 0, self.view.bounds.size.width / scale, self.view.bounds.size.height / scale);
+            if (!CGRectEqualToRect(self.contentView.bounds, bounds)) self.contentView.bounds = bounds;
+            self.contentView.layer.anchorPoint = CGPointZero;
+            self.contentView.layer.position = CGPointZero;
+        }
+
+        // Before attachment UIKit cannot derive safe areas from the surface.
+        // Seed from this container only when it has a real window. Afterwards
+        // UIKitHooks publishes from the attached, scaled surface itself.
+        if (!self.contentView.window && self.view.window && !CGRectIsEmpty(self.view.bounds)) {
+            UIEdgeInsets insets = LCGuestSceneSafeAreaInsets(self.view, self.view, self.additionalSafeAreaInsets);
+            LCApplyGuestSceneSafeAreaInsets(tempSettings, UIEdgeInsetsMake(insets.top / scale, insets.left / scale, insets.bottom / scale, insets.right / scale));
+            LCApplyGuestSceneStatusBarFrame(tempSettings, self.view, scale);
+        }
+        // Do not discard the caller's non-frame settings on the hosting path.
+        // Preserve UIKit's latest frame, not the caller's physical viewport,
+        // so publishing settings cannot resize the hosted scene a second time.
+        tempSettings.frame = scene.settings.frame;
+        [scene updateSettings:tempSettings withTransitionContext:nil completion:nil];
     } else {
-        // This method can be called while contentView is nil to set up initial frame
+        // Early legacy setup, before a presentation view exists.
+        CGRect frame = tempSettings.frame;
+        if(UIInterfaceOrientationIsLandscape(tempSettings.interfaceOrientation)) {
+            frame = CGRectMake(frame.origin.x, frame.origin.y, frame.size.height, frame.size.width);
+        }
         self.view.frame = frame;
     }
 }
@@ -375,13 +508,24 @@ extern const char *TDHostHomeDocumentsPath(void);
 }
 
 - (void)appTerminationCleanUp {
+    if (!NSThread.isMainThread) {
+        dispatch_async(dispatch_get_main_queue(), ^{ [self appTerminationCleanUp]; });
+        return;
+    }
+    // The request-invalidation callback can win the race with the proc
+    // source. ESRCH is another exit proof; EPERM must never count as exit.
+    if (self.terminationCompletion && self.pid > 0 && kill(self.pid, 0) == -1 && errno == ESRCH) {
+        self.observedTerminationExit = YES;
+    }
     if(_isAppTerminationCleanUpCalled) {
+        [self finishTerminationIfPossible];
         return;
     }
     _isAppTerminationCleanUpCalled = true;
     dispatch_async(dispatch_get_main_queue(), ^{
         if(self.sceneID) {
             [[PrivClass(FBSceneManager) sharedInstance] destroyScene:self.sceneID withTransitionContext:nil];
+            self.sceneID = nil;
         }
         if(self.usesHostingControllerAPI) {
             if(@available(iOS 17.0, *)) {
@@ -394,10 +538,16 @@ extern const char *TDHostHomeDocumentsPath(void);
             [self.presenter invalidate];
         }
         self.presenter = nil;
-        
+        if (self.settingsDiffKey) {
+            [self.hostScene _unregisterSettingsDiffActionArrayForKey:self.settingsDiffKey];
+            self.hostScene = nil;
+            self.settingsDiffKey = nil;
+        }
+        self.isTerminated = YES;
         [self.delegate appSceneVCAppDidExit:self];
         [MultitaskManager unregisterMultitaskContainerWithContainer:self.dataUUID];
         [NSNotificationCenter.defaultCenter postNotificationName:@"LCMultitaskWindowsChanged" object:self];
+        [self finishTerminationIfPossible];
     });
 }
 

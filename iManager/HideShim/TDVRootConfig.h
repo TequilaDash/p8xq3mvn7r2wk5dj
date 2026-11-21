@@ -72,7 +72,7 @@ void *TDVSecTaskReplacementForEntitlement(const char *entitlement, const char *c
 typedef enum {
     TDVGuestFileMapNone = 0,     // 原样透传
     TDVGuestFileMapTo = 1,       // 已写 out = 原件路径
-    TDVGuestFileMapHidden = 2,   // 原件不存在: 应答 ENOENT, 绝不能放行被打过的新文件
+    TDVGuestFileMapHidden = 2,   // 私有备份路径不可见; 原件缺失时不伪造文件存在性
 } TDVGuestFileMapResult;
 
 // imagePath 是否为访客镜像 (含 /Documents/Applications/).
@@ -83,21 +83,15 @@ bool TDVGuestBundleDirFromCallerImage(const char *callerImage, char *out, size_t
 // 命中时写 out (TDVGuestFileMapTo) 或要求 ENOENT (TDVGuestFileMapHidden).
 TDVGuestFileMapResult TDVGuestMapBundleFile(const char *path, const char *callerImage,
                                             char *out, size_t outSize);
-// caller bundle 里那份 `.td-original.executable` 的完整路径 (在 bundle 根内查找,
-// 按 bundle 目录缓存). 没有 -> false.
-bool TDVGuestOriginalExecutablePath(const char *callerImage, char *out, size_t outSize);
 
-// csops 伪 CS flags (TD_CSOPS_SPOOF=1, launcher 按 per-app csopsSpoof 透传):
-// 检测器经 csops(CS_OPS_STATUS) 读代码签名 flags: CS_DEBUGGED 0x10000000 =
-// "调试器已附加"内核级判据, CS_GET_TASK_ALLOW 0x2000 = "可被调试"(侧载宿主必有
-// get-task-allow). 伪表默认清除这两位; TD_CSOPS_KEEP_DEBUGGED=1 时保留
-// CS_DEBUGGED (供我们自己的调试器探测链路继续工作).
+// csops 状态兼容视图 (TD_CSOPS_SPOOF=1, per-app csopsSpoof):
+// 仅 guest 对自身 CS_OPS_STATUS 的查询补 CS_REQUIRE_LV (0x2000), 并按
+// TD_CSOPS_KEEP_DEBUGGED 保留或清 CS_DEBUGGED (0x10000000). 其余 flags
+// (包括 CS_GET_TASK_ALLOW 0x4) 保持内核值; 其它操作与非自身任务始终透传.
 bool TDVCsopsSpoofEnabled(void);
 // 返回 true = *flagsOut 已伪值化 (调用方直接 copyout); false = 透传真 csops.
 // flagsIn = 真 flags. 仅处理 CS_OPS_STATUS; 其余 ops 由 shim 层透传.
 bool TDVCsopsSpoofLookup(unsigned int flagsIn, unsigned int *flagsOut);
-/// 从 caller 所属访客包的原始 executable 备份读取 CodeDirectory 摘要.
-bool TDVOriginalExecutableCodeDirectoryHash(const char *callerImage, void *outHash, size_t outSize);
 
 // proc 族伪值 (TD_PROC_SPOOF=1, launcher 按 per-app procSpoof 透传):
 // 访客枚举/探测进程信息时隐藏宿主与其它进程 (Reveil "Suspicious PFlag value"

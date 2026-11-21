@@ -564,10 +564,19 @@ static CGRect LCCacheGuestStatusBarFrame(CGRect frame) {
 // records: the two launch modes can then be compared without guessing.
 static void LCLogStatusBarGeometry(UIWindowScene *scene, UIWindow *window, CGRect reported) {
     static CGRect lastReported = {{0, 0}, {0, 0}};
+    static CGRect lastBounds = {{0, 0}, {0, 0}};
+    static UIEdgeInsets lastInsets;
     static __weak UIWindowScene *lastScene = nil;
-    if (CGRectEqualToRect(reported, lastReported) && scene == lastScene) return;
+    static __weak UIWindow *lastWindow = nil;
+    CGRect bounds = window ? window.bounds : CGRectZero;
+    UIEdgeInsets insets = window ? window.safeAreaInsets : UIEdgeInsetsZero;
+    if (CGRectEqualToRect(reported, lastReported) && scene == lastScene && window == lastWindow &&
+        CGRectEqualToRect(bounds, lastBounds) && UIEdgeInsetsEqualToEdgeInsets(insets, lastInsets)) return;
     lastReported = reported;
+    lastBounds = bounds;
+    lastInsets = insets;
     lastScene = scene;
+    lastWindow = window;
     const char *dir = getenv("TD_CONSOLE_LOG_DIR");
     NSString *directory = (dir && dir[0] == '/') ? [NSString stringWithUTF8String:dir] : nil;
     if (!directory) {
@@ -581,13 +590,13 @@ static void LCLogStatusBarGeometry(UIWindowScene *scene, UIWindow *window, CGRec
     if (!directory) return;
     if (![[NSFileManager defaultManager] createDirectoryAtPath:directory withIntermediateDirectories:YES attributes:nil error:nil]) return;
     NSString *line = [NSString stringWithFormat:
-        @"[geometry] mode=%s pid=%d scene=%@ bounds=%@ keyWindow=%@ safeTop=%.1f safeBottom=%.1f statusBar=%@ reported=%@\n",
+        @"[geometry] mode=%s pid=%d scene=%@ bounds=%@ contentWindow=%@ safeTop=%.1f safeBottom=%.1f statusBar=%@ reported=%@\n",
         getenv("TD_LAUNCH_MODE") ?: "-", getpid(),
         scene.session.persistentIdentifier,
         NSStringFromCGRect(scene.coordinateSpace.bounds),
-        window ? NSStringFromCGRect(window.bounds) : @"(none)",
-        window ? window.safeAreaInsets.top : -1,
-        window ? window.safeAreaInsets.bottom : -1,
+        window ? NSStringFromCGRect(bounds) : @"(none)",
+        window ? insets.top : -1,
+        window ? insets.bottom : -1,
         scene.statusBarManager ? NSStringFromCGRect(scene.statusBarManager.statusBarFrame) : @"(none)",
         NSStringFromCGRect(reported)];
     NSString *path = [directory stringByAppendingPathComponent:
@@ -596,6 +605,31 @@ static void LCLogStatusBarGeometry(UIWindowScene *scene, UIWindow *window, CGRec
     int fd = open(path.fileSystemRepresentation, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0600);
     if (fd >= 0) { write(fd, data.bytes, data.length); close(fd); }
 }
+
+// Overlays and retained/hidden host windows are not guest content, even if a
+// scene transition temporarily leaves one as the scene's key window.
+static BOOL LCWindowHasVisibleGuestContent(UIWindow *window) {
+    if (!window || window.hidden || window.alpha < 0.01 || window.windowLevel >= UIWindowLevelStatusBar) return NO;
+    UIView *root = window.rootViewController.viewIfLoaded;
+    return root ? (!root.hidden && root.alpha >= 0.01 && root.window == window) : window.subviews.count > 0;
+}
+
+// UIWindow's FrontBoard scene accessor is also used by UIKit's visibility
+// propagation (documented in LiveContainer's upstream keyboard research).
+// Read the scene's transported physical-bar rect, not defaults/file IPC and
+// never the safe-area top, which may describe a notch or window controls.
+@interface UIApplicationSceneSettings (LCGuestPhysicalStatusBar)
+- (BOOL)statusBarDisabled;
+- (CGRect)statusBarAvoidanceFrame;
+@end
+
+@protocol LCGuestStatusBarScene <NSObject>
+- (UIApplicationSceneSettings *)settings;
+@end
+
+@interface UIWindow (LCGuestPhysicalStatusBar)
+- (id<LCGuestStatusBarScene>)_fbsScene;
+@end
 
 static CGRect LCGuestStatusBarFrame(UIApplication *application) {
     // UIKit may re-enter before the current frame is known. Don't return a
@@ -624,6 +658,7 @@ static CGRect LCGuestStatusBarFrame(UIApplication *application) {
         }
 
         UIWindowScene *statusBarScene = nil;
+        UIWindow *contentWindow = nil;
         NSInteger bestPriority = -1;
         for (UIScene *scene in application.connectedScenes) {
             if (![scene isKindOfClass:UIWindowScene.class]) continue;
@@ -632,32 +667,43 @@ static CGRect LCGuestStatusBarFrame(UIApplication *application) {
                 state != UISceneActivationStateForegroundInactive) continue;
             UIWindowScene *candidateScene = (UIWindowScene *)scene;
             UIWindow *keyWindow = candidateScene.keyWindow;
-            BOOL hasContentKeyWindow = keyWindow && !keyWindow.hidden && keyWindow.windowLevel < UIWindowLevelStatusBar;
-            BOOL hasContentWindow = hasContentKeyWindow;
-            if (!hasContentWindow) {
-                for (UIWindow *window in candidateScene.windows) {
-                    if (!window.hidden && window.windowLevel < UIWindowLevelStatusBar) {
-                        hasContentWindow = YES;
+            BOOL hasContentKeyWindow = LCWindowHasVisibleGuestContent(keyWindow);
+            UIWindow *candidateWindow = hasContentKeyWindow ? keyWindow : nil;
+            if (!candidateWindow) {
+                for (UIWindow *window in candidateScene.windows.reverseObjectEnumerator) {
+                    if (LCWindowHasVisibleGuestContent(window)) {
+                        candidateWindow = window;
                         break;
                     }
                 }
             }
-            // Within the same activation state, prefer a scene with visible
-            // content to one showing only overlays. Inactive scenes cover transitions.
+            if (!candidateWindow) continue;
+            // Inactive content scenes cover transitions; an overlay-only
+            // active scene was excluded above, rather than winning by state.
             NSInteger priority = (state == UISceneActivationStateForegroundActive ? 3 : 0)
-                + (hasContentKeyWindow ? 2 : (hasContentWindow ? 1 : 0));
+                + (hasContentKeyWindow ? 2 : 1);
             if (priority <= bestPriority) continue;
             bestPriority = priority;
             statusBarScene = candidateScene;
+            contentWindow = candidateWindow;
             if (state == UISceneActivationStateForegroundActive && hasContentKeyWindow) break;
         }
 
-        // The manager reports the bar in scene coordinates, including zero
-        // when hidden. Virtual guests have their bar disabled; their safe-area
-        // insets describe content clearance, not a status bar.
+        // Native scenes use their own manager. A virtual scene disables its
+        // renderer, but carries the real host bar's measured viewport overlap
+        // separately so legacy/manual-layout apps do not receive a false zero.
         UIStatusBarManager *manager = statusBarScene.statusBarManager;
         CGRect reported = manager ? manager.statusBarFrame : CGRectZero;
-        LCLogStatusBarGeometry(statusBarScene, statusBarScene.keyWindow, reported);
+        if ([contentWindow respondsToSelector:@selector(_fbsScene)]) {
+            id<LCGuestStatusBarScene> scene = [contentWindow _fbsScene];
+            UIApplicationSceneSettings *settings = [scene respondsToSelector:@selector(settings)] ? [scene settings] : nil;
+            if ([settings respondsToSelector:@selector(statusBarDisabled)] && [settings statusBarDisabled] &&
+                [settings respondsToSelector:@selector(statusBarAvoidanceFrame)]) {
+                CGRect physical = [settings statusBarAvoidanceFrame];
+                reported = CGRectIsNull(physical) || CGRectIsEmpty(physical) ? CGRectZero : physical;
+            }
+        }
+        LCLogStatusBarGeometry(statusBarScene, contentWindow, reported);
         return LCCacheGuestStatusBarFrame(reported);
     } @finally {
         gHookStatusBarFrameEntered = NO;
@@ -810,6 +856,14 @@ static BOOL gLCLegacyAppHooksInstalled = NO;
         swizzle(UIWindow.class, @selector(setHidden:), @selector(hook_setHidden:));
         // Bridge the legacy UIApplication getter to the guest's scene status bar.
         swizzle(UIApplication.class, @selector(statusBarFrame), @selector(hook_statusBarFrame));
+        // Worker queries may use the last completed frame, but never retain
+        // one across a hidden window, scene change or status-bar rotation.
+        for (NSNotificationName name in @[UIWindowDidBecomeHiddenNotification, UISceneDidDisconnectNotification,
+                                          UISceneDidActivateNotification, UIApplicationDidChangeStatusBarFrameNotification]) {
+            [NSNotificationCenter.defaultCenter addObserverForName:name object:nil queue:nil usingBlock:^(NSNotification *notification) {
+                LCCacheGuestStatusBarFrame(CGRectZero);
+            }];
+        }
     }
     [self hook_setDelegate:delegate];
 }
@@ -927,15 +981,27 @@ static BOOL gLCLegacyAppHooksInstalled = NO;
     [self hook_resignKeyWindow];
 }
 - (void)hook_setHidden:(BOOL)hidden {
-    [self updateWindowScene];
+    // Hiding an unattached host/overlay window must not attach it to the
+    // guest scene just to hide it.
+    if (!hidden) [self updateWindowScene];
     [self hook_setHidden:hidden];
 }
 - (void)updateWindowScene {
-    for(UIWindowScene *windowScene in UIApplication.sharedApplication.connectedScenes) {
-        if(!self.windowScene && self.screen == windowScene.screen) {
-            self.windowScene = windowScene;
-            break;
+    if (self.windowScene) return;
+    UIWindowScene *target = nil;
+    NSInteger bestPriority = -1;
+    for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
+        if (![scene isKindOfClass:UIWindowScene.class]) continue;
+        UIWindowScene *windowScene = (UIWindowScene *)scene;
+        if (self.screen != windowScene.screen || ![windowScene.session.role isEqualToString:UIWindowSceneSessionRoleApplication]) continue;
+        UISceneActivationState state = windowScene.activationState;
+        if (state == UISceneActivationStateBackground) continue;
+        NSInteger priority = state == UISceneActivationStateForegroundActive ? 2 : (state == UISceneActivationStateForegroundInactive ? 1 : 0);
+        if (priority > bestPriority) {
+            target = windowScene;
+            bestPriority = priority;
         }
     }
+    if (target) self.windowScene = target;
 }
 @end
