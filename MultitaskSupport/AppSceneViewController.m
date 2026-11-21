@@ -61,19 +61,29 @@ extern const char *TDHostHomeDocumentsPath(void);
     const char *tdHostDocumentsPath = TDHostHomeDocumentsPath();
     NSString *tdGlobalFlagPath = tdHostDocumentsPath ? [[NSString stringWithUTF8String:tdHostDocumentsPath] stringByAppendingPathComponent:@"TDGlobalHide"] : nil;
     BOOL tdGlobalHide = tdGlobalFlagPath && [[NSString stringWithContentsOfFile:tdGlobalFlagPath encoding:NSUTF8StringEncoding error:nil] isEqualToString:@"1"];
+    // A dictionary literal throws on a nil value. Host boot can leave the URL
+    // scheme unset, and the selected ids are optional, so never pass nil here.
+    NSString *hostScheme = NSUserDefaults.lcAppUrlScheme;
+    if (!hostScheme) {
+        NSArray *schemes = NSBundle.mainBundle.infoDictionary[@"CFBundleURLTypes"][0][@"CFBundleURLSchemes"];
+        hostScheme = schemes.firstObject ?: @"livecontainer";
+    }
     NSMutableDictionary *userInfo = @{
-        @"hostUrlScheme": NSUserDefaults.lcAppUrlScheme,
-        @"selected": _bundleId,
-        @"selectedContainer": _dataUUID,
+        @"hostUrlScheme": hostScheme,
+        @"selected": _bundleId ?: @"",
+        @"selectedContainer": _dataUUID ?: @"",
         @"bookmarks": bookmarks,
         @"lcHomePath": NSHomeDirectory(),
         @"tdGlobalHide": @(tdGlobalHide),
     }.mutableCopy;
+    // The extension cannot inherit the host's environment. Pass the same
+    // per-app gates the fullscreen path reads, so both modes launch alike.
     bool payloadIsSharedApp = false;
-    NSBundle *payloadBundle = [LCSharedUtils findBundleWithBundleId:bundleId isSharedAppOut:&payloadIsSharedApp];
-    NSString *payloadInfoPath = [payloadBundle.bundlePath stringByAppendingPathComponent:@"LCAppInfo.plist"];
-    NSDictionary *payloadAppInfo = [NSDictionary dictionaryWithContentsOfFile:payloadInfoPath];
-    for (NSString *key in @[@"sysctlSpoof", @"secTaskSpoof", @"csopsSpoof", @"procSpoof", @"csopsKeepDebugged"]) {
+    NSBundle *payloadBundle = bundleId ? [LCSharedUtils findBundleWithBundleId:bundleId isSharedAppOut:&payloadIsSharedApp] : nil;
+    NSString *payloadInfoPath = payloadBundle ? [payloadBundle.bundlePath stringByAppendingPathComponent:@"LCAppInfo.plist"] : nil;
+    NSDictionary *payloadAppInfo = payloadInfoPath ? [NSDictionary dictionaryWithContentsOfFile:payloadInfoPath] : nil;
+    for (NSString *key in @[@"hideLiveContainer", @"sysctlSpoof", @"secTaskSpoof",
+                             @"csopsSpoof", @"procSpoof", @"csopsKeepDebugged"]) {
         if ([payloadAppInfo[key] isKindOfClass:NSNumber.class]) {
             userInfo[key] = payloadAppInfo[key];
         }
@@ -88,7 +98,8 @@ extern const char *TDHostHomeDocumentsPath(void);
     NSURL *docURL = [NSFileManager.defaultManager URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask].lastObject;
     if ([NSUserDefaults.standardUserDefaults boolForKey:@"LCSharePrivateDataWithLiveProcess"]) {
         NSData* bookmarkData = [docURL bookmarkDataWithOptions:(1<<11) includingResourceValuesForKeys:0 relativeToURL:0 error:0];
-        [bookmarks addObject:bookmarkData];
+        // Bookmark creation returns nil on failure; -addObject:nil throws.
+        if (bookmarkData) { [bookmarks addObject:bookmarkData]; }
     } else {
         bool isSharedApp = false;
         NSBundle* bundle = [LCSharedUtils findBundleWithBundleId:bundleId isSharedAppOut:&isSharedApp];
@@ -96,12 +107,14 @@ extern const char *TDHostHomeDocumentsPath(void);
         if (!isSharedApp) {
             NSURL *dataURL = [docURL URLByAppendingPathComponent:[NSString stringWithFormat:@"Data/Application/%@", dataUUID]];
             NSURL *tweaksURL = [docURL URLByAppendingPathComponent:@"Tweaks"];
-            [bookmarks addObject:[bundle.bundleURL bookmarkDataWithOptions:(1<<11) includingResourceValuesForKeys:0 relativeToURL:0 error:0]];
+            NSData *bundleBm = [bundle.bundleURL bookmarkDataWithOptions:(1<<11) includingResourceValuesForKeys:0 relativeToURL:0 error:0];
+            if (bundleBm) { [bookmarks addObject:bundleBm]; }
             NSData* containerBookmark = [dataURL bookmarkDataWithOptions:(1<<11) includingResourceValuesForKeys:0 relativeToURL:0 error:0];
             if(containerBookmark) {
                 [bookmarks addObject:containerBookmark];
             }
-            [bookmarks addObject:[tweaksURL bookmarkDataWithOptions:(1<<11) includingResourceValuesForKeys:0 relativeToURL:0 error:0]];
+            NSData *tweaksBm = [tweaksURL bookmarkDataWithOptions:(1<<11) includingResourceValuesForKeys:0 relativeToURL:0 error:0];
+            if (tweaksBm) { [bookmarks addObject:tweaksBm]; }
         }
     }
     item.userInfo = userInfo;
