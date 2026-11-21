@@ -2,6 +2,7 @@
 #import "LCHomeButtonPlacement.h"
 #import "LCHomeButtonView.h"
 #import <objc/message.h>
+#import "../../LiveContainer/utils.h"
 
 NSString *LCHomeButtonSetting(NSString *key);
 NSNumber *LCHomeButtonNumberSetting(NSString *key);
@@ -128,7 +129,10 @@ static const CGFloat LCHomeButtonFlingCarry = 0.12;
     BOOL always = [mode isEqualToString:@"always"];
     BOOL legacyShow = getenv("TD_SHOW_HOME_BUTTON_IN_APPS") && atoi(getenv("TD_SHOW_HOME_BUTTON_IN_APPS")) == 1;
     // “保持现状”沿用原有主屏按键开关；只有“始终显示”才无视原有开关。
-    self.buttonHidden = always ? NO : !legacyShow;
+    BOOL hostOwnsGlobalButton = always && NSUserDefaults.isLiveProcess;
+    // The host owns one button above all LiveProcess windows. A classic
+    // fullscreen guest replaces the host UI and still needs its own button.
+    self.buttonHidden = hostOwnsGlobalButton || (!always && !legacyShow);
     self.edgeSwipeEnabled = [LCHomeButtonSetting(@"TDSideSwipeMode") isEqualToString:@"always"];
     BOOL dimEnabled = LCHomeButtonBoolSetting(@"TDAssistiveTouchIdleDim", YES);
     NSNumber *alpha = LCHomeButtonNumberSetting(@"TDAssistiveTouchIdleAlpha");
@@ -267,8 +271,9 @@ static const CGFloat LCHomeButtonFlingCarry = 0.12;
             [self brighten];
             break;
         case UIGestureRecognizerStateChanged: {
-            CGFloat radius = LCHomeButtonView.diameter / 2;
-            CGRect bounds = CGRectInset(self.view.bounds, radius, radius);
+            // Keep the whole control in the safe area during the drag, not
+            // only after it settles; otherwise it can cover system controls.
+            CGRect bounds = self.restingArea;
             CGFloat x = finger.x + self.dragOffset.x;
             CGFloat y = finger.y + self.dragOffset.y;
             self.button.center = CGPointMake(MIN(MAX(x, CGRectGetMinX(bounds)), CGRectGetMaxX(bounds)),

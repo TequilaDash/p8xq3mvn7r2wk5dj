@@ -4,6 +4,7 @@
 //
 
 import SwiftUI
+import CoreFoundation
 
 /// The main window's root: the Home Screen, with onboarding over it while it
 /// shows. Onboarding sits in the same view tree rather than being presented,
@@ -35,6 +36,10 @@ struct AppRootView: View {
         .onChange(of: onboarding.isPresented, onboardingChanged)
         .onAppear { TDHostHomeOverlayController.shared.attach() }
         .onReceive(NotificationCenter.default.publisher(for: .lcHostHomePressed)) { _ in
+            if #available(iOS 16.0, *) {
+                MultitaskStackManager.shared.dismiss()
+                MultitaskDockManager.shared.minimizeAllWindows()
+            }
             home.goHome()
         }
         // Where the Home button goes, on the Home Screen and every screen
@@ -110,6 +115,7 @@ private struct TDGlobalHomeOverlay: View {
                             }
                         }
                     )
+                    .background(TDOverlayHitRegion())
                     .position(center)
                     .opacity(dimmed && dimEnabled ? max(0.15, min(1.0, dimAlpha)) : 1)
                     .simultaneousGesture(
@@ -128,7 +134,8 @@ private struct TDGlobalHomeOverlay: View {
                             }
                     )
                 }
-                .ignoresSafeArea()
+                // Keep the button inside the scene's safe area. It cannot cover
+                // the status bar, home indicator, or bottom controls while dragged.
                 .onAppear(perform: scheduleDim)
                 .onChange(of: mode) { _, _ in scheduleDim() }
             }
@@ -155,10 +162,55 @@ extension Notification.Name {
 /// A window that lets touches through except on the Home button itself, so it
 /// can sit above alerts ("App 已终止") without blocking them.
 private final class TDHostHomeOverlayWindow: UIWindow {
+    weak var buttonRegion: UIView?
+
+    override var canBecomeKey: Bool { false }
+
+    // Match the UIKit guest overlay: this transparent window must not become
+    // the source of the application's status-bar geometry or style.
+    @objc(_canAffectStatusBarAppearance)
+    func td_canAffectStatusBarAppearance() -> Bool { false }
+
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
-        let hit = super.hitTest(point, with: event)
-        if hit === rootViewController?.view { return nil }
-        return hit
+        // Convert at hit-test time: dragging can move SwiftUI ancestors without
+        // laying out the marker itself. A cached rectangle would stay behind.
+        guard let region = buttonRegion, region.window === self,
+              region.bounds.contains(region.convert(point, from: self)) else { return nil }
+        return super.hitTest(point, with: event)
+    }
+}
+
+
+private struct TDOverlayHitRegion: UIViewRepresentable {
+    func makeUIView(context: Context) -> UIView {
+        let view = RegionView()
+        view.isUserInteractionEnabled = false
+        view.backgroundColor = .clear
+        return view
+    }
+
+    func updateUIView(_ view: UIView, context: Context) {}
+
+    static func dismantleUIView(_ view: UIView, coordinator: ()) {
+        (view as? RegionView)?.clearInteractiveRegion()
+    }
+
+    private final class RegionView: UIView {
+        weak var overlayWindow: TDHostHomeOverlayWindow?
+
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            clearInteractiveRegion()
+            overlayWindow = window as? TDHostHomeOverlayWindow
+            overlayWindow?.buttonRegion = self
+        }
+
+        func clearInteractiveRegion() {
+            if overlayWindow?.buttonRegion === self {
+                overlayWindow?.buttonRegion = nil
+            }
+            overlayWindow = nil
+        }
     }
 }
 
@@ -189,12 +241,17 @@ private final class TDHostHomeOverlayController {
 
         window?.isHidden = true
         let host = UIHostingController(rootView: TDGlobalHomeOverlay(action: {
+            // Over a guest, minimizing is what the Home press means; on the
+            // host's own screens the observer below closes what is open.
+            CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),
+                                                 CFNotificationName("com.kdt.livecontainer.minimizeAll" as CFString),
+                                                 nil, nil, true)
             NotificationCenter.default.post(name: .lcHostHomePressed, object: nil)
         }))
         host.view.backgroundColor = .clear
         let overlay = TDHostHomeOverlayWindow(windowScene: scene)
         overlay.frame = scene.coordinateSpace.bounds
-        overlay.windowLevel = UIWindow.Level.alert + 1
+        overlay.windowLevel = UIWindow.Level.alert + 2
         overlay.backgroundColor = .clear
         overlay.rootViewController = host
         overlay.isHidden = false

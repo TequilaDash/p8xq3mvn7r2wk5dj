@@ -499,6 +499,7 @@ static NSNotificationName const LCWindowTouchedNotification = @"LCWindowTouchedN
 /// The picture of the window on its way into the multitask dock, while it
 /// goes.
 @property(nonatomic, weak) UIView *dockFlyer;
+@property(nonatomic, strong, readwrite) UIView *stackPreview;
 @end
 
 @implementation DecoratedAppSceneViewController
@@ -820,6 +821,7 @@ static NSNotificationName const LCWindowTouchedNotification = @"LCWindowTouchedN
     if (CGRectIsEmpty(self.view.bounds)) return nil;
     UIView *picture = [self.view snapshotViewAfterScreenUpdates:NO];
     if (!picture) return nil;
+    self.stackPreview = picture;
     UIView *flyer = [[UIView alloc] initWithFrame:self.view.frame];
     flyer.userInteractionEnabled = NO;
     picture.frame = flyer.bounds;
@@ -847,6 +849,7 @@ static NSNotificationName const LCWindowTouchedNotification = @"LCWindowTouchedN
 }
 
 - (void)restoreFromDock {
+    self.stackPreview = nil;
     // A window brought back before its picture reached the dock comes
     // straight back out.
     [self.dockFlyer removeFromSuperview];

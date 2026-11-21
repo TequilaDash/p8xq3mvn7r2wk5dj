@@ -103,14 +103,12 @@ struct IManagerRootView: View {
                 NSLog("[TDGlobalHide] write=%d path=%@ error=%@", nv, flagPath, error.localizedDescription)
             }
         }
+        .onChange(of: envSpoof) { nv in
+            Self.sharedDefaults?.set(nv, forKey: "TDEnvSpoof")
+            Self.sharedDefaults?.synchronize()
+        }
         .onChange(of: crashSignals) { nv in
             Self.sharedDefaults?.set(nv, forKey: "TDConsoleSignals")
-        }
-        .onAppear {
-            // TDAudioBridgeHost removed in 1.1.55: the guest (LiveProcess
-            // extension) now authorizes its own audio session directly
-            // (has a foreground scene in multitask windows). Host replay
-            // only interrupted other apps' playback.
         }
         .navigationTitle("iManager")
         .navigationBarTitleDisplayMode(.inline)

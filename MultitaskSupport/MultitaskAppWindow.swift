@@ -96,11 +96,15 @@ struct AppSceneViewSwiftUI: UIViewControllerRepresentable {
         func appSceneVCWillActivateScene(_ vc: AppSceneViewController!) {
             vc.updateSettings { settings in
                 guard let settings else { return }
-                let defaultInsets = vc.view.window?.safeAreaInsets ?? .zero
+                let window = vc.view.window
+                let defaultInsets = window?.safeAreaInsets ?? .zero
                 settings.peripheryInsets = defaultInsets
                 settings.safeAreaInsetsPortrait = defaultInsets
                 settings.deviceOrientation = UIDevice.current.orientation
-                settings.setInterfaceOrientation(UIApplication.shared.statusBarOrientation)
+                // Use the same scene orientation as the later resize path.
+                if let orientation = window?.windowScene?.interfaceOrientation, orientation != .unknown {
+                    settings.setInterfaceOrientation(orientation)
+                }
                 if(settings.interfaceOrientation().isLandscape) {
                     settings.setFrame(CGRect(x: 0, y: 0, width: vc.view.frame.size.height, height: vc.view.frame.size.width))
                 } else {

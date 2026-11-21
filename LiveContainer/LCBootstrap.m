@@ -66,8 +66,6 @@ NSString* lcGuestAppId;
 NSString* lcLaunchURL;
 bool isLiveProcess = false;
 bool isSharedBundle = false;
-// iManager 实验性开关 (app group defaults): 关掉后所有访客都不做环境伪值.
-static bool gTDEnvSpoofGlobal = true;
 
 @implementation NSUserDefaults(LiveContainer)
 + (instancetype)lcUserDefaults {
@@ -354,6 +352,23 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
     if(!guestAppInfo) {
         return @"App bundle not found! Unable to read LCAppInfo.plist.";
     }
+
+    // The captured Documents path belongs to this executable, not necessarily
+    // the host app. In LiveProcess the host marker comes from the launch item.
+    NSString *tdHostDocuments = isLiveProcess ? nil : TDHostHomeDocumentsDir();
+    NSString *tdFlagPath = [tdHostDocuments stringByAppendingPathComponent:@"TDGlobalHide"];
+    NSString *tdGlobalValue = tdFlagPath ? [NSString stringWithContentsOfFile:tdFlagPath encoding:NSUTF8StringEncoding error:nil] : nil;
+    const char *tdPayloadMarker = isLiveProcess ? getenv("TD_GLOBAL_HIDE") : NULL;
+    BOOL tdPayloadGlobalHide = tdPayloadMarker && tdPayloadMarker[0] == '1';
+    BOOL tdSharedGlobalHide = [lcSharedDefaults boolForKey:@"TDGlobalHide"];
+    BOOL tdGlobalHide = [tdGlobalValue isEqualToString:@"1"] || tdPayloadGlobalHide || tdSharedGlobalHide;
+    BOOL tdPerAppHide = [guestAppInfo[@"hideLiveContainer"] boolValue];
+    BOOL tdHideLiveContainer = tdGlobalHide || tdPerAppHide;
+    BOOL tdEnvSpoof = ![lcSharedDefaults objectForKey:@"TDEnvSpoof"] || [lcSharedDefaults boolForKey:@"TDEnvSpoof"];
+    setenv("TD_LAUNCH_MODE", isLiveProcess ? "multitask" : "fullscreen", 1);
+    NSLog(@"[TDGlobalHide] path=%@ value=%@ shared=%d payload=%d guest=%d global=%d hide=%d pre-NUD", tdFlagPath,
+          tdGlobalValue ?: @"<missing>", (int)tdSharedGlobalHide, (int)tdPayloadGlobalHide, (int)tdPerAppHide,
+          (int)tdGlobalHide, (int)tdHideLiveContainer);
     
     if([guestAppInfo[@"doUseLCBundleId"] boolValue] ) {
         NSMutableDictionary* infoPlist = [NSMutableDictionary dictionaryWithContentsOfFile:[NSString stringWithFormat:@"%@/Info.plist", bundlePath]];
@@ -581,24 +596,6 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
         method_setImplementation(class_getInstanceMethod(swiftNSProcessInfo, selector), class_getMethodImplementation(NSProcessInfo.class, selector));
     }
     
-    // Read the host-container flag before guest defaults and HOME are installed.
-    // 标记启动模式: 宿主进程跑访客=fullscreen, LiveProcess 扩展跑访客=multitask
-    // (扩展进程在 LiveProcess/main.m 里自己设). 镜像清单按此标签落盘, 便于
-    // 直接对比两种模式下访客看到的镜像差异 (用户实测两种模式环境不一致).
-    setenv("TD_LAUNCH_MODE", isLiveProcess ? "multitask" : "fullscreen", 1);
-    NSString *tdHostDocuments = TDHostHomeDocumentsDir();
-    NSString *tdFlagPath = tdHostDocuments ? [tdHostDocuments stringByAppendingPathComponent:@"TDGlobalHide"] : nil;
-    NSString *tdGlobalValue = tdFlagPath ? [NSString stringWithContentsOfFile:tdFlagPath encoding:NSUTF8StringEncoding error:nil] : nil;
-    BOOL tdFileGlobalHide = [tdGlobalValue isEqualToString:@"1"];
-    BOOL tdSharedGlobalHide = [lcSharedDefaults boolForKey:@"TDGlobalHide"];
-    BOOL tdPayloadGlobalHide = getenv("TD_GLOBAL_HIDE") && getenv("TD_GLOBAL_HIDE")[0] == '1';
-    BOOL tdGlobalHide = tdFileGlobalHide || tdSharedGlobalHide || tdPayloadGlobalHide;
-    BOOL tdPerAppHide = [guestAppInfo[@"hideLiveContainer"] boolValue];
-    BOOL tdHideLiveContainer = tdGlobalHide || tdPerAppHide;
-    NSLog(@"[TDGlobalHide] path=%@ value=%@ shared=%d payload=%d guest=%d global=%d hide=%d pre-NUD", tdFlagPath,
-          tdGlobalValue ?: @"<missing>", (int)tdSharedGlobalHide, (int)tdPayloadGlobalHide, (int)tdPerAppHide,
-          (int)tdGlobalHide, (int)tdHideLiveContainer);
-
     // Preserve the pre-experimental Home button behavior for "keep current":
     // Appearance's global switch plus the app's own per-app switch.
     BOOL tdShowHomeButton = [lcUserDefaults boolForKey:@"LCShowHomeButtonInApps"] &&
@@ -617,21 +614,22 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
     litehook_rebind_symbol(LITEHOOK_REBIND_GLOBAL, NSSetUncaughtExceptionHandler, hook_do_nothing, nil);
     
     BOOL hookDlopen = !isSharedBundle && LCSharedUtils.certificatePassword && isLiveProcess;
-    // Per-guest gates are replaced on each launch because the host process is resident.
+    // Install the same gates in both modes, after bootstrap's own checks and
+    // before loading guest images. Use the installed guest plist in both modes.
     id tdSysctlValue = guestAppInfo[@"sysctlSpoof"];
     id tdSecTaskValue = guestAppInfo[@"secTaskSpoof"];
     id tdCsopsValue = guestAppInfo[@"csopsSpoof"];
     id tdProcValue = guestAppInfo[@"procSpoof"];
-    BOOL tdSysctlSpoof = gTDEnvSpoofGlobal && (tdGlobalHide || (tdSysctlValue ? [tdSysctlValue boolValue] : YES));
-    BOOL tdSecTaskSpoof = gTDEnvSpoofGlobal && (tdGlobalHide || (tdSecTaskValue ? [tdSecTaskValue boolValue] : YES));
-    BOOL tdCsopsSpoof = gTDEnvSpoofGlobal && (tdGlobalHide || (tdCsopsValue ? [tdCsopsValue boolValue] : YES));
-    BOOL tdProcSpoof = gTDEnvSpoofGlobal && (tdGlobalHide || (tdProcValue ? [tdProcValue boolValue] : YES));
+    BOOL tdSysctlSpoof = tdEnvSpoof && (tdGlobalHide || (tdSysctlValue ? [tdSysctlValue boolValue] : YES));
+    BOOL tdSecTaskSpoof = tdEnvSpoof && (tdGlobalHide || (tdSecTaskValue ? [tdSecTaskValue boolValue] : YES));
+    BOOL tdCsopsSpoof = tdEnvSpoof && (tdGlobalHide || (tdCsopsValue ? [tdCsopsValue boolValue] : YES));
+    BOOL tdProcSpoof = tdEnvSpoof && (tdGlobalHide || (tdProcValue ? [tdProcValue boolValue] : YES));
     setenv("TD_SYSCTL_SPOOF", tdSysctlSpoof ? "1" : "0", 1);
     setenv("TD_SECTASK_SPOOF", tdSecTaskSpoof ? "1" : "0", 1);
     setenv("TD_CSOPS_SPOOF", tdCsopsSpoof ? "1" : "0", 1);
     setenv("TD_PROC_SPOOF", tdProcSpoof ? "1" : "0", 1);
     setenv("TD_DYLD_TRIM", tdHideLiveContainer ? "1" : "0", 1);
-    setenv("TD_CSOPS_KEEP_DEBUGGED", (![guestAppInfo[@"csopsKeepDebugged"] boolValue] || tdGlobalHide) ? "0" : "1", 1);
+    setenv("TD_CSOPS_KEEP_DEBUGGED", (tdEnvSpoof && !tdGlobalHide && [guestAppInfo[@"csopsKeepDebugged"] boolValue]) ? "1" : "0", 1);
     TDVRootInstallIfRequested();
     NSLog(@"[TDGlobalHide] gates hide=%d sysctl=%d sectask=%d csops=%d proc=%d", (int)tdHideLiveContainer,
           (int)tdSysctlSpoof, (int)tdSecTaskSpoof, (int)tdCsopsSpoof, (int)tdProcSpoof);
@@ -834,7 +832,6 @@ int LiveContainerMain(int argc, char *argv[]) {
         }
         BOOL signals = [lcSharedDefaults objectForKey:@"TDConsoleSignals"] ? [lcSharedDefaults boolForKey:@"TDConsoleSignals"] : NO;
         setenv("TD_CONSOLE_SIGNALS", signals ? "1" : "0", 1);
-        gTDEnvSpoofGlobal = [lcSharedDefaults objectForKey:@"TDEnvSpoof"] ? [lcSharedDefaults boolForKey:@"TDEnvSpoof"] : YES;
     }
 
     NSString *selectedApp = [lcUserDefaults stringForKey:@"selected"];

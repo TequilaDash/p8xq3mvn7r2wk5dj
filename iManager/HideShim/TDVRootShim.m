@@ -278,15 +278,8 @@ static int tdv_open_nocancel(const char *path, int flags, ...) {
     return TDV_REAL(open_nocancel)(use, flags);
 }
 
-// stat/access 类查询的路径语义:
-// 映射 (访客 bundle 内原件) 只对**读取内容**有意义 —— 访客 stat 自己请求的
-// 路径时, 必须得到那个路径自己的元数据. 之前 tdv_stat/tdv_lstat 也走了
-// tdv_mapped_for_caller, 于是 stat(主可执行) 返回的是 .td-original.executable
-// 的 inode, 与访客请求的路径不符 -> 访客侧 (sqlite3 / NSFileManager) 判定
-// "文件被替换", 反复重试 -> LiveProcess 爆栈 (2026-11-20 170705.ips:
-// sqlite3 -> tdv_lstat -> discover 递归). 上游 LiveContainer 根本没有这套
-// interpose, 原版不触发.
-// 因此: 元数据查询只做"隐藏"判定 (返回 ENOENT), 路径映射交给 open/read.
+// Metadata queries keep the requested path. Only apply the visibility rule;
+// content reads may resolve to a different backing file.
 static inline const char *tdv_meta_path_for_caller(const char *path, char *buf, size_t bufSize,
                                                     void *caller) {
     if (!path || path[0] != '/') {

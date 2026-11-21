@@ -65,6 +65,15 @@ BOOL LCHomeButtonBoolSetting(NSString *key, BOOL fallback) {
 @property (nonatomic) BOOL globalEdgeFired;
 @end
 
+static void LCHomeButtonSettingsDidChange(CFNotificationCenterRef center, void *observer,
+                                          CFStringRef name, const void *object,
+                                          CFDictionaryRef userInfo) {
+    LCHomeButtonController *controller = (__bridge LCHomeButtonController *)observer;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [controller showInActiveScenes];
+    });
+}
+
 @implementation LCHomeButtonController
 
 + (LCHomeButtonController *)sharedController {
@@ -94,6 +103,11 @@ BOOL LCHomeButtonBoolSetting(NSString *key, BOOL fallback) {
     NSNotificationCenter *center = NSNotificationCenter.defaultCenter;
     [center addObserver:self selector:@selector(sceneDidActivate:) name:UISceneDidActivateNotification object:nil];
     [center addObserver:self selector:@selector(windowDidBecomeVisible:) name:UIWindowDidBecomeVisibleNotification object:nil];
+    CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(),
+                                    (__bridge const void *)self,
+                                    LCHomeButtonSettingsDidChange,
+                                    CFSTR("com.kdt.livecontainer.assistiveTouchSettingsChanged"),
+                                    NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
     // TweakLoader can be injected after the app's first scene is already active
     // (classic launches, hot reload). Notifications alone then never fire.
     dispatch_async(dispatch_get_main_queue(), ^{
@@ -187,6 +201,12 @@ BOOL LCHomeButtonBoolSetting(NSString *key, BOOL fallback) {
 
 - (void)showInScene:(UIWindowScene *)scene {
     @try {
+        // "Always" is drawn once by the host overlay window, above every guest
+        // and alert. A guest window here was the duplicate button seen in each
+        // app, and it cannot sit above host alerts anyway.
+        if ([LCHomeButtonSetting(@"TDAssistiveTouchMode") isEqualToString:@"always"]) {
+            return;
+        }
         if (![self appHasWindowInScene:scene]) {
             // The scene can become active before the app has installed its first
             // window. Notifications are not guaranteed to repeat, so retry a few

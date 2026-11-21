@@ -76,8 +76,8 @@ extern const char *TDHostHomeDocumentsPath(void);
         @"lcHomePath": NSHomeDirectory(),
         @"tdGlobalHide": @(tdGlobalHide),
     }.mutableCopy;
-    // The extension cannot inherit the host's environment. Pass the same
-    // per-app gates the fullscreen path reads, so both modes launch alike.
+    // Keep per-app fields for LiveProcess versions that read them from the
+    // request. The common bootstrap reads the installed guest plist itself.
     bool payloadIsSharedApp = false;
     NSBundle *payloadBundle = bundleId ? [LCSharedUtils findBundleWithBundleId:bundleId isSharedAppOut:&payloadIsSharedApp] : nil;
     NSString *payloadInfoPath = payloadBundle ? [payloadBundle.bundlePath stringByAppendingPathComponent:@"LCAppInfo.plist"] : nil;
@@ -101,13 +101,11 @@ extern const char *TDHostHomeDocumentsPath(void);
         // Bookmark creation returns nil on failure; -addObject:nil throws.
         if (bookmarkData) { [bookmarks addObject:bookmarkData]; }
     } else {
-        bool isSharedApp = false;
-        NSBundle* bundle = [LCSharedUtils findBundleWithBundleId:bundleId isSharedAppOut:&isSharedApp];
         // when mutlitask with private app, we can restrict its sandbox to only its own container
-        if (!isSharedApp) {
+        if (!payloadIsSharedApp) {
             NSURL *dataURL = [docURL URLByAppendingPathComponent:[NSString stringWithFormat:@"Data/Application/%@", dataUUID]];
             NSURL *tweaksURL = [docURL URLByAppendingPathComponent:@"Tweaks"];
-            NSData *bundleBm = [bundle.bundleURL bookmarkDataWithOptions:(1<<11) includingResourceValuesForKeys:0 relativeToURL:0 error:0];
+            NSData *bundleBm = [payloadBundle.bundleURL bookmarkDataWithOptions:(1<<11) includingResourceValuesForKeys:0 relativeToURL:0 error:0];
             if (bundleBm) { [bookmarks addObject:bundleBm]; }
             NSData* containerBookmark = [dataURL bookmarkDataWithOptions:(1<<11) includingResourceValuesForKeys:0 relativeToURL:0 error:0];
             if(containerBookmark) {

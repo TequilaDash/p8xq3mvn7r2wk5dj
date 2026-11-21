@@ -12,8 +12,6 @@ void NSFMGuestHooksInit(void) {
     NSDictionary* infoDict = [NSUserDefaults guestContainerInfo];
     isolateAppGroup = [infoDict[@"isolateAppGroup"] boolValue];
     swizzle(NSFileManager.class, @selector(containerURLForSecurityApplicationGroupIdentifier:), @selector(hook_containerURLForSecurityApplicationGroupIdentifier:));
-    swizzle(NSFileManager.class, @selector(contentsAtPath:), @selector(hook_contentsAtPath:));
-    swizzleClassMethod(NSDictionary.class, @selector(dictionaryWithContentsOfFile:), @selector(hook_dictionaryWithContentsOfFile:));
     
     /// To fix https://github.com/LiveContainer/LiveContainer/issues/888 i.e. WebKit being unable to save cookie issue, we have to hook -[NSFileManager createDirectoryAtPath:withIntermediateDirectories:attributes:error:] so that WebKit still creates bookmark for the symlinked lc's cookies folder, which is resolved by the kernel to the app's cookies folder
     /// see https://github.com/apple-oss-distributions/WebKit/blob/0c8cf3581e5c01d970ea411128007c9325ba2d48/Source/WebKit/Shared/Cocoa/SandboxExtensionCocoa.mm#L159 and https://github.com/apple-oss-distributions/WebKit/blob/0c8cf3581e5c01d970ea411128007c9325ba2d48/Source/WebKit/UIProcess/WebsiteData/WebsiteDataStore.cpp#L2225
@@ -33,28 +31,14 @@ void NSFMGuestHooksInit(void) {
     
 }
 
-
-@implementation NSDictionary (LiveContainerHooks)
-
-// No SecurityPresets special-casing here. The only writer is
-// LCAdaptSecurityPresets, which runs in invokeAppMain BEFORE this swizzle is
-// installed, so guests read the already-adapted file from disk. Rewriting the
-// dictionary again on every read changed what guest apps see versus the file
-// on disk and crashed at least xiaohongshu (discover), whose plist-parsing
-// loop recursed through the modified dictionary (SIGBUS stack overflow,
-// LiveProcess-2026-11-18-211701.ips).
-+ (NSDictionary *)hook_dictionaryWithContentsOfFile:(NSString *)path {
-    return [self hook_dictionaryWithContentsOfFile:path];
-}
-
-@end
-
 // NSFileManager simulate app group
 @implementation NSFileManager(LiveContainerHooks)
 
 - (nullable NSURL *)hook_containerURLForSecurityApplicationGroupIdentifier:(NSString *)groupIdentifier {
     if([groupIdentifier isEqualToString:[NSClassFromString(@"LCSharedUtils") appGroupID]]) {
-        return [NSURL fileURLWithPath: NSUserDefaults.lcAppGroupPath];
+        // The host can have no usable app group. Preserve the API's nil result.
+        NSString *appGroupPath = NSUserDefaults.lcAppGroupPath;
+        return appGroupPath.length > 0 ? [NSURL fileURLWithPath:appGroupPath] : nil;
     }
     NSURL *result;
     if(isolateAppGroup) {
@@ -68,13 +52,6 @@ void NSFMGuestHooksInit(void) {
     return result;
 }
 
-- (nullable NSData *)hook_contentsAtPath:(NSString *)path {
-    // Serve the same bytes the SecurityPresets baseline was computed from:
-    // the CURRENT embedded.mobileprovision on disk. Diverging between the two
-    // read paths (hook -> original file, plain read -> current file) is what
-    // made baked-baseline checks disagree with themselves.
-    return [self hook_contentsAtPath:path];
-}
 - (bool)hook_createDirectoryAtPath:(NSString *)path withIntermediateDirectories:(BOOL)createIntermediates attributes:(NSDictionary<NSFileAttributeKey,id> *)attributes error:(NSError *__autoreleasing  _Nullable *)error {
     bool ans = [self hook_createDirectoryAtPath:path withIntermediateDirectories:createIntermediates attributes:attributes error:error];
     void* callerAddr = __builtin_return_address(0);

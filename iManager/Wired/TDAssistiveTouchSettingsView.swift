@@ -1,4 +1,5 @@
 import SwiftUI
+import CoreFoundation
 
 struct TDAssistiveTouchSettingsView: View {
     private static var defaults: UserDefaults? {
@@ -37,6 +38,7 @@ struct TDAssistiveTouchSettingsView: View {
                     .onChange(of: idleDim) { _, value in
                         Self.defaults?.set(value, forKey: "TDAssistiveTouchIdleDim")
                         Self.defaults?.synchronize()
+                        notifySettingsDidChange()
                     }
                 if idleDim {
                     VStack(alignment: .leading, spacing: 6) {
@@ -51,6 +53,7 @@ struct TDAssistiveTouchSettingsView: View {
                             .onChange(of: idleAlpha) { _, value in
                                 Self.defaults?.set(value, forKey: "TDAssistiveTouchIdleAlpha")
                                 Self.defaults?.synchronize()
+                                notifySettingsDidChange()
                             }
                     }
                 }
@@ -130,6 +133,13 @@ struct TDAssistiveTouchSettingsView: View {
             mode = value
             Self.defaults?.set(value, forKey: "TDAssistiveTouchMode")
             Self.defaults?.synchronize()
+            notifySettingsDidChange()
         }
+    }
+
+    private func notifySettingsDidChange() {
+        CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),
+                                             CFNotificationName("com.kdt.livecontainer.assistiveTouchSettingsChanged" as CFString),
+                                             nil, nil, true)
     }
 }

@@ -544,19 +544,12 @@ static LCControlAppURLHandling LCHandleControlAppURL(NSURL *url, NSString** modi
     return LCControlAppURLHandlingStop;
 }
 
-// Re-entry and worker-thread queries use a locked geometry snapshot. UIKit
-// traversal is main-thread-only; never synchronously wait for the main queue.
+// Worker-thread queries use the last completed frame. UIKit traversal is
+// main-thread-only; never synchronously wait for the main queue.
 static __thread BOOL gHookStatusBarFrameEntered = NO;
 static os_unfair_lock gStatusBarFrameLock = OS_UNFAIR_LOCK_INIT;
 static CGRect gCachedStatusBarFrame = {{0, 0}, {0, 0}};
 static BOOL gStatusBarFrameRefreshPending = NO;
-
-static CGRect LCCachedGuestStatusBarFrame(void) {
-    os_unfair_lock_lock(&gStatusBarFrameLock);
-    CGRect frame = gCachedStatusBarFrame;
-    os_unfair_lock_unlock(&gStatusBarFrameLock);
-    return frame;
-}
 
 static CGRect LCCacheGuestStatusBarFrame(CGRect frame) {
     os_unfair_lock_lock(&gStatusBarFrameLock);
@@ -566,9 +559,9 @@ static CGRect LCCacheGuestStatusBarFrame(CGRect frame) {
 }
 
 static CGRect LCGuestStatusBarFrame(UIApplication *application) {
-    // No defaults, safeAreaInsets, or UIApplication.statusBarFrame here:
-    // each can synchronously re-enter the swizzled selector.
-    if (gHookStatusBarFrameEntered) return LCCachedGuestStatusBarFrame();
+    // UIKit may re-enter before the current frame is known. Don't return a
+    // previous scene or rotation's frame to that nested query.
+    if (gHookStatusBarFrameEntered) return CGRectZero;
     gHookStatusBarFrameEntered = YES;
     @try {
         if (![NSThread isMainThread]) {
@@ -591,8 +584,7 @@ static CGRect LCGuestStatusBarFrame(UIApplication *application) {
             return frame;
         }
 
-        UIWindow *keyWindow = nil;
-        UIWindowScene *keyScene = nil;
+        UIWindowScene *statusBarScene = nil;
         NSInteger bestPriority = -1;
         for (UIScene *scene in application.connectedScenes) {
             if (![scene isKindOfClass:UIWindowScene.class]) continue;
@@ -600,45 +592,32 @@ static CGRect LCGuestStatusBarFrame(UIApplication *application) {
             if (state != UISceneActivationStateForegroundActive &&
                 state != UISceneActivationStateForegroundInactive) continue;
             UIWindowScene *candidateScene = (UIWindowScene *)scene;
-            UIWindow *candidateWindow = candidateScene.keyWindow;
-            BOOL hasKeyWindow = candidateWindow && !candidateWindow.hidden;
-            if (!hasKeyWindow) {
-                candidateWindow = nil;
+            UIWindow *keyWindow = candidateScene.keyWindow;
+            BOOL hasContentKeyWindow = keyWindow && !keyWindow.hidden && keyWindow.windowLevel < UIWindowLevelStatusBar;
+            BOOL hasContentWindow = hasContentKeyWindow;
+            if (!hasContentWindow) {
                 for (UIWindow *window in candidateScene.windows) {
-                    if (window.hidden) continue;
-                    if (!candidateWindow || window.windowLevel == UIWindowLevelNormal) {
-                        candidateWindow = window;
+                    if (!window.hidden && window.windowLevel < UIWindowLevelStatusBar) {
+                        hasContentWindow = YES;
+                        break;
                     }
-                    if (window.windowLevel == UIWindowLevelNormal) break;
                 }
             }
-            // Do not let an arbitrary scene's visible fallback beat another
-            // active scene's key window. Inactive scenes cover transitions.
+            // Within the same activation state, prefer a scene with visible
+            // content to one showing only overlays. Inactive scenes cover transitions.
             NSInteger priority = (state == UISceneActivationStateForegroundActive ? 3 : 0)
-                + (hasKeyWindow ? 2 : (candidateWindow ? 1 : 0));
+                + (hasContentKeyWindow ? 2 : (hasContentWindow ? 1 : 0));
             if (priority <= bestPriority) continue;
             bestPriority = priority;
-            keyWindow = candidateWindow;
-            keyScene = candidateScene;
-            if (state == UISceneActivationStateForegroundActive && hasKeyWindow) break;
+            statusBarScene = candidateScene;
+            if (state == UISceneActivationStateForegroundActive && hasContentKeyWindow) break;
         }
 
-        if (!keyScene) return LCCacheGuestStatusBarFrame(CGRectZero);
-        CGFloat width = keyWindow ? keyWindow.bounds.size.width : keyScene.coordinateSpace.bounds.size.width;
-        // A hardcoded 20pt is the pre-notch height; on a Dynamic Island
-        // device it leaves guest content under the clock. Prefer the guest
-        // window's own top inset and keep 20pt only as the true zero case.
-        CGFloat height = 20;
-        if (keyWindow) {
-            CGFloat top = keyWindow.safeAreaInsets.top;
-            if (top > 0 && top < 200) height = top;
-        }
-        CGRect fallback = width > 0 ? CGRectMake(0, 0, width, height) : CGRectZero;
-        // Publish this scene's current geometry before asking the manager:
-        // recursive queries must not receive the previous scene/rotation's rect.
-        LCCacheGuestStatusBarFrame(fallback);
-        CGRect frame = keyScene.statusBarManager.statusBarFrame;
-        return CGRectIsEmpty(frame) ? fallback : LCCacheGuestStatusBarFrame(frame);
+        // The manager reports the bar in scene coordinates, including zero
+        // when hidden. Virtual guests have their bar disabled; their safe-area
+        // insets describe content clearance, not a status bar.
+        UIStatusBarManager *manager = statusBarScene.statusBarManager;
+        return LCCacheGuestStatusBarFrame(manager ? manager.statusBarFrame : CGRectZero);
     } @finally {
         gHookStatusBarFrameEntered = NO;
     }
@@ -788,7 +767,7 @@ static BOOL gLCLegacyAppHooksInstalled = NO;
         swizzle(UIWindow.class, @selector(makeKeyAndVisible), @selector(hook_makeKeyAndVisible));
         swizzle(UIWindow.class, @selector(makeKeyWindow), @selector(hook_makeKeyWindow));
         swizzle(UIWindow.class, @selector(setHidden:), @selector(hook_setHidden:));
-        // Fix apps that do not support UISceneDelegate getting 0 status bar frame
+        // Bridge the legacy UIApplication getter to the guest's scene status bar.
         swizzle(UIApplication.class, @selector(statusBarFrame), @selector(hook_statusBarFrame));
     }
     [self hook_setDelegate:delegate];
@@ -799,7 +778,6 @@ static BOOL gLCLegacyAppHooksInstalled = NO;
     return YES;
 }
 
-// A virtual scene may have no status bar; use its geometry, not the host screen.
 - (CGRect)hook_statusBarFrame {
     return LCGuestStatusBarFrame(self);
 }

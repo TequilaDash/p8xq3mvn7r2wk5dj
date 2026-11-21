@@ -747,9 +747,10 @@ class AppInfoProvider {
             }
         }
     }
+
     
     @objc public func minimizeAllWindows(except: DecoratedAppSceneViewController? = nil) {
-        DispatchQueue.main.async {
+        let minimizeWindows = {
             self.apps.forEach { app in
                 if let vc = app.view?._viewDelegate() as? DecoratedAppSceneViewController,
                    vc != except {
@@ -757,6 +758,12 @@ class AppInfoProvider {
                     vc.minimizeWindow()
                 }
             }
+        }
+        // Capture visible guests before Home navigation changes the screen.
+        if Thread.isMainThread {
+            minimizeWindows()
+        } else {
+            DispatchQueue.main.async(execute: minimizeWindows)
         }
     }
     

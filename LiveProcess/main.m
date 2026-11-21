@@ -121,43 +121,13 @@ int LiveProcessMain(int argc, char *argv[]) {
     }
     
     NSLog(@"Retrieved app info: %@", appInfo);
-    // 标记本进程是多任务访客 (LiveProcess 扩展). 全屏访客跑在宿主进程里, 由
-    // LCBootstrap 标记 TD_LAUNCH_MODE=fullscreen. 镜像清单落盘按此标签分文件,
-    // 便于直接对比两种模式下访客看到的镜像差异.
-    setenv("TD_LAUNCH_MODE", "multitask", 1);
-    // Carry per-app environment gates into the separate extension process.
-    // Global hide state lives in the app-group defaults shared by host and extension.
-    NSUserDefaults *lcShared = [[NSUserDefaults alloc] initWithSuiteName:[LCSharedUtils appGroupID]];
-    BOOL tdGlobalHide = [appInfo[@"tdGlobalHide"] boolValue] || [lcShared boolForKey:@"TDGlobalHide"];
-    NSNumber *envSpoofValue = [lcShared objectForKey:@"TDEnvSpoof"];
-    BOOL tdEnvSpoofGlobal = envSpoofValue ? envSpoofValue.boolValue : YES;
-    if (tdGlobalHide) {
+    // Only carry the host's marker here. The common bootstrap reads the suite
+    // and applies the guest's gates after launch-time entitlement and JIT checks.
+    if ([appInfo[@"tdGlobalHide"] boolValue]) {
         setenv("TD_GLOBAL_HIDE", "1", 1);
     } else {
         unsetenv("TD_GLOBAL_HIDE");
     }
-    struct { __unsafe_unretained NSString *infoKey; const char *envKey; } gateMap[] = {
-        {@"sysctlSpoof", "TD_SYSCTL_SPOOF"},
-        {@"secTaskSpoof", "TD_SECTASK_SPOOF"},
-        {@"csopsSpoof", "TD_CSOPS_SPOOF"},
-        {@"procSpoof", "TD_PROC_SPOOF"},
-        {@"csopsKeepDebugged", "TD_CSOPS_KEEP_DEBUGGED"},
-    };
-    for (size_t i = 0; i < sizeof(gateMap) / sizeof(gateMap[0]); i++) {
-        NSNumber *value = [appInfo[gateMap[i].infoKey] isKindOfClass:NSNumber.class] ? appInfo[gateMap[i].infoKey] : nil;
-        BOOL enabled = strcmp(gateMap[i].envKey, "TD_CSOPS_KEEP_DEBUGGED") == 0
-            ? (tdGlobalHide ? NO : (value ? value.boolValue : NO))
-            : (tdGlobalHide || (value ? value.boolValue : YES));
-        if (!tdEnvSpoofGlobal) enabled = NO;
-        setenv(gateMap[i].envKey, enabled ? "1" : "0", 1);
-    }
-    NSNumber *hideNumber = [appInfo[@"hideLiveContainer"] isKindOfClass:NSNumber.class] ? appInfo[@"hideLiveContainer"] : nil;
-    BOOL hide = hideNumber ? hideNumber.boolValue : NO;
-    if (!hide) {
-        NSNumber *sharedHide = [lcShared objectForKey:@"TDHideLiveContainer"];
-        hide = sharedHide ? sharedHide.boolValue : NO;
-    }
-    setenv("TD_DYLD_TRIM", hide ? "1" : "0", 1);
     setenv("LP_HOME_PATH", getenv("HOME"), 1);
     const char *overrideHomePath = [appInfo[@"lcHomePath"] fileSystemRepresentation];
     if(overrideHomePath) setenv("LC_HOME_PATH", overrideHomePath, 1);

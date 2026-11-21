@@ -245,25 +245,41 @@ public class MultitaskStackManager: NSObject, ObservableObject {
         }
         // Take the preview from the live window, never from a hidden/minimized
         // one: a hidden view snapshots empty and would show a black card.
-        previews = previews.filter { byUUID[$0.key] != nil }
         var freshPreviews: [String: UIView] = [:]
         for controller in controllers {
             guard let uuid = controller.dataUUID else { continue }
-            let source = decoratedController(for: controller)?.view ?? controller.viewIfLoaded
-            guard let source, !source.isHidden, source.window != nil, !source.bounds.isEmpty,
-                  let snapshot = source.snapshotView(afterScreenUpdates: false) else { continue }
-            freshPreviews[uuid] = snapshot
+            let decorated = decoratedController(for: controller)
+            let source = decorated?.viewIfLoaded ?? controller.viewIfLoaded
+            if let source, !source.isHidden, source.alpha > 0,
+               source.window != nil, !source.bounds.isEmpty,
+               let snapshot = source.snapshotView(afterScreenUpdates: false) {
+                freshPreviews[uuid] = snapshot
+            } else if let snapshot = decorated?.stackPreview {
+                freshPreviews[uuid] = snapshot
+            }
+        }
+        let dockApps = MultitaskDockManager.shared.apps
+        for app in dockApps where freshPreviews[app.appUUID] == nil {
+            if let decorated = app.view?._viewDelegate() as? DecoratedAppSceneViewController,
+               let snapshot = decorated.stackPreview {
+                freshPreviews[app.appUUID] = snapshot
+            }
         }
         previews = freshPreviews
-        let dockApps = MultitaskDockManager.shared.apps
         var seen = Set<String>()
         let order = (dockApps.map(\.appUUID) + controllers.compactMap(\.dataUUID))
             .filter { seen.insert($0).inserted }
+        var dockByUUID: [String: DockAppModel] = [:]
+        for app in dockApps where dockByUUID[app.appUUID] == nil {
+            dockByUUID[app.appUUID] = app
+        }
         apps = order.compactMap { uuid in
-            guard let controller = byUUID[uuid], closingControllers[uuid] != ObjectIdentifier(controller) else { return nil }
-            if let existing = dockApps.first(where: { $0.appUUID == uuid }), existing.view != nil { return existing }
-            let existing = dockApps.first(where: { $0.appUUID == uuid })
-            let info = existing?.appInfo ?? AppInfoProvider.shared.findAppInfo(appName: controller.bundleId ?? "", dataUUID: uuid)
+            let controller = byUUID[uuid]
+            if let controller, closingControllers[uuid] == ObjectIdentifier(controller) { return nil }
+            if let existing = dockByUUID[uuid], existing.view != nil { return existing }
+            guard let controller else { return dockByUUID[uuid] }
+            let existing = dockByUUID[uuid]
+            let info = existing?.appInfo ?? AppInfoProvider.shared.findAppInfo(appName: existing?.appName ?? controller.bundleId ?? "", dataUUID: uuid)
             let name = existing?.appName ?? info?.displayName() ?? controller.bundleId ?? uuid
             let view: UIView? = decoratedController(for: controller)?.view ?? controller.viewIfLoaded
             return DockAppModel(appName: name, appUUID: uuid, appInfo: info, view: view)
@@ -537,11 +553,11 @@ private struct ScaledSnapshotView: UIViewRepresentable {
     }
 
     func updateUIView(_ container: SnapshotContainer, context: Context) {
-        container.setNeedsLayout()
+        container.updateSnapshot(snapshot)
     }
 
     final class SnapshotContainer: UIView {
-        private let snapshot: UIView
+        private var snapshot: UIView
 
         init(snapshot: UIView) {
             self.snapshot = snapshot
@@ -550,6 +566,15 @@ private struct ScaledSnapshotView: UIViewRepresentable {
             clipsToBounds = true
             isUserInteractionEnabled = false
             addSubview(snapshot)
+        }
+
+        func updateSnapshot(_ snapshot: UIView) {
+            if self.snapshot !== snapshot {
+                self.snapshot.removeFromSuperview()
+                self.snapshot = snapshot
+                addSubview(snapshot)
+            }
+            setNeedsLayout()
         }
 
         @available(*, unavailable)
