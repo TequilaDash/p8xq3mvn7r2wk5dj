@@ -106,9 +106,8 @@ struct AppSceneViewSwiftUI: UIViewControllerRepresentable {
             return nil
         }
 
-        private static func logGeometry(vc: AppSceneViewController, window: UIWindow?) {
+        private static func appendGeometryLine(_ line: String) {
             guard let dir = consoleLogDirectory() else { return }
-            let line = "[geometry] mode=multitask pid=\(getpid()) view=\(vc.view.frame) window=\(window?.bounds.debugDescription ?? "(none)") safe=\(String(describing: window?.safeAreaInsets)) scene=\(String(describing: window?.windowScene?.interfaceOrientation.rawValue))\n"
             let path = dir.appendingPathComponent("geometry-\(getpid()).log")
             if let handle = try? FileHandle(forWritingTo: path) {
                 handle.seekToEndOfFile()
@@ -117,6 +116,10 @@ struct AppSceneViewSwiftUI: UIViewControllerRepresentable {
             } else {
                 try? line.write(to: path, atomically: true, encoding: .utf8)
             }
+        }
+
+        private static func logGeometry(vc: AppSceneViewController, window: UIWindow?) {
+            appendGeometryLine("[geometry] mode=multitask pid=\(getpid()) view=\(vc.view.frame) window=\(window?.bounds.debugDescription ?? "(none)") safe=\(String(describing: window?.safeAreaInsets)) scene=\(String(describing: window?.windowScene?.interfaceOrientation.rawValue))\n")
         }
 
         func appSceneVC(_ vc: AppSceneViewController!, didInitializeWithError error: (any Error)!) {
@@ -146,11 +149,16 @@ struct AppSceneViewSwiftUI: UIViewControllerRepresentable {
                 if let orientation = window?.windowScene?.interfaceOrientation, orientation != .unknown {
                     settings.setInterfaceOrientation(orientation)
                 }
+                var applied: CGRect
                 if(settings.interfaceOrientation().isLandscape) {
-                    settings.setFrame(CGRect(x: 0, y: 0, width: vc.view.frame.size.height, height: vc.view.frame.size.width))
+                    applied = CGRect(x: 0, y: 0, width: vc.view.frame.size.height, height: vc.view.frame.size.width)
                 } else {
-                    settings.setFrame(CGRect(x: 0, y: 0, width: vc.view.frame.size.width, height: vc.view.frame.size.height))
+                    applied = CGRect(x: 0, y: 0, width: vc.view.frame.size.width, height: vc.view.frame.size.height)
                 }
+                settings.setFrame(applied)
+                // Log exactly what the guest scene receives, not just the host
+                // view: Via/status-bar layout is decided from these values.
+                Self.appendGeometryLine("[geometry] mode=multitask-applied pid=\(getpid()) frame=\(NSStringFromCGRect(applied)) insets=\(String(describing: defaultInsets)) orientation=\(settings.interfaceOrientation().rawValue)\n")
             }
             // fix live resize
             vc.contentView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
