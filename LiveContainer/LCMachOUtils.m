@@ -326,6 +326,29 @@ int LCPatchExecSlice(const char *path, struct mach_header_64 *header, bool doInj
     return ans;
 }
 
+// 自带反注入/反篡改守卫的二进制（AISGuard 家族）会把任何注入的
+// TweakLoader load command 当成“被改”，因此安装/启动时都不能补它。
+bool LCExecutableHasSelfIntegrityGuard(const char *path) {
+    if (!path) return false;
+    NSData *data = [NSData dataWithContentsOfFile:@(path)
+                                          options:NSDataReadingMappedIfSafe
+                                            error:nil];
+    if (data.length == 0) return false;
+    const char *bytes = (const char *)data.bytes;
+    size_t length = data.length;
+    static const char *markers[] = {
+        "AISGuard_", "AISPromptThenAbort", "AISAntiHook",
+        "enforceNoInjectionOrAbort", "verifyTextIntegrityOrAbort",
+    };
+    for (size_t i = 0; i < sizeof(markers) / sizeof(markers[0]); i++) {
+        size_t n = strlen(markers[i]);
+        if (n <= length && memmem(bytes, length, markers[i], n)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 // 旧版本往依赖名槽里写路径时没有终止符, 磁盘上留下
 // "@loader_path/../../Tweaks/TweakLoader.dylibC" 这类脏名. 这类二进制不会因为
 // 补丁版本号相同而被重新修补, 必须在加载前识别出来, 让调用方强制重打并重签.

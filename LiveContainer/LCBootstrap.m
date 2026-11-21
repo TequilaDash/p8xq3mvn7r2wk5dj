@@ -868,7 +868,11 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
     TDAppendLaunchLog([NSString stringWithFormat:@"guest index=%u total=%u path=%s",
                        appMainImageIndex, LCRealImageCount(), appExecPath]);
     
-    if (![guestAppInfo[@"dontLoadTweakLoader"] boolValue]) {
+    BOOL guestSelfGuarded = LCExecutableHasSelfIntegrityGuard(appExecPath);
+    if (guestSelfGuarded) {
+        TDAppendLaunchLog(@"tweakloader auto-skip: guest has self-integrity guard");
+    }
+    if (![guestAppInfo[@"dontLoadTweakLoader"] boolValue] && !guestSelfGuarded) {
         NSString *hostBundlePath = lcMainBundle.bundlePath;
         if ([hostBundlePath hasSuffix:@"/PlugIns/LiveProcess.appex"]) {
             hostBundlePath = hostBundlePath.stringByDeletingLastPathComponent.stringByDeletingLastPathComponent;
