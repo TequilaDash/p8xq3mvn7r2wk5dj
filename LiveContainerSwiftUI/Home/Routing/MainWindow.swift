@@ -44,3 +44,41 @@ import UIKit
         return scene === candidate
     }
 }
+
+/// Keep the Home Screen and virtual windows in separate view trees under one
+/// UIKit parent. A child of Home cannot have its view outside Home's subtree.
+final class MultitaskRootViewController: UIViewController {
+    let homeController: UIViewController
+    let windowsController: UIViewController
+
+    init(home: UIViewController, windows: UIViewController) {
+        homeController = home
+        windowsController = windows
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    required init?(coder: NSCoder) { return nil }
+
+    override func loadView() {
+        view = UIView()
+        for controller in [homeController, windowsController] {
+            addChild(controller)
+            controller.view.frame = view.bounds
+            controller.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+            view.addSubview(controller.view)
+            controller.didMove(toParent: self)
+        }
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        homeController.view.frame = view.bounds
+        windowsController.view.frame = view.bounds
+    }
+
+    override var childForStatusBarStyle: UIViewController? { homeController }
+    override var childForStatusBarHidden: UIViewController? { homeController }
+    override var childForHomeIndicatorAutoHidden: UIViewController? { homeController }
+    override var childForScreenEdgesDeferringSystemGestures: UIViewController? { homeController }
+    override var supportedInterfaceOrientations: UIInterfaceOrientationMask { homeController.supportedInterfaceOrientations }
+}

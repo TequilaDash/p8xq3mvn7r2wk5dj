@@ -84,14 +84,17 @@
             return;
         }
         
-        // The Home Screen's window: on iPad another scene, such as an app's own
-        // window, can be connected too.
-        UIViewController *rootVC = MainWindow.window.rootViewController;
+        UIViewController *rootVC = MultitaskDockManager.shared.windowHostingController;
+        if (!rootVC) {
+            NSError *error = [NSError errorWithDomain:@"LCMultitaskLaunch" code:7 userInfo:@{NSLocalizedDescriptionKey: @"主窗口尚未就绪，无法建立多任务窗口"}];
+            if (completionHandler) completionHandler(nil, error);
+            return;
+        }
         DecoratedAppSceneViewController *launcherView = [[DecoratedAppSceneViewController alloc] initWindowName:displayName bundleId:bundleId dataUUID:dataUUID rootVC:rootVC];
         // Wire PID callback
         launcherView.pidAvailableHandler = completionHandler;
         launcherView.view.autoresizingMask = UIViewAutoresizingFlexibleTopMargin | UIViewAutoresizingFlexibleLeftMargin | UIViewAutoresizingFlexibleRightMargin | UIViewAutoresizingFlexibleBottomMargin;
-        launcherView.view.center = rootVC.view.center;
+        launcherView.view.center = CGPointMake(CGRectGetMidX(rootVC.view.bounds), CGRectGetMidY(rootVC.view.bounds));
         // On iPhone it may be opening into a half of the split screen.
         [LCWindowSnapManager.shared claimPhoneSplitRequestForWindow:launcherView];
     });

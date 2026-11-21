@@ -257,27 +257,32 @@ static bool tdv_string_ends_with(const char *s, const char *suffix) {
     return n >= m && strncmp(s + n - m, suffix, m) == 0;
 }
 
+static const char *tdv_guest_bundle_component(const char *imagePath) {
+    if (!imagePath || imagePath[0] != '/') return NULL;
+    static const char *const roots[] = {
+        "/Documents/Applications/",
+        "/LiveContainer/Applications/", // bootstrap's shared app-group route
+    };
+    for (size_t i = 0; i < sizeof(roots) / sizeof(roots[0]); ++i) {
+        const char *root = strstr(imagePath, roots[i]);
+        if (!root) continue;
+        const char *component = root + strlen(roots[i]);
+        const char *end = strchr(component, '/');
+        if (end && end[1] && end - component > 4 && memcmp(end - 4, ".app", 4) == 0) {
+            return component;
+        }
+    }
+    return NULL;
+}
+
 bool TDVGuestCallerIsGuestImage(const char *imagePath) {
-    return imagePath != NULL && strstr(imagePath, "/Documents/Applications/") != NULL;
+    return tdv_guest_bundle_component(imagePath) != NULL;
 }
 
 bool TDVGuestBundleDirFromCallerImage(const char *callerImage, char *out, size_t outSize) {
-    if (!TDVGuestCallerIsGuestImage(callerImage) || !out || outSize == 0) {
-        return false;
-    }
-    static const char kGuestMark[] = "/Documents/Applications/";
-    // 紧跟该前缀的第一个组件就是访客 bundle 目录: 镜像必须在它下面
-    // (<...>/Applications/Foo.app/Foo 或 Foo.app/Frameworks/lib.dylib).
-    const char *component = strstr(callerImage, kGuestMark) + sizeof(kGuestMark) - 1;
-    const char *end = strchr(component, '/');
-    size_t length = end ? (size_t)(end - callerImage) : strlen(callerImage);
-    if (length == (size_t)(component - callerImage)) {
-        return false; // bundle 组件为空
-    }
-    // 只认 .app bundle; Data/ 之类的 overlay 目录不是访客包.
-    if (length < 4 || strncmp(callerImage + length - 4, ".app", 4) != 0) {
-        return false;
-    }
+    const char *component = tdv_guest_bundle_component(callerImage);
+    if (!component || !out || outSize == 0) return false;
+    size_t length = (size_t)(strchr(component, '/') - callerImage);
     if (length + 1 > outSize) {
         return false;
     }
@@ -292,6 +297,12 @@ static pthread_mutex_t gTDVGuestLock = PTHREAD_MUTEX_INITIALIZER;
 // Backup lookups may re-enter interposed filesystem and Foundation APIs.
 // Nested queries belong to this mapper, not to a new guest request.
 static __thread bool gTDVGuestFileMapInProgress = false;
+// NSBundle's CFBundle uses realpath while its Objective-C path can omit
+// /private. Compare only this known iOS /var alias, without filesystem IO.
+static const char *tdv_var_path(const char *path) {
+    return strncmp(path, "/private/var/", 13) == 0 ? path + 8 : path;
+}
+
 
 
 __attribute__((visibility("default")))
@@ -305,11 +316,13 @@ TDVGuestFileMapResult TDVGuestMapBundleFile(const char *path, const char *caller
         return TDVGuestFileMapNone; // 宿主自身 / 未知 caller / 镜像不在 .app 里
     }
     char normalized[PATH_MAX];
-    if (!tdv_normalize_absolute(path, normalized, sizeof(normalized)) ||
-        !tdv_path_is_under(normalized, bundle)) {
+    if (!tdv_normalize_absolute(path, normalized, sizeof(normalized))) return TDVGuestFileMapNone;
+    const char *requested = tdv_var_path(normalized);
+    const char *callerBundle = tdv_var_path(bundle);
+    if (!tdv_path_is_under(requested, callerBundle)) {
         return TDVGuestFileMapNone;
     }
-    const char *child = normalized + strlen(bundle);
+    const char *child = requested + strlen(callerBundle);
     if (child[0] != '/' || child[1] == '\0') {
         return TDVGuestFileMapNone;
     }

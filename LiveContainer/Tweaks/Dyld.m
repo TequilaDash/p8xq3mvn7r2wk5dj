@@ -14,6 +14,7 @@
 #include "mach_excServer.h"
 #import "../utils.h"
 #import "../dyld_bypass_validation.h"
+#include "../../iManager/HideShim/TDVRootConfig.h"
 @import Darwin;
 @import Foundation;
 @import MachO;
@@ -651,6 +652,10 @@ void DyldHooksInit(bool hideLiveContainer, bool hookDlopen, uint32_t spoofSDKVer
     // 捕获真实实现；上一次隐藏启动可能已把该符号重绑到 hook，这里再取一次会把
     // orig 指回 hook 自身，递归调用直接爆栈（表现为访客被终止）。
     
+    // Install before hiding LiveContainerShared: litehook locates the owning
+    // image while the native image table is still visible.
+    TDVInstallGuestHooks();
+
     // hook dlsym to solve RTLD_MAIN_ONLY, hook other functions to hide LiveContainer itself
     litehook_rebind_symbol(LITEHOOK_REBIND_GLOBAL, dlsym, hook_dlsym, nil);
     // 所有进程统一裁剪注入面 (TweakLoader / Documents/Tweaks)；隐藏开关只决定

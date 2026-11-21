@@ -109,6 +109,12 @@ class AppInfoProvider {
         return hostView
     }
 
+    /// The actual UIKit owner of every decorated window's view.
+    @objc public var windowHostingController: UIViewController? {
+        attachWindowHostingView()
+        return windowHostController.parent == nil ? nil : windowHostController
+    }
+
     /// Puts the apps' windows back above the Home Screen, after a screen that
     /// covered it, like Settings, has closed and given the Home Screen back
     /// to the window.
@@ -125,6 +131,11 @@ class AppInfoProvider {
         isCreated && !shared.hostView.subviews.isEmpty
     }
     private let hostView = VirtualWindowsHostView()
+    private lazy var windowHostController: UIViewController = {
+        let controller = UIViewController()
+        controller.view = hostView
+        return controller
+    }()
     internal var hostingController: UIHostingController<AnyView>?
 
     public struct Constants {
@@ -324,34 +335,27 @@ class AppInfoProvider {
         NotificationCenter.default.removeObserver(self, name: UIDevice.orientationDidChangeNotification, object: nil)
     }
 
-    /// Puts the virtual windows' host view on the main window, and waits
-    /// while no main window is known.
-    ///
-    /// It goes just above the root view, sized to it, in the view the root
-    /// view is in, and comes back there when something covered it. Not in
-    /// the root view: that's SwiftUI's hosting view, whose gestures take every
-    /// touch on its subviews, so a long press on a window would open the menu
-    /// of the Home Screen icon or widget under it. The host view passes
-    /// touches through wherever there's no window, so being on top costs the
-    /// Home Screen nothing. Until the root view is on a window it goes in the
-    /// root view itself.
+    /// Isolate virtual-window gestures from SwiftUI without putting a child
+    /// controller's view outside its parent's view hierarchy.
     private func attachWindowHostingView() {
-        guard let window = keyWindow, let rootView = window.rootViewController?.view else { return }
-        guard let container = rootView.superview else {
-            if hostView.superview == nil {
-                hostView.frame = rootView.bounds
-                rootView.addSubview(hostView)
-            }
+        guard let window = keyWindow, let root = window.rootViewController else { return }
+        if let container = root as? MultitaskRootViewController,
+           container.windowsController === windowHostController {
+            container.loadViewIfNeeded()
+            container.view.bringSubviewToFront(hostView)
             return
         }
-        let siblings = container.subviews
-        hostView.frame = rootView.frame
-        if hostView.superview !== container {
-            hostView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-            container.insertSubview(hostView, aboveSubview: rootView)
-        } else if let rootIndex = siblings.firstIndex(of: rootView), siblings.firstIndex(of: hostView) != rootIndex + 1 {
-            container.insertSubview(hostView, aboveSubview: rootView)
+        if windowHostController.parent != nil {
+            windowHostController.willMove(toParent: nil)
+            hostView.removeFromSuperview()
+            windowHostController.removeFromParent()
         }
+        // Remove the former root before making it a child. UIKit must never
+        // observe a window root controller that already has a parent.
+        window.rootViewController = nil
+        let container = MultitaskRootViewController(home: root, windows: windowHostController)
+        window.rootViewController = container
+        container.view.layoutIfNeeded()
     }
 
     @objc private func deviceOrientationDidChange() {

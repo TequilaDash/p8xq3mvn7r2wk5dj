@@ -565,9 +565,7 @@ static NSDictionary* LCFileIdentity(NSString* path) {
     NSString *execPath = [NSString stringWithFormat:@"%@/%@", appPath, _infoPlist[@"CFBundleExecutable"]];
     
     // Update patch
-    // rev 9: restore the configured TweakLoader injection after rev 8 builds
-    // silently disabled it for executables matching self-integrity markers.
-    int currentPatchRev = 9;
+    int currentPatchRev = 8;
     bool needPatch = [info[@"LCPatchRevision"] intValue] < currentPatchRev;
     // 旧版本可能已经把脏依赖名写进二进制; 版本号相同但名字损坏时必须重打并重签,
     // 否则 dlopen 会一直去找 TweakLoader.dylibC.

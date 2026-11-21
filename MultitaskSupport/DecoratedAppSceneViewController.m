@@ -507,7 +507,7 @@ static NSNotificationName const LCWindowTouchedNotification = @"LCWindowTouchedN
     self = [super initWithNibName:nil bundle:nil];
     self.view = [[LCWindowView alloc] initWithFrame:self.view.frame];
     [rootVC addChildViewController:self];
-    [MultitaskDockManager.shared.windowHostingView addSubview:self.view];
+    [rootVC.view addSubview:self.view];
     
     _dataUUID = dataUUID;
     _scaleRatio = 1.0;

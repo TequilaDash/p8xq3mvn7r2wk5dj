@@ -31,6 +31,9 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Verify multitask UIKit containment
+        run: python3 .github/verify_multitask_containment.py
+
       - name: Archive
         run: |
           set -o pipefail

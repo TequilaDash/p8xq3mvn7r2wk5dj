@@ -5,32 +5,19 @@
 #include "../../litehook/src/litehook.h"
 #include "../LCMachOUtils.h"
 #include <dlfcn.h>
-#include <stdatomic.h>
 #include <string.h>
 #include <sys/syslimits.h>
 #include "../../iManager/HideShim/TDVRootConfig.h"
 
-typedef TDVGuestFileMapResult (*LCOriginalFileMapper)(const char *, const char *, char *, size_t);
-static _Atomic(LCOriginalFileMapper) lcOriginalFileMapper;
-
 // Foundation's libc calls identify Foundation as their caller, not the guest.
-// Resolve only exact original-artifact mappings at the public read boundary.
-// No stack walk, path guessing, content generation or native task impersonation.
+// These hooks and the mapper both compile into LiveContainerShared; resolve
+// exact original-artifact mappings directly, without a late TweakLoader lookup.
 static NSString *lc_original_read_path(NSString *path, void *caller) {
     if (!path.isAbsolutePath || !caller) return path;
     Dl_info info = {0};
-    if (!dladdr(caller, &info) || !info.dli_fname ||
-        !strstr(info.dli_fname, "/Documents/Applications/")) return path;
-    LCOriginalFileMapper mapper = atomic_load(&lcOriginalFileMapper);
-    if (!mapper) {
-        // NSFM hooks are installed before TweakLoader. A failed early lookup
-        // must not permanently cache its absence or add a linker dependency.
-        mapper = (LCOriginalFileMapper)dlsym(RTLD_DEFAULT, "TDVGuestMapBundleFile");
-        if (!mapper) return path;
-        atomic_store(&lcOriginalFileMapper, mapper);
-    }
+    if (!dladdr(caller, &info) || !TDVGuestCallerIsGuestImage(info.dli_fname)) return path;
     char original[PATH_MAX];
-    if (mapper(path.fileSystemRepresentation, info.dli_fname, original, sizeof(original)) != TDVGuestFileMapTo) return path;
+    if (TDVGuestMapBundleFile(path.fileSystemRepresentation, info.dli_fname, original, sizeof(original)) != TDVGuestFileMapTo) return path;
     return [NSFileManager.defaultManager stringWithFileSystemRepresentation:original length:strlen(original)] ?: path;
 }
 

@@ -65,17 +65,17 @@ bool TDVSecTaskHideEntitlement(const char *entitlement);
 void *TDVSecTaskReplacementForEntitlement(const char *entitlement, const char *callerImage);
 
 // 文件级篡改检测虚拟化: 访客打开自己的主可执行文件或 embedded.mobileprovision 时,
-// 换成安装时留下的原件. 判定仍基于 caller 的 dladdr 路径 —— caller 镜像必须在
-// /Documents/Applications/ 下, 且请求路径必须是该 caller 所在 bundle 根下的直接
-// 子文件; 宿主 zContainer 自己的读写永远不命中 (它的镜像路径不在该前缀).
-// 未知 caller 一律透传, 宁少不多. 这里不设 env 开关: 只影响访客对自己包的读.
+// 换成安装时留下的原件. caller 必须在 LC 的本地或共享 Applications/<bundle>.app
+// 目录下, 请求必须是同一 bundle 根的直接子文件; 宿主与未知 caller 始终透传.
+// /var 与 /private/var 是同一系统路径的两种拼写, 不扩大到其它安装目录.
+// 这里不设 env 开关: 只影响访客对自己包的读.
 typedef enum {
     TDVGuestFileMapNone = 0,     // 原样透传
     TDVGuestFileMapTo = 1,       // 已写 out = 原件路径
     TDVGuestFileMapHidden = 2,   // 私有备份路径不可见; 原件缺失时不伪造文件存在性
 } TDVGuestFileMapResult;
 
-// imagePath 是否为访客镜像 (含 /Documents/Applications/).
+// imagePath 是否为 LC 本地或共享 Applications/<bundle>.app 内的访客镜像.
 bool TDVGuestCallerIsGuestImage(const char *imagePath);
 // caller 所在访客 bundle 目录 (绝对路径, 无尾斜杠). 非访客 / 解析失败 -> false.
 bool TDVGuestBundleDirFromCallerImage(const char *callerImage, char *out, size_t outSize);
@@ -99,6 +99,10 @@ bool TDVCsopsSpoofLookup(unsigned int flagsIn, unsigned int *flagsOut);
 bool TDVProcSpoofEnabled(void);
 // proc_listallpids 过滤回调: buffer 内逐 pid 保留判定. 返回保留数量.
 int TDVProcFilterPids(pid_t *pids, int count);
+
+// 在 DyldHooksInit 的镜像裁剪之前安装一次 guest-only 的导入符号重绑.
+// 门控仍在每次调用时读取, 不改宿主/其它端口的原生结果.
+void TDVInstallGuestHooks(void);
 
 /// 当前模式; 未启用返回 TDVRootModeOff.
 TDVRootMode TDVRootCurrentMode(void);

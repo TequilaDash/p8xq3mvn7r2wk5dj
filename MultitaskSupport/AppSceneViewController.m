@@ -480,18 +480,24 @@ extern const char *TDHostHomeDocumentsPath(void);
             self.contentView.layer.position = CGPointZero;
         }
 
-        // Before attachment UIKit cannot derive safe areas from the surface.
-        // Seed from this container only when it has a real window. Afterwards
-        // UIKitHooks publishes from the attached, scaled surface itself.
-        if (!self.contentView.window && self.view.window && !CGRectIsEmpty(self.view.bounds)) {
-            UIEdgeInsets insets = LCGuestSceneSafeAreaInsets(self.view, self.view, self.additionalSafeAreaInsets);
-            LCApplyGuestSceneSafeAreaInsets(tempSettings, UIEdgeInsetsMake(insets.top / scale, insets.left / scale, insets.bottom / scale, insets.right / scale));
-            LCApplyGuestSceneStatusBarFrame(tempSettings, self.view, scale);
+        // This method publishes a complete settings object directly. Do not
+        // depend on that private FrontBoard path invoking the hosting hook.
+        // An attached surface already converts through its scale; only the
+        // unattached-container seed needs an explicit scale conversion.
+        UIView *viewport = self.contentView.window ? self.contentView : self.view;
+        CGFloat viewportScale = viewport == self.contentView ? 1 : scale;
+        if (self.view.window && viewport.window == self.view.window && !CGRectIsEmpty(viewport.bounds)) {
+            UIEdgeInsets insets = LCGuestSceneSafeAreaInsets(viewport, self.view, self.additionalSafeAreaInsets);
+            LCApplyGuestSceneSafeAreaInsets(tempSettings, UIEdgeInsetsMake(insets.top / viewportScale, insets.left / viewportScale, insets.bottom / viewportScale, insets.right / viewportScale));
+            LCApplyGuestSceneStatusBarFrame(tempSettings, viewport, viewportScale);
         }
-        // Do not discard the caller's non-frame settings on the hosting path.
-        // Preserve UIKit's latest frame, not the caller's physical viewport,
-        // so publishing settings cannot resize the hosted scene a second time.
-        tempSettings.frame = scene.settings.frame;
+        // Once attached, UIKit owns the hosted scene's display frame. Before
+        // attachment its settings may still contain zero or an earlier size:
+        // retain the caller's initial viewport instead of replaying that frame.
+        CGRect hostedFrame = scene.settings.frame;
+        if (self.contentView.window && !CGRectIsEmpty(hostedFrame)) {
+            tempSettings.frame = hostedFrame;
+        }
         [scene updateSettings:tempSettings withTransitionContext:nil completion:nil];
     } else {
         // Early legacy setup, before a presentation view exists.

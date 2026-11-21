@@ -21,6 +21,7 @@
 
 #import "TDVRootConfig.h"
 #import <Foundation/Foundation.h>
+#include "../../litehook/src/litehook.h"
 
 #include <dirent.h>
 #include <dlfcn.h>
@@ -121,15 +122,11 @@ __attribute__((constructor)) static void tdv_capture_real_paths(void) {
 
 #pragma mark - 访客可见性裁剪 (M37b: 隐藏 Tweaks 目录)
 
-// LC 的 TweakLoader 在宿主/LC 核心镜像里运行, 必须能读 Tweaks;
-// 只有**访客镜像** (dlopen 进来的 guest 二进制/动态库) 一律 ENOENT.
-// 判据: __builtin_return_address(0) -> dladdr -> 镜像路径含 /Documents/Applications/.
+// LC's loader must retain native access; only images inside an installed guest
+// bundle use guest visibility. The shared classifier covers both storage roots.
 static bool tdv_guest_caller_image(void *caller) {
-    // 审计 §3.2.2: fail-closed —— caller 不可判定时按访客处理 (隐藏语义);
-    // TweakLoader/LC 核心都在宿主镜像里, dladdr 必成功, 误伤面为零.
-    Dl_info info;
-    if (!caller || dladdr(caller, &info) == 0 || !info.dli_fname) return true;
-    return strstr(info.dli_fname, "/Documents/Applications/") != NULL;
+    Dl_info info = {0};
+    return caller && dladdr(caller, &info) && TDVGuestCallerIsGuestImage(info.dli_fname);
 }
 
 static bool tdv_hide_tweaks(const char *path, void *caller) {
@@ -809,27 +806,42 @@ static int tdv_proc_name_impl(int pid, void *buffer, uint32_t buffersize) {
 
 #pragma mark - 任务端口引用数 (TD_PROC_SPOOF 同门控)
 
-// Reveil checkExtraTaskRefs: mach_port_get_refs(mach_task_self_, mach_task_self_,
-// MACH_PORT_RIGHT_SEND) 返回 > 2 即判"进程任务端口被额外引用" (侧载宿主/扩展
-// 进程天然多引用). 只伪化"自身任务端口的 SEND 引用数", 上限压到 2; 其它端口、
-// 其它 right、其它 task 一律透传 (宿主自身的端口簿记不能动).
+// Reveil imports mach_port_get_refs through its GOT and checks self/self SEND
+// refs < 3. Only that guest query uses the compatibility view; native failures,
+// RECEIVE/other rights, foreign ports/tasks and host callers remain untouched.
 extern kern_return_t tdv_real_mach_port_get_refs(mach_port_t task, mach_port_name_t name,
                                                   mach_port_right_t right,
                                                   mach_port_urefs_t *refs)
     __asm("_mach_port_get_refs");
+static kern_return_t (*gTDVRealMachPortGetRefs)(mach_port_t, mach_port_name_t,
+                                              mach_port_right_t, mach_port_urefs_t *);
+
+__attribute__((constructor)) static void tdv_capture_real_task_refs(void) {
+    gTDVRealMachPortGetRefs = tdv_real_mach_port_get_refs;
+}
 
 static kern_return_t tdv_mach_port_get_refs_impl(mach_port_t task, mach_port_name_t name,
                                                  mach_port_right_t right,
                                                  mach_port_urefs_t *refs) {
-    kern_return_t kr = tdv_real_mach_port_get_refs(task, name, right, refs);
-    if (kr != KERN_SUCCESS || !refs) return kr;
-    if (!TDVProcSpoofEnabled()) return kr;
-    if (right != MACH_PORT_RIGHT_SEND && right != MACH_PORT_RIGHT_RECEIVE) return kr;
-    if (task != mach_task_self() || name != mach_task_self()) return kr;
-    // Both SEND and RECEIVE refer to the same task port; detectors have used
-    // either right. Factory processes report 1-2 refs.
+    kern_return_t kr = gTDVRealMachPortGetRefs(task, name, right, refs);
+    if (kr != KERN_SUCCESS || !refs || !TDVProcSpoofEnabled()) return kr;
+    if (right != MACH_PORT_RIGHT_SEND || task != mach_task_self() || name != mach_task_self()) return kr;
+    Dl_info info = {0};
+    void *caller = __builtin_return_address(0);
+    if (!caller || !dladdr(caller, &info) || !TDVGuestCallerIsGuestImage(info.dli_fname)) return kr;
     if (*refs > 2) *refs = 2;
     return kr;
+}
+
+void TDVInstallGuestHooks(void) {
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        // Use the existing GOT rebinder, including its add-image callback, so
+        // guest imports loaded after bootstrap take this route in both modes.
+        // The captured pointer and source image are never rebound to our hook.
+        litehook_rebind_symbol(LITEHOOK_REBIND_GLOBAL, gTDVRealMachPortGetRefs,
+                               tdv_mach_port_get_refs_impl, NULL);
+    });
 }
 
 #pragma mark - bootstrap 服务名探测 (TD_PROC_SPOOF 同门控)
@@ -904,7 +916,6 @@ TDV_INTERPOSE(tdv_csops_audittoken_impl, tdv_real_csops_audittoken);
 TDV_INTERPOSE(tdv_proc_listallpids_impl, tdv_real_proc_listallpids);
 TDV_INTERPOSE(tdv_proc_pidpath_impl, tdv_real_proc_pidpath);
 TDV_INTERPOSE(tdv_proc_name_impl, tdv_real_proc_name);
-TDV_INTERPOSE(tdv_mach_port_get_refs_impl, tdv_real_mach_port_get_refs);
 TDV_INTERPOSE(tdv_bootstrap_look_up2_impl, tdv_real_bootstrap_look_up);
 #pragma mark - SecTask 复数/audit-token 通道 (TD_SECTASK_SPOOF 同门控)
 
