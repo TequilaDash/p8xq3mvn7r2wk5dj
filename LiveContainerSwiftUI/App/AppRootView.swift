@@ -127,3 +127,59 @@ private struct TDGlobalHomeOverlay: View {
         }
     }
 }
+
+extension Notification.Name {
+    /// The host Home button's single tap, handled by AppRootView.
+    static let lcHostHomePressed = Notification.Name("LCHostHomePressed")
+}
+
+/// A window that lets touches through except on the Home button itself, so it
+/// can sit above alerts ("App 已终止") without blocking them.
+private final class TDHostHomeOverlayWindow: UIWindow {
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        let hit = super.hitTest(point, with: event)
+        if hit === rootViewController?.view { return nil }
+        return hit
+    }
+}
+
+/// The host half of the always-on Home button. It lives in its own window above
+/// alerts, which a view inside the root hierarchy cannot cover, and it starts
+/// without loading TweakLoader or global user tweaks.
+@MainActor
+private final class TDHostHomeOverlayController {
+    static let shared = TDHostHomeOverlayController()
+
+    private var window: TDHostHomeOverlayWindow?
+    private var hosting: UIHostingController<TDGlobalHomeOverlay>?
+    private var observer: NSObjectProtocol?
+
+    private init() {
+        observer = NotificationCenter.default.addObserver(
+            forName: UIScene.didActivateNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.attach() }
+        }
+    }
+
+    func attach() {
+        guard let scene = UIApplication.shared.connectedScenes
+            .compactMap({ $0 as? UIWindowScene })
+            .first(where: { $0.activationState == .foregroundActive }) else { return }
+        if let window, window.windowScene === scene, !window.isHidden { return }
+
+        window?.isHidden = true
+        let host = UIHostingController(rootView: TDGlobalHomeOverlay(action: {
+            NotificationCenter.default.post(name: .lcHostHomePressed, object: nil)
+        }))
+        host.view.backgroundColor = .clear
+        let overlay = TDHostHomeOverlayWindow(windowScene: scene)
+        overlay.frame = scene.coordinateSpace.bounds
+        overlay.windowLevel = UIWindow.Level.alert + 1
+        overlay.backgroundColor = .clear
+        overlay.rootViewController = host
+        overlay.isHidden = false
+        hosting = host
+        window = overlay
+    }
+}

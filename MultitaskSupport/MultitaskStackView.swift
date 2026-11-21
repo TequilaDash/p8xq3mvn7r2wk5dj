@@ -34,7 +34,19 @@ public class MultitaskStackManager: NSObject, ObservableObject {
     private var selectedUUID: String?
     private var closingControllers: [String: ObjectIdentifier] = [:]
     private var dockSubscription: AnyCancellable?
+    // Static pictures taken while the guest windows are still on screen. The
+    // cards show what each app actually looks like, shrunk, instead of an icon.
+    private var previews: [String: UIView] = [:]
     private static let requestKey = "LCPendingAppStackRequest"
+    static let enabledKey = "TDAppStackEnabled"
+
+    /// The stack is a real feature with a real switch; both the button and the
+    /// settings page read the same app-group key.
+    static var isEnabled: Bool {
+        guard let defaults = UserDefaults.lcShared() else { return true }
+        guard defaults.object(forKey: enabledKey) != nil else { return true }
+        return defaults.bool(forKey: enabledKey)
+    }
 
     public static let shared = MultitaskStackManager()
 
@@ -61,6 +73,7 @@ public class MultitaskStackManager: NSObject, ObservableObject {
     /// pending until it has an active scene and an actual content window.
     @objc public func present() {
         DispatchQueue.main.async {
+            guard Self.isEnabled else { return }
             self.readStoredRequest()
             self.pendingPresentation = true
             self.message = nil
@@ -152,6 +165,7 @@ public class MultitaskStackManager: NSObject, ObservableObject {
         previousKeyWindow = nil
         isVisible = false
         apps.removeAll()
+        previews.removeAll()
         focus(index: 0)
         if let previous, !previous.isHidden, previous.windowScene?.activationState == .foregroundActive {
             previous.makeKey()
@@ -229,6 +243,18 @@ public class MultitaskStackManager: NSObject, ObservableObject {
         closingControllers = closingControllers.filter { uuid, identifier in
             byUUID[uuid].map { ObjectIdentifier($0) == identifier } ?? false
         }
+        // Take the preview from the live window, never from a hidden/minimized
+        // one: a hidden view snapshots empty and would show a black card.
+        previews = previews.filter { byUUID[$0.key] != nil }
+        var freshPreviews: [String: UIView] = [:]
+        for controller in controllers {
+            guard let uuid = controller.dataUUID else { continue }
+            let source = decoratedController(for: controller)?.view ?? controller.viewIfLoaded
+            guard let source, !source.isHidden, source.window != nil, !source.bounds.isEmpty,
+                  let snapshot = source.snapshotView(afterScreenUpdates: false) else { continue }
+            freshPreviews[uuid] = snapshot
+        }
+        previews = freshPreviews
         let dockApps = MultitaskDockManager.shared.apps
         var seen = Set<String>()
         let order = (dockApps.map(\.appUUID) + controllers.compactMap(\.dataUUID))
@@ -243,6 +269,10 @@ public class MultitaskStackManager: NSObject, ObservableObject {
             return DockAppModel(appName: name, appUUID: uuid, appInfo: info, view: view)
         }
         focus(index: selectedUUID.flatMap { uuid in apps.firstIndex(where: { $0.appUUID == uuid }) } ?? selectedIndex)
+    }
+
+    func previewSnapshot(for uuid: String) -> UIView? {
+        previews[uuid]
     }
 
     func focus(index: Int) {
@@ -382,6 +412,7 @@ struct MultitaskStackView: View {
                 let depth = min(4, abs(distance))
                 let vertical = app.appUUID == draggedUUID && dragAxis == .vertical ? min(0, dragOffset.height) : 0
                 AppStackCard(app: app, size: CGSize(width: width, height: height),
+                             preview: manager.previewSnapshot(for: app.appUUID),
                              onSelect: { manager.selectApp(uuid: app.appUUID) },
                              onClose: { manager.closeApp(uuid: app.appUUID) })
                     .scaleEffect(1 - depth * 0.055)
@@ -434,22 +465,40 @@ struct MultitaskStackView: View {
 struct AppStackCard: View {
     let app: DockAppModel
     let size: CGSize
+    let preview: UIView?
     var onSelect: () -> Void
     var onClose: () -> Void
     @State private var icon: UIImage?
 
     var body: some View {
-        VStack(spacing: 18) {
-            if let icon {
-                Image(uiImage: icon).resizable().scaledToFit()
-                    .frame(width: size.width * 0.48, height: size.width * 0.48)
-                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        ZStack(alignment: .topLeading) {
+            if let preview {
+                ScaledSnapshotView(snapshot: preview)
+                    .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
             } else {
-                Image(systemName: "app.fill").resizable().scaledToFit()
-                    .frame(width: size.width * 0.48, height: size.width * 0.48)
-                    .foregroundStyle(.white.opacity(0.6))
+                RoundedRectangle(cornerRadius: 26, style: .continuous)
+                    .fill(Color(white: 0.14))
+                Text(app.appName).font(.title3.weight(.semibold))
+                    .multilineTextAlignment(.center).lineLimit(2)
+                    .padding(24)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            Text(app.appName).font(.headline).multilineTextAlignment(.center).lineLimit(2).padding(.horizontal)
+            HStack(spacing: 10) {
+                Group {
+                    if let icon {
+                        Image(uiImage: icon).resizable().scaledToFit()
+                    } else {
+                        Image(systemName: "app.fill").resizable().scaledToFit()
+                            .foregroundStyle(.white.opacity(0.65))
+                    }
+                }
+                .frame(width: 40, height: 40)
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                Text(app.appName).font(.headline).lineLimit(1)
+                    .padding(.horizontal, 10).padding(.vertical, 6)
+                    .background(.black.opacity(0.55), in: Capsule())
+            }
+            .padding(18)
         }
         .frame(width: size.width, height: size.height)
         .background(RoundedRectangle(cornerRadius: 26, style: .continuous).fill(Color(white: 0.14)))
@@ -473,6 +522,48 @@ struct AppStackCard: View {
         DispatchQueue.global(qos: .userInitiated).async {
             let image = info?.iconIsDarkIcon(false)
             DispatchQueue.main.async { icon = image }
+        }
+    }
+}
+
+/// Puts the guest window's snapshot in a card at its aspect ratio, scaled to
+/// fit the card. The snapshot is a picture only; touches go to the card.
+@available(iOS 16.0, *)
+private struct ScaledSnapshotView: UIViewRepresentable {
+    let snapshot: UIView
+
+    func makeUIView(context: Context) -> SnapshotContainer {
+        SnapshotContainer(snapshot: snapshot)
+    }
+
+    func updateUIView(_ container: SnapshotContainer, context: Context) {
+        container.setNeedsLayout()
+    }
+
+    final class SnapshotContainer: UIView {
+        private let snapshot: UIView
+
+        init(snapshot: UIView) {
+            self.snapshot = snapshot
+            super.init(frame: .zero)
+            backgroundColor = .black
+            clipsToBounds = true
+            isUserInteractionEnabled = false
+            addSubview(snapshot)
+        }
+
+        @available(*, unavailable)
+        required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+        override func layoutSubviews() {
+            super.layoutSubviews()
+            let source = snapshot.bounds.size == .zero ? snapshot.frame.size : snapshot.bounds.size
+            guard bounds.width > 0, bounds.height > 0, source.width > 0, source.height > 0 else { return }
+            snapshot.transform = .identity
+            snapshot.bounds = CGRect(origin: .zero, size: source)
+            let scale = min(bounds.width / source.width, bounds.height / source.height)
+            snapshot.transform = CGAffineTransform(scaleX: scale, y: scale)
+            snapshot.center = CGPoint(x: bounds.midX, y: bounds.midY)
         }
     }
 }
