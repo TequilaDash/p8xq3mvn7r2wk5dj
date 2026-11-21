@@ -79,6 +79,24 @@ struct AppSceneViewSwiftUI: UIViewControllerRepresentable {
             onExit()
         }
         
+        /// One line per activation in the exportable log, so fullscreen and
+        /// multitask geometry can be compared instead of inferred.
+        private static func logGeometry(vc: AppSceneViewController, window: UIWindow?) {
+            let group = LCSharedUtils.appGroupID()
+            guard let container = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: group) else { return }
+            let dir = container.appendingPathComponent("LiveContainer/ConsoleLog")
+            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            let line = "[geometry] mode=multitask pid=\(getpid()) view=\(vc.view.frame) window=\(window?.bounds.debugDescription ?? "(none)") safe=\(window?.safeAreaInsets.debugDescription ?? "(none)") scene=\(String(describing: window?.windowScene?.interfaceOrientation.rawValue))\n"
+            let path = dir.appendingPathComponent("geometry-\(getpid()).log")
+            if let handle = try? FileHandle(forWritingTo: path) {
+                handle.seekToEndOfFile()
+                handle.write(line.data(using: .utf8) ?? Data())
+                try? handle.close()
+            } else {
+                try? line.write(to: path, atomically: true, encoding: .utf8)
+            }
+        }
+
         func appSceneVC(_ vc: AppSceneViewController!, didInitializeWithError error: (any Error)!) {
             DispatchQueue.main.async {
                 (vc.view.window?.windowScene?.statusBarManager as? LCStatusBarManager)?.nativeWindowViewController = vc
@@ -94,9 +112,10 @@ struct AppSceneViewSwiftUI: UIViewControllerRepresentable {
         }
         
         func appSceneVCWillActivateScene(_ vc: AppSceneViewController!) {
+            let window = vc.view.window
+            Self.logGeometry(vc: vc, window: window)
             vc.updateSettings { settings in
                 guard let settings else { return }
-                let window = vc.view.window
                 let defaultInsets = window?.safeAreaInsets ?? .zero
                 settings.peripheryInsets = defaultInsets
                 settings.safeAreaInsetsPortrait = defaultInsets

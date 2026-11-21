@@ -6,6 +6,8 @@
 #import "Localization.h"
 #import "HomeButton/LCHomeButtonController.h"
 #include <notify.h>
+#include <fcntl.h>
+#include <unistd.h>
 #import <os/lock.h>
 
 UIInterfaceOrientation LCOrientationLock = UIInterfaceOrientationUnknown;
@@ -558,6 +560,33 @@ static CGRect LCCacheGuestStatusBarFrame(CGRect frame) {
     return frame;
 }
 
+// One line per geometry change, in the same exportable log as the launch
+// records: the two launch modes can then be compared without guessing.
+static void LCLogStatusBarGeometry(UIWindowScene *scene, UIWindow *window, CGRect reported) {
+    static CGRect lastReported = {{0, 0}, {0, 0}};
+    static __weak UIWindowScene *lastScene = nil;
+    if (CGRectEqualToRect(reported, lastReported) && scene == lastScene) return;
+    lastReported = reported;
+    lastScene = scene;
+    const char *dir = getenv("TD_CONSOLE_LOG_DIR");
+    if (!dir || !dir[0]) return;
+    NSString *line = [NSString stringWithFormat:
+        @"[geometry] mode=%s pid=%d scene=%@ bounds=%@ keyWindow=%@ safeTop=%.1f safeBottom=%.1f statusBar=%@ reported=%@\n",
+        getenv("TD_LAUNCH_MODE") ?: "-", getpid(),
+        scene.session.persistentIdentifier,
+        NSStringFromCGRect(scene.coordinateSpace.bounds),
+        window ? NSStringFromCGRect(window.bounds) : @"(none)",
+        window ? window.safeAreaInsets.top : -1,
+        window ? window.safeAreaInsets.bottom : -1,
+        scene.statusBarManager ? NSStringFromCGRect(scene.statusBarManager.statusBarFrame) : @"(none)",
+        NSStringFromCGRect(reported)];
+    NSString *path = [[NSString stringWithUTF8String:dir] stringByAppendingPathComponent:
+                      [NSString stringWithFormat:@"geometry-%d.log", getpid()]];
+    NSData *data = [line dataUsingEncoding:NSUTF8StringEncoding];
+    int fd = open(path.fileSystemRepresentation, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0600);
+    if (fd >= 0) { write(fd, data.bytes, data.length); close(fd); }
+}
+
 static CGRect LCGuestStatusBarFrame(UIApplication *application) {
     // UIKit may re-enter before the current frame is known. Don't return a
     // previous scene or rotation's frame to that nested query.
@@ -617,7 +646,9 @@ static CGRect LCGuestStatusBarFrame(UIApplication *application) {
         // when hidden. Virtual guests have their bar disabled; their safe-area
         // insets describe content clearance, not a status bar.
         UIStatusBarManager *manager = statusBarScene.statusBarManager;
-        return LCCacheGuestStatusBarFrame(manager ? manager.statusBarFrame : CGRectZero);
+        CGRect reported = manager ? manager.statusBarFrame : CGRectZero;
+        LCLogStatusBarGeometry(statusBarScene, statusBarScene.keyWindow, reported);
+        return LCCacheGuestStatusBarFrame(reported);
     } @finally {
         gHookStatusBarFrameEntered = NO;
     }
