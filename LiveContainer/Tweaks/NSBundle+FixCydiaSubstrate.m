@@ -40,12 +40,37 @@ static NSString *hook_bundleIdentifier(NSBundle *bundle, SEL _cmd) {
     return ((NSString *(*)(id, SEL))origBundleIdentifier)(bundle, _cmd);
 }
 
+static IMP origBundlePath = NULL;
+
+// 镜像枚举对外给的是 /var/containers/Bundle/Application/<uuid>/<App>.app/... 的伪路径。
+// NSBundle 必须给同一个视图, 否则检测器把 _dyld_get_image_name 和 bundlePath 一比
+// 就是"从可写目录加载的注入镜像"。实现与掩码逻辑在 LiveContainer/Tweaks/Dyld.m。
+extern const char *tdv_masked_image_name(const char *realName) __attribute__((weak));
+
+static NSString *hook_bundlePath(NSBundle *bundle, SEL _cmd) {
+    NSString *real = ((NSString *(*)(id, SEL))origBundlePath)(bundle, _cmd);
+    if (real.length == 0 || !tdv_masked_image_name) {
+        return real;
+    }
+    const char *masked = tdv_masked_image_name(real.UTF8String);
+    if (masked && strcmp(masked, real.UTF8String) != 0) {
+        return [NSString stringWithUTF8String:masked];
+    }
+    return real;
+}
+
 void NSBundleGuestHooksInit(void) {
     static bool installed = false;
     if (installed) return;
     installed = true;
     Method method = class_getInstanceMethod(NSBundle.class, @selector(bundleIdentifier));
-    if (!method) return;
-    origBundleIdentifier = method_getImplementation(method);
-    method_setImplementation(method, (IMP)hook_bundleIdentifier);
+    if (method) {
+        origBundleIdentifier = method_getImplementation(method);
+        method_setImplementation(method, (IMP)hook_bundleIdentifier);
+    }
+    Method pathMethod = class_getInstanceMethod(NSBundle.class, @selector(bundlePath));
+    if (pathMethod) {
+        origBundlePath = method_getImplementation(pathMethod);
+        method_setImplementation(pathMethod, (IMP)hook_bundlePath);
+    }
 }

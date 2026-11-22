@@ -1,3 +1,6 @@
+20261122-235000 1.1.78 Update：
+1. NSBundle.bundlePath 也走同一套伪路径：访客拿到的 bundle 路径与 `_dyld_get_image_name` 一致（/var/containers/Bundle/Application/<uuid>/<App>.app/...），检测器把两者互比不再矛盾。文件访问照旧由 vroot 层翻回真实路径。
+
 20261122-233000 1.1.77 Update：
 1. 后台界面底部加 dock：复用 dock 里的 app，毛玻璃胶囊条，点图标直接切到该 app。
 2. 后台顶部图标行显示当前 app 名称，跟 iOS 后台一致。
