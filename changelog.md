@@ -1,3 +1,7 @@
+20261122-213000 1.1.74 Update：
+1. 访客镜像对外路径改为正常安装形状：`/Documents/Applications/<folder>/<App>.app/...` → `/var/containers/Bundle/Application/<UUID>/<App>.app/...`。UUID 由访客 bundle id 派生 UUIDv5（1.1.54 用全 0 UUID 被检测器识破，这次不是）。
+2. 同步补上反向翻译：vroot 拦截层（TDVRootShim）收到伪路径先翻回真实路径再查内核，open/openat/stat/lstat/access/readlink/opendir 都走同一入口，避免"枚举是假路径、读文件找不到"的自相矛盾（1.1.54 坏就坏在这里）。
+
 20261122-203000 1.1.73 Update：
 1. 真正修掉「旋转方向」点了不转：之前宿主只往共享 defaults 写请求，靠访客进程里的 mask hook 生效，但嵌入的场景没有被要求按新方向重排，所以画面不动。现在宿主直接设置访客场景的 interfaceOrientation 并触发重排（默认=跟随宿主、横屏=LandscapeRight、竖屏=Portrait、反转=PortraitUpsideDown），访客进程内的 mask hook 仍然保留，两边一致。
 

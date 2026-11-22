@@ -5,6 +5,7 @@
 //  Created by s s on 2025/2/7.
 //
 #include <dlfcn.h>
+#include <CommonCrypto/CommonDigest.h>
 #include <stdatomic.h>
 #include <stdlib.h>
 #include <sys/mman.h>
@@ -418,10 +419,68 @@ intptr_t hook_dyld_get_image_vmaddr_slide(uint32_t image_index) {
     return orig_dyld_get_image_vmaddr_slide(real_index);
 }
 
+// 访客镜像对外路径伪值: 正常安装的 app 在 /var/containers/Bundle/Application/
+// <uuid>/<Name>.app/ 下, 容器里的访客却在 Documents/Applications/<folder>/ 下。
+// Reveil 这类检测器把"从可写目录加载的镜像"当成注入的共享库, 所以对外名字要换成
+// 正常安装的形状。1.1.54 用过全 0 UUID, 反而被判定为伪造(见 changelog 1.1.55),
+// 这里改成由访客 id 派生的稳定 UUIDv5 形状, 并记住真实前缀供文件 API 反向翻译。
+static char gTDVMaskedPrefix[160];
+static char gTDVRealPrefix[PATH_MAX];
+static _Atomic int gTDVMaskedPrefixReady = 0;
+
+static void tdv_prepare_masked_prefix(void) {
+    if (gTDVMaskedPrefixReady) return;
+    NSString *guestId = NSUserDefaults.lcGuestAppId;
+    if (!guestId.length) return;
+    unsigned char digest[20] = {0};
+    CC_SHA1(guestId.UTF8String, (CC_LONG)strlen(guestId.UTF8String), digest);
+    digest[6] = (unsigned char)((digest[6] & 0x0F) | 0x50);  // version 5
+    digest[8] = (unsigned char)((digest[8] & 0x3F) | 0x80);  // RFC 4122 variant
+    snprintf(gTDVMaskedPrefix, sizeof(gTDVMaskedPrefix),
+             "/var/containers/Bundle/Application/"
+             "%02X%02X%02X%02X-%02X%02X-%02X%02X-%02X%02X-%02X%02X%02X%02X%02X%02X",
+             digest[0], digest[1], digest[2], digest[3], digest[4], digest[5],
+             digest[6], digest[7], digest[8], digest[9], digest[10], digest[11],
+             digest[12], digest[13], digest[14], digest[15]);
+    gTDVMaskedPrefixReady = 1;
+}
+
+// Documents/Applications/<folder>/<App>.app/<image>  ->  <masked>/<App>.app/<image>
+const char *tdv_masked_image_name(const char *realName) {
+    static char masked[PATH_MAX];
+    if (!realName || !realName[0]) return realName;
+    const char *marker = strstr(realName, "/Documents/Applications/");
+    if (!marker) return realName;
+    const char *afterFolder = strchr(marker + strlen("/Documents/Applications/"), '/');
+    if (!afterFolder) return realName;
+    if (!gTDVMaskedPrefixReady) tdv_prepare_masked_prefix();
+    if (!gTDVMaskedPrefixReady) return realName;
+    // 记下真实前缀 (<...>/Documents/Applications/<folder>), 供反向翻译.
+    size_t realLen = (size_t)(afterFolder - realName);
+    if (realLen < sizeof(gTDVRealPrefix)) {
+        memcpy(gTDVRealPrefix, realName, realLen);
+        gTDVRealPrefix[realLen] = '\0';
+    }
+    snprintf(masked, sizeof(masked), "%s%s", gTDVMaskedPrefix, afterFolder);
+    return masked;
+}
+
+// 反向: 把对外伪路径翻回真实路径。只伪名字不翻文件, 检测器一比就矛盾, 1.1.54 就是
+// 这么炸的; 所有文件 API 收到虚路径都要先走这里。
+const char *tdv_real_path_from_virtual(const char *path) {
+    static char real[PATH_MAX];
+    if (!path || !path[0]) return path;
+    if (!gTDVMaskedPrefixReady || !gTDVRealPrefix[0]) return path;
+    size_t prefixLen = strlen(gTDVMaskedPrefix);
+    if (strncmp(path, gTDVMaskedPrefix, prefixLen) != 0) return path;
+    snprintf(real, sizeof(real), "%s%s", gTDVRealPrefix, path + prefixLen);
+    return real;
+}
+
 const char* hook_dyld_get_image_name(uint32_t image_index) {
     uint32_t real_index = 0;
     if (!tdv_map_image_index(image_index, &real_index)) return NULL;
-    return orig_dyld_get_image_name(real_index);
+    return tdv_masked_image_name(orig_dyld_get_image_name(real_index));
 }
 
 // dyld 的私有镜像枚举 API (双下划线前缀) 同样从 libdyld 导出: 全能签

@@ -155,6 +155,17 @@ static inline const char *tdv_mapped_for_caller(const char *path, char *buf, siz
     if (!path || path[0] != '/') {
         return path;
     }
+    // 镜像枚举对外报的是伪路径, 任何拿这个名字回来的文件操作都要先翻回真实路径.
+    // 弱符号: 实现在 LiveContainer/Tweaks/Dyld.m, 不在本 target 时自动跳过.
+    {
+        extern const char *tdv_real_path_from_virtual(const char *path) __attribute__((weak));
+        if (tdv_real_path_from_virtual) {
+            const char *real = tdv_real_path_from_virtual(path);
+            if (real && real != path) {
+                path = real;
+            }
+        }
+    }
     Dl_info info = {0};
     const char *callerImage = caller && dladdr(caller, &info) ? info.dli_fname : NULL;
     if (!TDVGuestCallerIsGuestImage(callerImage) && path && strstr(path, ".app/")) {
@@ -324,6 +335,17 @@ static inline const char *tdv_meta_path_for_caller(const char *path, char *buf, 
     // vroot 映射只影响内容路径, 元数据仍查真实路径.
     (void)buf;
     (void)bufSize;
+    // 镜像枚举对外给的是伪路径 (/var/containers/Bundle/Application/<uuid>/<App>.app/...),
+    // 检测器拿着这个名字回来 stat/open 时必须翻回真实路径, 否则"枚举是假的、文件不存在"
+    // 自相矛盾 —— 1.1.54 就是只伪名字不翻文件, 多任务和隐藏一起坏. 弱符号: 该实现
+    // 在 LiveContainer/Tweaks/Dyld.m 里, 不同 target 编译时缺失也不影响链接.
+    extern const char *tdv_real_path_from_virtual(const char *path) __attribute__((weak));
+    if (tdv_real_path_from_virtual) {
+        const char *real = tdv_real_path_from_virtual(path);
+        if (real && real != path) {
+            return real;
+        }
+    }
     return path;
 }
 
