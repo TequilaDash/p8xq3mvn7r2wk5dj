@@ -452,7 +452,8 @@ const char *tdv_masked_image_name(const char *realName) {
     const char *marker = strstr(realName, "/Documents/Applications/");
     if (!marker) return realName;
     const char *afterFolder = strchr(marker + strlen("/Documents/Applications/"), '/');
-    if (!afterFolder) return realName;
+    // 没有下一级说明这个路径就是应用目录本身（bundlePath），此时只补 <Name>.app。
+    if (!afterFolder) afterFolder = realName + strlen(realName);
     if (!gTDVMaskedPrefixReady) tdv_prepare_masked_prefix();
     if (!gTDVMaskedPrefixReady) return realName;
     // 记下真实前缀 (<...>/Documents/Applications/<folder>), 供反向翻译.
@@ -461,7 +462,11 @@ const char *tdv_masked_image_name(const char *realName) {
         memcpy(gTDVRealPrefix, realName, realLen);
         gTDVRealPrefix[realLen] = '\0';
     }
-    snprintf(masked, sizeof(masked), "%s%s", gTDVMaskedPrefix, afterFolder);
+    // 真机正常安装一定有 <Name>.app 这一级；容器里的访客目录不一定带 .app，
+    // 所以这一级用访客 bundle id 合成，否则对外是 .../<uuid>/<Exec>，检测器一眼看出不合法。
+    NSString *guestId = NSUserDefaults.lcGuestAppId;
+    if (guestId.length == 0) return realName;
+    snprintf(masked, sizeof(masked), "%s/%s.app%s", gTDVMaskedPrefix, guestId.UTF8String, afterFolder);
     return masked;
 }
 
@@ -484,7 +489,16 @@ const char *tdv_real_path_from_virtual(const char *path) {
             return path;
         }
     }
-    snprintf(real, sizeof(real), "%s%s", gTDVRealPrefix, path + prefixLen);
+    // 跳过伪路径里合成出来的 "/<Name>.app"，真实目录里没有这一级。
+    const char *rest = path + prefixLen;
+    NSString *guestId = NSUserDefaults.lcGuestAppId;
+    if (guestId.length > 0) {
+        char bundleComponent[PATH_MAX];
+        snprintf(bundleComponent, sizeof(bundleComponent), "/%s.app", guestId.UTF8String);
+        size_t componentLen = strlen(bundleComponent);
+        if (strncmp(rest, bundleComponent, componentLen) == 0) rest += componentLen;
+    }
+    snprintf(real, sizeof(real), "%s%s", gTDVRealPrefix, rest);
     return real;
 }
 

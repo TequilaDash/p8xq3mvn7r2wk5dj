@@ -1,3 +1,9 @@
+20261123-170000 1.1.91 Update：
+1. 访客镜像伪路径补上 `<Name>.app` 这一级：真机正常安装一定是 /private/var/containers/Bundle/Application/<UUID>/<Name>.app/<Exec>，
+   此前对外是 /private/var/containers/Bundle/Application/<UUID>/<Exec>（Reveil 截图里就是这个形状），检测器一眼判非法。
+   现在用访客 bundle id 合成 <Name>.app；bundlePath 这类"路径本身就是应用目录"的情况也补这一级。
+2. 反向翻译同步跳过合成出来的 `/<Name>.app`，真实目录里没有这一级。
+
 20261123-150000 1.1.90 Update：
 1. 后台卡片尺寸按原图像素重算：可见宽 593/1179 ≈ 0.503（再除以 1.018 聚焦缩放得布局宽），高度取 min(视口高×0.70, (deck 高−60)/1.018−34)，去掉 200pt 下限；stride 0.77、右移 0.125、34pt 头部、1.018 保持（依据 LCOrbitTaskSwitcher.m:552-576 与用户原图量测）。
 2. 辅助触控浮钮：新增 showsGlass（默认开），全局浮钮显式关闭 → 去掉外圈圆底/半透明圆斑；未保存过位置时默认落在左侧 (34, 屏高×0.62)，不再压住右侧 chevron；首次拖动基准改用 effectiveOffset，避免松手跳回右侧。
