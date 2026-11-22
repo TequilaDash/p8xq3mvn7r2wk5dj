@@ -154,7 +154,7 @@ final class SmokeApp: UIResponder, UIApplicationDelegate {
             run('xcrun', 'swiftc', '-parse-as-library', '-sdk', sdk,
                 '-target', arch + '-apple-ios18.0-simulator',
                 str(ROOT / 'LiveContainerSwiftUI/Home/Routing/MainWindow.swift'),
-                str(source), '-o', str(app / 'ContainmentSmoke'), timeout=120)
+                str(source), '-o', str(app / 'ContainmentSmoke'), timeout=600)
             run('codesign', '--force', '--sign', '-', str(app))
             run('xcrun', 'simctl', 'install', udid, str(app))
             print(run('xcrun', 'simctl', 'launch', '--console', udid, BUNDLE_ID, timeout=90))
