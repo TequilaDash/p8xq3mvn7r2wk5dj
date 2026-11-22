@@ -1,3 +1,7 @@
+20261122-172000 1.1.71 Update：
+1. 修复堆叠卡片「旋转方向」菜单点了没反应：宿主写的是窗口的数据 UUID，而访客拿这个 uuid 跟自己的 bundle id 比对（LCBootstrap 里 lcGuestAppId 是 bundle id），两边永远对不上，请求被直接忽略。现在写访客的 bundle id。
+2. iManager 的「动态库注入检测」不再把容器自己的 LiveContainerShared / TweakLoader / CydiaSubstrate 报成注入库——它们本来就是 zContainer 自身的一部分，不是被注入到访客里的东西。
+
 20261122-163000 1.1.70 Update：
 1. 修复全能签(NSKSign)红项「检测到主程序依赖库与发行基线不一致」：这条检查(AISGuard_DepsMismatch)把磁盘上访客主可执行的依赖库列表与发行基线比对。容器把访客主可执行改成 dylib 并注入 TweakLoader 的加载命令，文件因此多出两条依赖，判定必然不一致。现在访客读自己主可执行时拿到的是"发行版"那份文件：安装时留存的原件优先；早期安装没有原件的，用当前文件去掉我们加的那两条命令生成一份。
 2. 修复「访客读自己原件」的映射一直没生效：Foundation 的 NSFileHandle/NSData 与 libobjc 的 objc_msgSend 夹在 app 与文件之间，hook 里的返回地址永远不是访客的，映射因此从未命中，访客一直读到打过补丁的文件。现在沿调用栈找访客自己的帧（open/openat 这类 libc 调用同样适用）。
