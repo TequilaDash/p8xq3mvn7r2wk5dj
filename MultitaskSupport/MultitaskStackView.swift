@@ -784,7 +784,7 @@ struct MultitaskStackView: View {
         // 原生 iOS 后台: 卡片几乎占满宽度, 相邻卡片在边缘露出一条, 不缩放、不下沉.
         let screen = UIScreen.main.bounds
         let phoneRatio = screen.height / max(screen.width, 1)
-        let width = min(size.width - 12, 460)
+        let width = min(size.width - 48, 460)
         let height = min(size.height - 4, width * phoneRatio)
         let stride = width + 10
         let horizontal = dragAxis == .horizontal ? dragOffset.width : 0
