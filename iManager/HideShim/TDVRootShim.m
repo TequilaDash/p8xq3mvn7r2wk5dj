@@ -953,7 +953,10 @@ static kern_return_t tdv_task_info_impl(task_name_t target_task, task_flavor_t f
     kern_return_t kr = gTDVRealTaskInfo(target_task, flavor, task_info_out, task_info_outCnt);
     if (kr != KERN_SUCCESS || flavor != TASK_DYLD_INFO || !task_info_out || !task_info_outCnt) return kr;
     if (*task_info_outCnt < TASK_DYLD_INFO_COUNT) return kr;
-    if (!TDVProcSpoofEnabled()) return kr;
+    // 门控: proc 伪值开关, 或 stable API 视图已被镜像裁剪 (TDVDyldRemapActive).
+    // 后者是硬约束: 裁剪后 stable API 只给可见镜像, task_info 侧不给同一个集合
+    // 的话, 全能签 (NSKSign) 的 stable-vs-task 对比必然判红.
+    if (!TDVProcSpoofEnabled() && !TDVDyldRemapActive()) return kr;
     if (!tdv_task_info_guest_caller(__builtin_return_address(0))) return kr;
 
     task_dyld_info_data_t *out = (task_dyld_info_data_t *)task_info_out;

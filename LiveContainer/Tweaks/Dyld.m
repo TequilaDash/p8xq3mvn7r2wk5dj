@@ -343,6 +343,13 @@ uint32_t TDVDyldInfoVisibleIndices(uint32_t *out, uint32_t cap) {
     return n;
 }
 
+// 镜像裁剪是否真的生效. task_info(TASK_DYLD_INFO) 副本用它做门控:
+// stable API 视图被裁剪后 task_info 侧必须给出同一个可见集合, 否则全能签
+// (NSKSign) 的 stable-vs-task 对比 (_AISCollectStableApiVersusTask) 必红.
+bool TDVDyldRemapActive(void) {
+    return gTDVRemapEnabled;
+}
+
 void* hook_dlsym(void * __handle, const char * __symbol) {
     // Detectors such as Reveil resolve csops through dlsym(RTLD_DEFAULT, ...),
     // which bypasses __DATA,__interpose. Route that lookup to TweakLoader's
@@ -412,6 +419,31 @@ const char* hook_dyld_get_image_name(uint32_t image_index) {
     uint32_t real_index = 0;
     if (!tdv_map_image_index(image_index, &real_index)) return NULL;
     return orig_dyld_get_image_name(real_index);
+}
+
+// dyld 的私有镜像枚举 API (双下划线前缀) 同样从 libdyld 导出: 全能签
+// (NSKSign) 用 __dyld_image_count/__dyld_get_image_name/__dyld_get_image_header
+// 枚举镜像, 不走公开的 _dyld_* . 只重绑公开 API 时, 检测器看到的 stable API
+// 仍是全量, 与我们过滤过的 task_info 副本不一致 -> 四路交叉校验必红.
+// 私有变体一并重绑到同一实现, 两个通道给出同一个可见集合.
+// 用 dlsym 解析而不是链接期 extern: 这些符号不在公开头文件里, 直接引用
+// 会在缺符号的系统上链接失败.
+static void tdv_rebind_private_dyld_apis(void) {
+    struct { const char *name; void *replacement; } table[] = {
+        { "__dyld_image_count",            (void *)hook_dyld_image_count },
+        { "__dyld_get_image_header",       (void *)hook_dyld_get_image_header },
+        { "__dyld_get_image_name",         (void *)hook_dyld_get_image_name },
+        { "__dyld_get_image_vmaddr_slide", (void *)hook_dyld_get_image_vmaddr_slide },
+    };
+    for (size_t i = 0; i < sizeof(table) / sizeof(table[0]); i++) {
+        void *sym = orig_dlsym(RTLD_DEFAULT, table[i].name);
+        if (!sym) {
+            NSLog(@"[hideLC] private dyld api %s not found", table[i].name);
+            continue;
+        }
+        litehook_rebind_symbol(LITEHOOK_REBIND_GLOBAL, sym, table[i].replacement, NULL);
+        NSLog(@"[hideLC] private dyld api %s bound", table[i].name);
+    }
 }
 
 void TDRefreshDyldImageRemap(void) {
@@ -684,6 +716,22 @@ void DyldHooksInit(bool hideLiveContainer, bool hookDlopen, uint32_t spoofSDKVer
 
     // hook dlsym to solve RTLD_MAIN_ONLY, hook other functions to hide LiveContainer itself
     litehook_rebind_symbol(LITEHOOK_REBIND_GLOBAL, dlsym, hook_dlsym, nil);
+
+    // 镜像枚举的重绑必须在裁剪表建立之前全部做完. litehook 定位"重绑实现所在
+    // 镜像"时用的是公开的 _dyld_image_count/_dyld_get_image_name: 一旦这两个
+    // 已被重绑成裁剪视图, 定位就只能看到裁剪后的表 —— 本镜像 (LiveContainerShared)
+    // 被隐藏时定位失败, 重绑静默不生效 (index0 契约错位 -> 访客入口取错 ->
+    // 访客被终止). 所以顺序: 先重绑 (公开 API 此时仍是原生), 再建裁剪表,
+    // 最后打开裁剪开关.
+    litehook_rebind_symbol(LITEHOOK_REBIND_GLOBAL, _dyld_image_count, hook_dyld_image_count, nil);
+    litehook_rebind_symbol(LITEHOOK_REBIND_GLOBAL, _dyld_get_image_header, hook_dyld_get_image_header, nil);
+    litehook_rebind_symbol(LITEHOOK_REBIND_GLOBAL, _dyld_get_image_vmaddr_slide, hook_dyld_get_image_vmaddr_slide, nil);
+    litehook_rebind_symbol(LITEHOOK_REBIND_GLOBAL, _dyld_get_image_name, hook_dyld_get_image_name, nil);
+    // 私有变体 (__dyld_*) 也要重绑: 检测器 (全能签 NSKSign) 走它们枚举镜像,
+    // 不重绑就绕过裁剪, stable API 与 task_info 两个通道对不上
+    // (NSKSign 四路交叉校验判红).
+    tdv_rebind_private_dyld_apis();
+
     // 所有进程统一裁剪注入面 (TweakLoader / Documents/Tweaks)；隐藏开关只决定
     // LiveContainer 自身镜像是否可见。规则对任何访客一致，不做应用名判断。
     gTDVHideLCImages = hideLiveContainer;
@@ -694,10 +742,6 @@ void DyldHooksInit(bool hideLiveContainer, bool hookDlopen, uint32_t spoofSDKVer
             tdv_hide_image_if_needed(orig_dyld_get_image_header(i));
         }
         tdv_rebuild_image_remap();
-        litehook_rebind_symbol(LITEHOOK_REBIND_GLOBAL, _dyld_image_count, hook_dyld_image_count, nil);
-        litehook_rebind_symbol(LITEHOOK_REBIND_GLOBAL, _dyld_get_image_header, hook_dyld_get_image_header, nil);
-        litehook_rebind_symbol(LITEHOOK_REBIND_GLOBAL, _dyld_get_image_vmaddr_slide, hook_dyld_get_image_vmaddr_slide, nil);
-        litehook_rebind_symbol(LITEHOOK_REBIND_GLOBAL, _dyld_get_image_name, hook_dyld_get_image_name, nil);
     }
     
     appExecutableFileTypeOverwritten = !hideLiveContainer;

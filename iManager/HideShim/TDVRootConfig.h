@@ -36,6 +36,11 @@ typedef enum {
 bool TDVRootIsEnabled(void);
 // M41: dyld 镜像裁剪是否启用 (TD_DYLD_TRIM=1, 由 launcher 按 per-app hideLiveContainer 透传).
 bool TDVDyldTrimEnabled(void);
+// 镜像裁剪是否真的生效 (DyldHooksInit 之后恒为 true; 实现见 LiveContainer/Tweaks/Dyld.m).
+// task_info(TASK_DYLD_INFO) 副本的门控跟着它走: stable API 视图被裁剪后,
+// task_info 侧必须给出同一个可见集合, 否则全能签 (NSKSign) 的
+// stable-vs-task 对比 (_AISCollectStableApiVersusTask) 必红.
+bool TDVDyldRemapActive(void);
 
 // sysctl 伪值表 (TD_SYSCTL_SPOOF=1, 由 launcher 按 per-app sysctlSpoof 透传):
 // 双通道: sysctlbyname 命中名称表返回伪值 (hw.machine / kern.osversion /
