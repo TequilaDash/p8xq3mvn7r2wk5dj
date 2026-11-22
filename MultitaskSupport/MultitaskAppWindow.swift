@@ -145,6 +145,44 @@ struct AppSceneViewSwiftUI: UIViewControllerRepresentable {
 
         private static func logGeometry(vc: AppSceneViewController, window: UIWindow?) {
             appendGeometryLine("[geometry] mode=native-host pid=\(getpid()) view=\(vc.view.bounds) window=\(window?.bounds.debugDescription ?? "(none)") safe=\(String(describing: window?.safeAreaInsets)) scene=\(String(describing: window?.windowScene?.interfaceOrientation.rawValue))\n")
+            logBottomOverlays(window: window)
+        }
+
+        /// Everything that is drawn over the bottom edge of a screen, so the
+        /// small block that covers the content can be named from the log
+        /// instead of guessed at: the class, its frame in the window that owns
+        /// it, and whether it is visible. The guest's resize grabber and the
+        /// split divider are subviews of the guest window; the floating Home
+        /// button is a window of its own.
+        private static func logBottomOverlays(window: UIWindow?) {
+            let band: CGFloat = 140
+            var lines: [String] = []
+            func describe(_ view: UIView, in container: UIView, depth: Int) {
+                let frame = view.convert(view.bounds, to: container)
+                if frame.maxY >= container.bounds.maxY - band {
+                    lines.append("\(String(repeating: "  ", count: depth))\(type(of: view)) frame=\(NSStringFromCGRect(frame)) alpha=\(view.alpha) hidden=\(view.isHidden)")
+                }
+                for sub in view.subviews {
+                    describe(sub, in: container, depth: depth + 1)
+                }
+            }
+            func scan(_ candidate: UIWindow?) {
+                guard let candidate else { return }
+                for sub in candidate.subviews {
+                    describe(sub, in: candidate, depth: 0)
+                }
+            }
+            scan(window)
+            for scene in UIApplication.shared.connectedScenes {
+                guard let windowScene = scene as? UIWindowScene else { continue }
+                for hostWindow in windowScene.windows {
+                    scan(hostWindow)
+                }
+            }
+            guard !lines.isEmpty else { return }
+            let text = "[bottom-overlays] pid=\(getpid())\n" + lines.joined(separator: "\n") + "\n"
+            appendGeometryLine(text)
+            NSLog("%@", text)
         }
 
         func appSceneVC(_ vc: AppSceneViewController!, didInitializeWithError error: (any Error)!) {
