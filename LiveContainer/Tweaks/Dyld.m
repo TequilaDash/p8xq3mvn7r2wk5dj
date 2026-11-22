@@ -401,7 +401,10 @@ const struct mach_header* hook_dyld_get_image_header(uint32_t image_index) {
     uint32_t real_index = 0;
     if (!tdv_map_image_index(image_index, &real_index)) return NULL;
     const struct mach_header *header = orig_dyld_get_image_header(real_index);
-    if (image_index == 0 && header &&
+    // 只有裁剪生效时才做"index0 = 访客主镜像"的还原: 裁剪未启用时 index 0 是宿主
+    // 主可执行, 此时刷新会拿宿主头去改 (lC_clean_guest_executable_header), 把宿主
+    // 二进制的头改坏. 重绑提前到建表之前后, 建表前存在这个窗口, 必须挡住.
+    if (gTDVRemapEnabled && image_index == 0 && header &&
         (header->filetype != MH_EXECUTE ||
          (const struct mach_header *)gLCVisibleGuestHeader != header)) {
         lC_refresh_guest_executable_header();
