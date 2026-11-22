@@ -819,11 +819,8 @@ struct MultitaskStackView: View {
     }
 
     private func deck(in size: CGSize) -> some View {
-        // 参考原生/iOS 后台的手感（自己按几何重写）：
-        // 卡片宽不超过屏宽 72%，高度不超过可用高度 70%；相邻卡片按 0.77 倍卡宽排列，
-        // 整叠再右移 12.5% 卡宽，使左边的卡片露出边缘；聚焦卡片放大 1.018。
-        // 原生 iOS 的后台：卡片接近满宽（左右各 10pt），高度吃满可视区；
-        // 相邻卡片只在横滑时露出一条，不缩放堆叠。
+        // 原生 iOS 后台：卡片接近满宽（左右各 10pt），高度吃满可视区；
+        // 相邻卡片按「卡宽 + 12」排，只在横滑时露出一条，不缩放、不下沉。
         let previewHeight = max(1, size.height)
         let maxCardWidth = max(240, size.width - 20)
         let stride = max(1, maxCardWidth + 12)
