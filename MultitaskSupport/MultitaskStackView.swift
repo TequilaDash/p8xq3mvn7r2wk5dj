@@ -769,6 +769,35 @@ struct MultitaskStackView: View {
         }
     }
 
+    // 图标渲染抽成函数: 就地写 if let + 链式修饰器会让 Swift 类型检查超时(CI 报过).
+    @ViewBuilder
+    private func appIcon(_ app: DockAppModel, size: CGFloat, corner: CGFloat, border: Color? = nil) -> some View {
+        if let icon = app.appInfo?.icon(isDarkIcon: false) {
+            Image(uiImage: icon)
+                .resizable()
+                .scaledToFill()
+                .frame(width: size, height: size)
+                .clipShape(RoundedRectangle(cornerRadius: corner, style: .continuous))
+                .overlay {
+                    if let border {
+                        RoundedRectangle(cornerRadius: corner, style: .continuous).stroke(border, lineWidth: 2)
+                    }
+                }
+        } else {
+            Image(systemName: "app.fill")
+                .resizable()
+                .scaledToFit()
+                .padding(size * 0.16)
+                .frame(width: size, height: size)
+                .clipShape(RoundedRectangle(cornerRadius: corner, style: .continuous))
+                .overlay {
+                    if let border {
+                        RoundedRectangle(cornerRadius: corner, style: .continuous).stroke(border, lineWidth: 2)
+                    }
+                }
+        }
+    }
+
     // iOS 后台底部那条 dock: 复用 dock 的 app 列表, 点图标直接切过去.
     private var dockStrip: some View {
         HStack(spacing: 20) {
@@ -776,15 +805,7 @@ struct MultitaskStackView: View {
                 Button {
                     manager.selectApp(uuid: app.appUUID)
                 } label: {
-                    Group {
-                        if let icon = app.appInfo?.icon(isDarkIcon: false) {
-                            Image(uiImage: icon).resizable().scaledToFill()
-                        } else {
-                            Image(systemName: "app.fill").resizable().scaledToFit().padding(9)
-                        }
-                    }
-                    .frame(width: 56, height: 56)
-                    .clipShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
+                    appIcon(app, size: 56, corner: 13)
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(app.appName)
@@ -807,19 +828,9 @@ struct MultitaskStackView: View {
                         manager.focus(index: index)
                     }
                 } label: {
-                    Group {
-                        if let icon = app.appInfo?.icon(isDarkIcon: false) {
-                            Image(uiImage: icon).resizable().scaledToFill()
-                        } else {
-                            Image(systemName: "app.fill").resizable().scaledToFit().padding(6)
-                        }
-                    }
-                    .frame(width: 44, height: 44)
-                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .stroke(.white.opacity(index == manager.selectedIndex ? 0.9 : 0.15),
-                                lineWidth: index == manager.selectedIndex ? 2 : 1))
-                    .opacity(index == manager.selectedIndex ? 1 : 0.75)
+                    appIcon(app, size: 44, corner: 10,
+                            border: .white.opacity(index == manager.selectedIndex ? 0.9 : 0.15))
+                        .opacity(index == manager.selectedIndex ? 1 : 0.75)
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(app.appName)

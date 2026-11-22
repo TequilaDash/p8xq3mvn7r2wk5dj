@@ -1,3 +1,7 @@
+20261123-001500 1.1.79 Update：
+1. 卡片圆角对齐 iOS 后台（26 → 40）。
+2. `dladdr` 的 `dli_fname` 也返回伪路径，和镜像枚举、`NSBundle.bundlePath` 三者一致。
+
 20261122-235000 1.1.78 Update：
 1. NSBundle.bundlePath 也走同一套伪路径：访客拿到的 bundle 路径与 `_dyld_get_image_name` 一致（/var/containers/Bundle/Application/<uuid>/<App>.app/...），检测器把两者互比不再矛盾。文件访问照旧由 vroot 层翻回真实路径。
 
