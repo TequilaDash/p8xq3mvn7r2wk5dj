@@ -698,6 +698,7 @@ extension Notification.Name {
 @available(iOS 16.0, *)
 struct MultitaskStackView: View {
     @EnvironmentObject var manager: MultitaskStackManager
+    @ObservedObject private var dockManager = MultitaskDockManager.shared
     @AppStorage("TDAppStackClearAllEnabled", store: LCUtils.appGroupUserDefault)
     private var showClearAll = true
     @State private var dragOffset: CGSize = .zero
@@ -755,6 +756,7 @@ struct MultitaskStackView: View {
                     }
                 }
                 if let message = manager.message { Text(message).font(.footnote).accessibilityAddTraits(.updatesFrequently) }
+                if !dockManager.apps.isEmpty { dockStrip }
             }
             .foregroundStyle(.white)
             .padding(.vertical, 24)
@@ -765,6 +767,35 @@ struct MultitaskStackView: View {
         withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
             manager.focus(index: manager.selectedIndex + distance)
         }
+    }
+
+    // iOS 后台底部那条 dock: 复用 dock 的 app 列表, 点图标直接切过去.
+    private var dockStrip: some View {
+        HStack(spacing: 20) {
+            ForEach(dockManager.apps) { app in
+                Button {
+                    manager.selectApp(uuid: app.appUUID)
+                } label: {
+                    Group {
+                        if let icon = app.appInfo?.icon(isDarkIcon: false) {
+                            Image(uiImage: icon).resizable().scaledToFill()
+                        } else {
+                            Image(systemName: "app.fill").resizable().scaledToFit().padding(9)
+                        }
+                    }
+                    .frame(width: 56, height: 56)
+                    .clipShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(app.appName)
+            }
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 14)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 30, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 30, style: .continuous)
+            .stroke(.white.opacity(0.18), lineWidth: 0.5))
+        .padding(.horizontal, 20)
     }
 
     // iOS 后台顶部那排 app 图标: 当前卡片高亮, 点图标直接切过去.
@@ -792,6 +823,12 @@ struct MultitaskStackView: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(app.appName)
+            }
+            if manager.apps.indices.contains(manager.selectedIndex) {
+                Text(manager.apps[manager.selectedIndex].appName)
+                    .font(.headline)
+                    .lineLimit(1)
+                    .padding(.leading, 4)
             }
         }
         .padding(.horizontal, 24)
