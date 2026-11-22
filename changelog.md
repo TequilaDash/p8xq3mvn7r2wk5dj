@@ -1,3 +1,7 @@
+20261123-130000 1.1.89 Update：
+1. 访客镜像对外路径补上 /private 前缀：真机正常安装是 /private/var/containers/Bundle/Application/<UUID>/<Name>.app/...，此前少了 /private，Reveil 仍把主可执行和它自带的 library_stub.framework 判成「注入的共享库」。
+2. 反向翻译同时接受带/不带 /private 两种写法（Foundation 常把 /private 去掉）。
+
 20261123-110000 1.1.88 Update：
 1. 后台卡片宽度按实机截图量到的比例收到 0.56×屏宽（参考源码的 0.72 只是上限，实际由 MIN(maxCardWidth, previewHeight*aspect) 决定；0.72 在实机上偏宽）。
 

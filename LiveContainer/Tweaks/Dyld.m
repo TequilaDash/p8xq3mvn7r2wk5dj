@@ -437,7 +437,7 @@ static void tdv_prepare_masked_prefix(void) {
     digest[6] = (unsigned char)((digest[6] & 0x0F) | 0x50);  // version 5
     digest[8] = (unsigned char)((digest[8] & 0x3F) | 0x80);  // RFC 4122 variant
     snprintf(gTDVMaskedPrefix, sizeof(gTDVMaskedPrefix),
-             "/var/containers/Bundle/Application/"
+             "/private/var/containers/Bundle/Application/"
              "%02X%02X%02X%02X-%02X%02X-%02X%02X-%02X%02X-%02X%02X%02X%02X%02X%02X",
              digest[0], digest[1], digest[2], digest[3], digest[4], digest[5],
              digest[6], digest[7], digest[8], digest[9], digest[10], digest[11],
@@ -471,8 +471,19 @@ const char *tdv_real_path_from_virtual(const char *path) {
     static char real[PATH_MAX];
     if (!path || !path[0]) return path;
     if (!gTDVMaskedPrefixReady || !gTDVRealPrefix[0]) return path;
-    size_t prefixLen = strlen(gTDVMaskedPrefix);
-    if (strncmp(path, gTDVMaskedPrefix, prefixLen) != 0) return path;
+    const char *masked = gTDVMaskedPrefix;
+    size_t prefixLen = strlen(masked);
+    if (strncmp(path, masked, prefixLen) != 0) {
+        // 调用方可能把 /private 前缀去掉了（Foundation 常这么做）。
+        if (strncmp(path, "/var/containers/Bundle/Application/", 35) == 0 &&
+            strncmp(masked, "/private/var/containers/Bundle/Application/", 43) == 0) {
+            masked += 8;   // 跳过 "/private"
+            prefixLen = strlen(masked);
+            if (strncmp(path, masked, prefixLen) != 0) return path;
+        } else {
+            return path;
+        }
+    }
     snprintf(real, sizeof(real), "%s%s", gTDVRealPrefix, path + prefixLen);
     return real;
 }
