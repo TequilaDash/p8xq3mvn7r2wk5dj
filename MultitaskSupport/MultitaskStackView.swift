@@ -609,8 +609,14 @@ public class MultitaskStackManager: NSObject, ObservableObject {
             // The guest reads the request from the shared app group defaults
             // (NSUserDefaults.lcSharedDefaults), so write it to that same
             // suite; a plain standard-defaults write never reaches the guest.
+            // The guest checks the request's uuid against NSUserDefaults.lcGuestAppId,
+            // which is the BUNDLE ID (LCBootstrap). The stack card's uuid is the
+            // data-UUID, so writing it here made every request be ignored.
+            let guestId = self.appModel(for: uuid)?.appInfo?.bundleIdentifier() ?? uuid
+            // The guest reads the request from the shared app group defaults
+            // (NSUserDefaults.lcSharedDefaults), so write it to that same suite.
             let defaults = LCUtils.appGroupUserDefault
-            defaults.set(["uuid": uuid, "dir": direction], forKey: "LCPendingOrientationOverride")
+            defaults.set(["uuid": guestId, "dir": direction], forKey: "LCPendingOrientationOverride")
             defaults.synchronize()
             CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),
                                                  CFNotificationName("com.kdt.livecontainer.applyOrientation" as CFString),

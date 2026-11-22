@@ -167,6 +167,13 @@ enum SecurityScanner {
         for i in 0..<count {
             if let name = _dyld_get_image_name(i) {
                 let path = String(cString: name).lowercased()
+                // 容器自己的框架不是注入库: LiveContainerShared / TweakLoader /
+                // CydiaSubstrate 都是 zContainer 自身的一部分,  Always present
+                // in the host, so they must not be reported as injected guests.
+                if path.contains("livecontainershared") || path.contains("tweakloader") ||
+                   path.contains("cydiasubstrate") || path.contains("livecontainer.app") {
+                    continue
+                }
                 for frag in SecurityPresets.suspiciousLibraries where path.contains(frag.lowercased()) {
                     loaded.append(String(cString: name))
                     break
