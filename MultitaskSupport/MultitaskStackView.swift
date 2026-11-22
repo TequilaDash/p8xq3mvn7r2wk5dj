@@ -685,7 +685,7 @@ struct MultitaskStackView: View {
         ZStack {
             Rectangle()
                 .fill(.ultraThinMaterial)
-                .overlay(Color.black.opacity(0.35))
+                .overlay(Color.black.opacity(0.28))
                 .ignoresSafeArea()
                 .onTapGesture { manager.dismiss() }
             VStack(spacing: 0) {
@@ -694,26 +694,93 @@ struct MultitaskStackView: View {
                     Image(systemName: "rectangle.stack").font(.system(size: 46, weight: .light))
                     Spacer()
                 } else {
-                    iconStrip
+                    selectedHeader
                     GeometryReader { geometry in deck(in: geometry.size) }
-                    if showClearAll {
-                        Button {
-                            manager.closeAll()
-                        } label: {
-                            Image(systemName: "trash")
-                                .font(.system(size: 18, weight: .semibold))
-                                .frame(width: 46, height: 46)
-                                .background(.ultraThinMaterial, in: Circle())
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("全部清除")
-                        .padding(.bottom, 8)
-                    }
+                    footer
                 }
             }
             .foregroundStyle(.white)
-            .padding(.top, 12)
+            .padding(.top, 8)
         }
+    }
+
+    // 左上角：当前 App 的图标 + 名称（对齐参考图的三段式）。
+    private var selectedHeader: some View {
+        HStack(spacing: 16) {
+            if manager.apps.indices.contains(manager.selectedIndex) {
+                let app = manager.apps[manager.selectedIndex]
+                appIcon(app, size: 62, corner: 15)
+                Text(app.appName)
+                    .font(.system(size: 25, weight: .semibold))
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 28)
+        .frame(height: 92)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            if manager.apps.indices.contains(manager.selectedIndex) {
+                manager.selectApp(uuid: manager.apps[manager.selectedIndex].appUUID)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var footer: some View {
+        HStack {
+            Spacer()
+            if showClearAll {
+                Button {
+                    manager.closeAll()
+                } label: {
+                    Image(systemName: "trash")
+                        .font(.system(size: 21, weight: .semibold))
+                        .frame(width: 64, height: 64)
+                        .background(.ultraThinMaterial, in: Circle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("全部清除")
+            }
+            Spacer()
+        }
+        .frame(height: 92)
+    }
+
+    // 当前卡片顶部那条胶囊：App 名 + 关闭 + 设置，位置跟参考图一致。
+    @ViewBuilder
+    private func cardChrome(_ app: DockAppModel) -> some View {
+        HStack(spacing: 10) {
+            Text(app.appName)
+                .font(.system(size: 15, weight: .semibold))
+                .lineLimit(1)
+            Spacer(minLength: 0)
+            Button {
+                manager.closeApp(uuid: app.appUUID)
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 12, weight: .bold))
+                    .frame(width: 26, height: 26)
+                    .background(.ultraThinMaterial, in: Circle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("关闭窗口")
+            Button {
+                manager.showAppInfo(uuid: app.appUUID)
+            } label: {
+                Image(systemName: "gearshape.fill")
+                    .font(.system(size: 12, weight: .bold))
+                    .frame(width: 26, height: 26)
+                    .background(.ultraThinMaterial, in: Circle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("应用设置")
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 9)
+        .background(.ultraThinMaterial, in: Capsule())
+        .padding(.horizontal, 12)
+        .padding(.top, 10)
     }
 
     private func moveSelection(by distance: Int) {
@@ -751,43 +818,14 @@ struct MultitaskStackView: View {
         }
     }
 
-    // iOS 后台顶部那排 app 图标: 当前卡片高亮, 点图标直接切过去.
-    private var iconStrip: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 18) {
-                ForEach(Array(manager.apps.enumerated()), id: \.element.appUUID) { index, app in
-                    Button {
-                        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-                            manager.focus(index: index)
-                        }
-                    } label: {
-                        appIcon(app, size: 44, corner: 10,
-                                border: .white.opacity(index == manager.selectedIndex ? 0.9 : 0.15))
-                            .opacity(index == manager.selectedIndex ? 1 : 0.75)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel(app.appName)
-                }
-                if manager.apps.indices.contains(manager.selectedIndex) {
-                    Text(manager.apps[manager.selectedIndex].appName)
-                        .font(.headline)
-                        .lineLimit(1)
-                        .padding(.leading, 4)
-                }
-            }
-            .padding(.horizontal, 24)
-        }
-        .frame(height: 52)
-    }
-
     private func deck(in size: CGSize) -> some View {
         // 参考原生/iOS 后台的手感（自己按几何重写）：
         // 卡片宽不超过屏宽 72%，高度不超过可用高度 70%；相邻卡片按 0.77 倍卡宽排列，
         // 整叠再右移 12.5% 卡宽，使左边的卡片露出边缘；聚焦卡片放大 1.018。
-        let previewHeight = max(1, min(size.height - 60, size.height * 0.70))
-        let maxCardWidth = size.width * 0.72
-        let stride = max(1, maxCardWidth * 0.77)
-        let deckShift = manager.apps.count > 1 ? maxCardWidth * 0.125 : 0
+        let previewHeight = max(1, min(size.height - 24, size.height * 0.86))
+        let maxCardWidth = max(260, min(size.width * 0.58, 420))
+        let stride = max(1, maxCardWidth + 14)
+        let deckShift: CGFloat = 0
         let horizontal = dragAxis == .horizontal ? dragOffset.width : 0
         return ZStack {
             ForEach(Array(manager.apps.enumerated()), id: \.element.appUUID) { index, app in
@@ -808,7 +846,10 @@ struct MultitaskStackView: View {
                              onAppInfo: { manager.showAppInfo(uuid: app.appUUID) },
                              onSplit: { manager.openInSplitScreen(uuid: app.appUUID) },
                              onPictureInPicture: { manager.togglePictureInPicture(uuid: app.appUUID) })
-                    .scaleEffect(distance == 0 ? 1.018 : 1)
+                    .scaleEffect(distance == 0 ? 1 : 0.94)
+                    .overlay(alignment: .top) {
+                        if distance == 0 { cardChrome(app) }
+                    }
                     .offset(x: distance * stride + deckShift + horizontal, y: vertical)
                     .zIndex(Double(manager.apps.count) - Double(abs(distance)))
                     .accessibilityHidden(index != manager.selectedIndex)
@@ -816,6 +857,7 @@ struct MultitaskStackView: View {
         }
         .frame(width: size.width, height: size.height)
         .contentShape(Rectangle())
+        .onTapGesture { manager.dismiss() }
         .clipped()
         .gesture(DragGesture(minimumDistance: 12)
             .onChanged { value in
