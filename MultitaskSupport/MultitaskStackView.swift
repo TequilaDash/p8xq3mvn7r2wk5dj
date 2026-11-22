@@ -606,11 +606,15 @@ public class MultitaskStackManager: NSObject, ObservableObject {
                 self.refreshApps()
                 return
             }
-            let defaults = UserDefaults.lcSharedDefaults
+            // The guest reads the request from the shared app group defaults
+            // (NSUserDefaults.lcSharedDefaults), so write it to that same
+            // suite; a plain standard-defaults write never reaches the guest.
+            let defaults = LCUtils.appGroupUserDefault
             defaults.set(["uuid": uuid, "dir": direction], forKey: "LCPendingOrientationOverride")
             defaults.synchronize()
             CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),
-                                                 CFSTR("com.kdt.livecontainer.applyOrientation"), nil, nil, true)
+                                                 CFNotificationName("com.kdt.livecontainer.applyOrientation" as CFString),
+                                                 nil, nil, true)
             self.dismiss()
         }
     }

@@ -4,7 +4,8 @@
 3. task_info 副本门控改为「proc 伪值开关 或 镜像裁剪已生效」，两个通道的可见视图不再可能不一致。
 4. 全能签崩溃点定性：NSKSign+0x714514 = swift_Concurrency_fatalError（唯一调用者 swift56override_swift_task_future_wait，报 "future reported an error, but wait cannot throw"），是 NSKSign 自带 Swift 5.6 并发兼容层在 async 任务抛错、等待方不能抛时的陷阱，不是反注入 abort（检测命中的真实路径是弹窗后 600ms 的 abort）。具体抛错任务待设备侧取证。
 5. 复核：全能签的"证书公钥被篡改"检测查的是二进制内嵌公钥表，与访客重签无关（天然绿）；它检查的 5 个 DYLD_* 环境变量我们都没设。
-6. 底部小块遮挡与快手崩溃继续待复测；全能签红项变化需真机确认，并请给对应 app 打开「隐藏 LiveContainer」——宿主镜像可见时它的镜像路径白名单必红。
+6. 底部小块遮挡与快手崩溃继续待复测；全能签红项变化需真机确认。全局隐藏（TDGlobalHide）开着时宿主镜像对所有访客都不可见，不用再逐 app 去开「隐藏 Live Container」。
+7. 修复 1.1.69 首次构建失败：堆叠卡片「旋转方向」菜单的 Swift 侧编译错误（NSUserDefaults.lcSharedDefaults 是类方法要带括号、CFSTR 在 Swift 里要用 CFNotificationName），旋转请求改为写共享 app group defaults，访客侧读的是同一个 suite。
 
 20261122-033500 1.1.68 Update：
 1. 修复多任务浮动窗口状态栏偏高（图一 vs 图二对比定位）：updateAppSafeArea 在顶栏隐藏（hideWindowBar）时仍清 44pt 顶部避让，guest 状态栏被推到真实状态栏下方 44pt；全屏 guest 无此 44pt 所以正常。现在避让跟随 navigationBar.hidden 同一个 hideWindowBar 条件，顶栏可见才清 44pt。
