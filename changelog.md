@@ -1,3 +1,6 @@
+20261122-221000 1.1.75 Update：
+1. 「反转」不生效：场景设置里只改 interfaceOrientation，deviceOrientation 仍是当前设备方向，UIKit 认为设备没转就忽略。现在四个档位同时设 deviceOrientation，反转（180°）和横屏才真的转。
+
 20261122-213000 1.1.74 Update：
 1. 访客镜像对外路径改为正常安装形状：`/Documents/Applications/<folder>/<App>.app/...` → `/var/containers/Bundle/Application/<UUID>/<App>.app/...`。UUID 由访客 bundle id 派生 UUIDv5（1.1.54 用全 0 UUID 被检测器识破，这次不是）。
 2. 同步补上反向翻译：vroot 拦截层（TDVRootShim）收到伪路径先翻回真实路径再查内核，open/openat/stat/lstat/access/readlink/opendir 都走同一入口，避免"枚举是假路径、读文件找不到"的自相矛盾（1.1.54 坏就坏在这里）。

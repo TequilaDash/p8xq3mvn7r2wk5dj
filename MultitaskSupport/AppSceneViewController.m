@@ -415,11 +415,30 @@ extern const char *TDHostHomeDocumentsPath(void);
             return;
         }
         [self updateSettingsWithBlock:^(UIMutableApplicationSceneSettings *settings) {
-            settings.deviceOrientation = UIDevice.currentDevice.orientation;
             // 堆叠卡片的「旋转方向」: 有覆盖就用访客自己的方向, 否则跟随宿主.
             UIInterfaceOrientation orientation = self.orientationOverride != UIInterfaceOrientationUnknown
                 ? self.orientationOverride
                 : self.view.window.windowScene.interfaceOrientation;
+            // deviceOrientation 必须跟着一起改, 否则 UIKit 认为设备没转, 场景设置里的
+            // interfaceOrientation 不生效 —— 「反转」点了没反应就是这个原因.
+            if (self.orientationOverride != UIInterfaceOrientationUnknown) {
+                switch (orientation) {
+                    case UIInterfaceOrientationLandscapeLeft:
+                        settings.deviceOrientation = UIDeviceOrientationLandscapeRight;
+                        break;
+                    case UIInterfaceOrientationLandscapeRight:
+                        settings.deviceOrientation = UIDeviceOrientationLandscapeLeft;
+                        break;
+                    case UIInterfaceOrientationPortraitUpsideDown:
+                        settings.deviceOrientation = UIDeviceOrientationPortraitUpsideDown;
+                        break;
+                    default:
+                        settings.deviceOrientation = UIDeviceOrientationPortrait;
+                        break;
+                }
+            } else {
+                settings.deviceOrientation = UIDevice.currentDevice.orientation;
+            }
             settings.interfaceOrientation = orientation;
             CGRect frame = self.view.frame;
             if(!self.usesHostingControllerAPI) {
