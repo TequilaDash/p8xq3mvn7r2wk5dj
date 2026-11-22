@@ -104,6 +104,11 @@ struct HomeScreenView: View {
         .homePresentations(zoomNamespace: zoomNamespace)
         .homeRouting(router, onRoute: model.handle)
         .onReceive(model.appsPublisher, perform: model.syncApps)
+        // 首次上屏、以及从访客回到首页/场景重新激活时主动补一次，避免图标空着等手动滑动。
+        .onAppear { model.refreshAppsFromSource() }
+        .onReceive(NotificationCenter.default.publisher(for: UIScene.didActivateNotification)) { _ in
+            model.refreshAppsFromSource()
+        }
         .onReceive(NotificationCenter.default.publisher(for: .LCPhoneSplitDidChange)) { _ in
             model.phoneSplitDidChange()
         }

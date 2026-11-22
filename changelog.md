@@ -1,3 +1,8 @@
+20261123-210000 1.1.93 Update：
+1. 修首页图标要手动滑一下才出现：`@Published` 的 apps 只在数据变化时发一次，视图挂载前那次会被错过，之后一直是空数据列表。
+   现在 Home 视图 `.onAppear` 与场景重新激活（UIScene.didActivateNotification）时都主动 `refreshAppsFromSource()` 重新同步并重排。
+2. [vroot] 路径日志改走 `TDConsoleLog`（写 ConsoleLog 文件），不再是 NSLog —— 这样 iManager → ConsoleLog 页面里能直接看到。
+
 20261123-190000 1.1.92 Update：
 1. 加低音量路径诊断（只在涉及 .app/、mobileprovision、DynamicLibraries、/Tweaks/ 时记录，上限 60+40 行）：
    `[vroot] mask <真实> -> <对外>` 与 `[vroot] virtual->real <伪> -> <真实>`，直接落在设备日志，

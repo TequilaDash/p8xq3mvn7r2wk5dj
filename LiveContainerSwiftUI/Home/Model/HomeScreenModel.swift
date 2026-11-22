@@ -283,6 +283,13 @@ final class HomeScreenModel {
     /// apps take the next free slot, and removed or hidden apps leave theirs.
     /// When that leaves fewer pages, the last one shows instead of one that
     /// is gone.
+    /// 重新从数据源同步一次。`@Published` 只在数组变化时发一次，视图挂载前那次会被错过，
+    /// 结果是每次从访客回到首页图标是空的，手动滚一下才触发布局出现。Home 视图重新显示、
+    /// 场景重新激活时都调用这里补一次。
+    func refreshAppsFromSource() {
+        syncApps(sharedModel.apps)
+    }
+
     func syncApps(_ newApps: [LCAppModel]) {
         defer {
             clampPage()

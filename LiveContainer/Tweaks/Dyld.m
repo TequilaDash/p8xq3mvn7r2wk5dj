@@ -468,10 +468,12 @@ const char *tdv_masked_image_name(const char *realName) {
     if (guestId.length == 0) return realName;
     snprintf(masked, sizeof(masked), "%s/%s.app%s", gTDVMaskedPrefix, guestId.UTF8String, afterFolder);
     {
+        // 走 iManager 的 ConsoleLog（TDConsoleLog 写文件），NSLog 只会进系统日志，页面上看不到。
+        extern void TDConsoleLog(NSString *format, ...) __attribute__((weak_import));
         static int noted = 0;
-        if (noted < 40 && (strstr(realName, ".app/") || strstr(realName, "Reveil"))) {
+        if (noted < 40 && TDConsoleLog && (strstr(realName, ".app/") || strstr(realName, "Reveil"))) {
             noted += 1;
-            NSLog(@"[vroot] mask %s -> %s", realName, masked);
+            TDConsoleLog(@"[vroot] mask %s -> %s", realName, masked);
         }
     }
     return masked;

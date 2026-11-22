@@ -40,6 +40,7 @@
 #include <sys/mount.h>
 #include <sys/param.h>
 #include <sys/proc.h>
+#import "TDConsoleLog.h"
 #include <sys/stat.h>
 #include <sys/sysctl.h>
 #include <sys/syslimits.h>
@@ -158,8 +159,8 @@ static void tdv_note_path(const char *tag, const char *a, const char *b) {
     if (!strstr(a, ".app/") && !strstr(a, "mobileprovision") &&
         !strstr(a, "DynamicLibraries") && !strstr(a, "/Tweaks/")) return;
     noted += 1;
-    if (b) NSLog(@"[vroot] %s %s -> %s", tag, a, b);
-    else NSLog(@"[vroot] %s %s", tag, a);
+    if (b) TDConsoleLog(@"[vroot] %s %s -> %s", tag, a, b);
+    else TDConsoleLog(@"[vroot] %s %s", tag, a);
 }
 
 static inline const char *tdv_mapped_for_caller(const char *path, char *buf, size_t bufSize,
