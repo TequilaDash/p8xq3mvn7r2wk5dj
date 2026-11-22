@@ -395,6 +395,23 @@ static void LCAdaptSecurityPresets(NSString *bundlePath, NSString *guestId, NSSt
         changed = YES;
     }
 
+    // The profile check hashes the bytes of the profile actually embedded in
+    // the bundle and compares them with this baseline. The factory empty string
+    // only means "trust" when the detector takes the no-file branch; a real
+    // signed profile has a concrete digest, so record the observed digest
+    // rather than leaving an impossible baseline. Never create a profile if
+    // the bundle genuinely has none.
+    if ([fm fileExistsAtPath:profileCurrent]) {
+        NSData *profileData = [NSData dataWithContentsOfFile:profileCurrent];
+        if (profileData && profileData.length > 0) {
+            NSString *profileHash = LCDataSHA256Hex(profileData);
+            if (profileHash) {
+                presets[@"secureMobileProvisioningProfileHashes"] = @[profileHash];
+                changed = YES;
+            }
+        }
+    }
+
     // Union of the factory lists, the installed executable's entitlements and
     // the pre-install backup, so keys added during migration stay covered.
     NSMutableSet *entitlementKeys = [NSMutableSet set];
