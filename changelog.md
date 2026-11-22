@@ -1,3 +1,11 @@
+20261122-154629 1.1.69 Update：
+1. 全能签(NSKSign)四路 dyld 交叉校验修复：Ghidra 实锤 NSKSign 枚举镜像用的是 dyld 私有 API（__dyld_image_count / __dyld_get_image_name / __dyld_get_image_header / __dyld_get_image_vmaddr_slide），我们此前只重绑了公开的 _dyld_*，检测器看到的 stable API 仍是全量、而 task_info 副本是裁剪后的，两个列表必然不一致 -> 判红。现在私有变体一并重绑到同一过滤实现，两个通道给出同一个可见集合。
+2. 修正 litehook 重绑顺序：litehook 定位"重绑实现所在镜像"用的是公开 dyld API，原顺序先重绑公开 API 再建裁剪表，之后它只能看到裁剪后的表，本镜像被隐藏时后续重绑静默失效（index0 契约错位 -> 访客入口取错）。现在所有枚举重绑提前到裁剪表建立之前，并在裁剪未生效时不再做 index0 的访客头还原（避免改到宿主二进制头）。
+3. task_info 副本门控改为「proc 伪值开关 或 镜像裁剪已生效」，两个通道的可见视图不再可能不一致。
+4. 全能签崩溃点定性：NSKSign+0x714514 = swift_Concurrency_fatalError（唯一调用者 swift56override_swift_task_future_wait，报 "future reported an error, but wait cannot throw"），是 NSKSign 自带 Swift 5.6 并发兼容层在 async 任务抛错、等待方不能抛时的陷阱，不是反注入 abort（检测命中的真实路径是弹窗后 600ms 的 abort）。具体抛错任务待设备侧取证。
+5. 复核：全能签的"证书公钥被篡改"检测查的是二进制内嵌公钥表，与访客重签无关（天然绿）；它检查的 5 个 DYLD_* 环境变量我们都没设。
+6. 底部小块遮挡与快手崩溃继续待复测；全能签红项变化需真机确认，并请给对应 app 打开「隐藏 LiveContainer」——宿主镜像可见时它的镜像路径白名单必红。
+
 20261122-033500 1.1.68 Update：
 1. 修复多任务浮动窗口状态栏偏高（图一 vs 图二对比定位）：updateAppSafeArea 在顶栏隐藏（hideWindowBar）时仍清 44pt 顶部避让，guest 状态栏被推到真实状态栏下方 44pt；全屏 guest 无此 44pt 所以正常。现在避让跟随 navigationBar.hidden 同一个 hideWindowBar 条件，顶栏可见才清 44pt。
 2. 1.1.67 已含：sigaction 查询伪值越界修复（只写 handler 字段）+ 状态栏沉浸迁入 iManager > 实验性。
