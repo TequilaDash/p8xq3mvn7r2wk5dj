@@ -10,10 +10,11 @@ import SwiftUI
 /// or dims with Reduce Motion on. Liquid Glass already answers touches, so
 /// the button is left to it on iOS 26 and later.
 struct HomeButtonPressStyle: ButtonStyle {
+    var showsGlass = true
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     func makeBody(configuration: Configuration) -> some View {
-        let isPressed = configuration.isPressed && !Self.glassReacts
+        let isPressed = configuration.isPressed && !(showsGlass && Self.glassReacts)
 
         configuration.label
             .scaleEffect(isPressed && !reduceMotion ? HomeDesign.homeButtonPressedScale : 1)

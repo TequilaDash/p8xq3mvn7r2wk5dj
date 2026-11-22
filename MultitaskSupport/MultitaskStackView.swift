@@ -689,33 +689,37 @@ struct MultitaskStackView: View {
     @State private var draggedUUID: String?
 
     var body: some View {
-        ZStack {
-            backgroundLayer
-            VStack(spacing: 0) {
-                if manager.apps.isEmpty {
-                    Spacer()
-                    Image(systemName: "rectangle.stack").font(.system(size: 46, weight: .light))
-                    Spacer()
-                } else {
-                    GeometryReader { geometry in deck(in: geometry.size) }
-                    if showClearAll {
-                        Button {
-                            manager.closeAll()
-                        } label: {
-                            Image(systemName: "trash")
-                                .font(.system(size: 19, weight: .semibold))
-                                .frame(width: 54, height: 54)
-                                .background(.ultraThinMaterial, in: Circle())
+        GeometryReader { viewport in
+            ZStack {
+                backgroundLayer
+                VStack(spacing: 0) {
+                    if manager.apps.isEmpty {
+                        Spacer()
+                        Image(systemName: "rectangle.stack").font(.system(size: 46, weight: .light))
+                        Spacer()
+                    } else {
+                        GeometryReader { geometry in
+                            deck(in: geometry.size, viewportHeight: viewport.size.height)
                         }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("全部清除")
-                        .padding(.bottom, 6)
+                        if showClearAll {
+                            Button {
+                                manager.closeAll()
+                            } label: {
+                                Image(systemName: "trash")
+                                    .font(.system(size: 19, weight: .semibold))
+                                    .frame(width: 54, height: 54)
+                                    .background(.ultraThinMaterial, in: Circle())
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("全部清除")
+                            .padding(.bottom, 6)
+                        }
+                        if !dockManager.apps.isEmpty { dockStrip }
                     }
-                    if !dockManager.apps.isEmpty { dockStrip }
                 }
+                .foregroundStyle(.white)
+                .padding(.top, 10)
             }
-            .foregroundStyle(.white)
-            .padding(.top, 10)
         }
         .task {
             guard wallpaperImage == nil else { return }
@@ -789,13 +793,20 @@ struct MultitaskStackView: View {
         .padding(.bottom, 10)
     }
 
-    private func deck(in size: CGSize) -> some View {
-        // 参考项目的堆叠几何：卡片宽 ≤ 屏宽 72%，高 ≤ 可用高度 70%；
-        // 相邻卡片按 0.77 倍卡宽排，整叠右移 12.5% 卡宽让左侧卡片露边，聚焦卡放大 1.018。
-        let previewHeight = max(1, min(size.height - 40, size.height * 0.70))
-        // 参考源码的 cap 是 0.72W，但实际宽度由 MIN(maxCardWidth, previewHeight*aspect) 决定；
-        // 用户在实机截图上量到的结果是 0.56W，这里直接按量到的比例收窄。
-        let maxCardWidth = max(200, size.width * 0.56)
+    private func deck(in size: CGSize, viewportHeight: CGFloat) -> some View {
+        // LCOrbitTaskSwitcher.m:552-576: aspect-driven preview + 34pt header.
+        // The inner GeometryReader already excludes the trash/Dock. Do not apply
+        // 0.70 to that reduced height again. Reserve the reference's 60pt gutter,
+        // and fit the complete scaled card (including its header) inside the deck.
+        let maxDeckScale: CGFloat = 1.018
+        let previewHeight = max(1, min(viewportHeight * 0.70,
+                                      (size.height - 60) / maxDeckScale - 34))
+        // Original screenshots 5/6: a 593px straight preview edge on 1179px width.
+        // Prefer the supplied original to the handoff's conflicting 0.56 estimate.
+        // Divide by focused scale so the measured target is the visible width.
+        // No 200pt floor: it would exceed the target ratio in narrow windows.
+        let visibleWidthRatio: CGFloat = 593.0 / 1179.0
+        let maxCardWidth = max(1, size.width) * visibleWidthRatio / maxDeckScale
         let stride = max(1, maxCardWidth * 0.77)
         let deckShift = manager.apps.count > 1 ? maxCardWidth * 0.125 : 0
         let horizontal = dragAxis == .horizontal ? dragOffset.width : 0
@@ -818,7 +829,7 @@ struct MultitaskStackView: View {
                              onAppInfo: { manager.showAppInfo(uuid: app.appUUID) },
                              onSplit: { manager.openInSplitScreen(uuid: app.appUUID) },
                              onPictureInPicture: { manager.togglePictureInPicture(uuid: app.appUUID) })
-                    .scaleEffect(distance == 0 ? 1.018 : 1)
+                    .scaleEffect(distance == 0 ? maxDeckScale : 1)
                     .offset(x: distance * stride + deckShift + horizontal, y: vertical)
                     .zIndex(Double(manager.apps.count) - Double(abs(distance)))
                     .accessibilityHidden(index != manager.selectedIndex)

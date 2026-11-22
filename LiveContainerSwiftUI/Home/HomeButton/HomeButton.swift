@@ -12,25 +12,36 @@ import SwiftUI
 struct HomeButton: View {
     /// What pressing it does, which is HomeScreenModel's `goHome()`.
     let action: () -> Void
+    // The global overlay uses the rings alone; ordinary Home buttons keep glass.
+    var showsGlass = true
 
     /// Counts the presses, so each one plays a light tap.
     @State private var presses = 0
 
     var body: some View {
         Button(action: press) {
-            Label {
-                Text("zc.home.homeButton".loc)
-            } icon: {
-                HomeButtonGlyph()
+            Group {
+                if showsGlass {
+                    buttonLabel.homeButtonGlass()
+                } else {
+                    buttonLabel
+                }
             }
-            .labelStyle(.iconOnly)
-            .frame(width: HomeDesign.homeButtonSize, height: HomeDesign.homeButtonSize)
-            .homeButtonGlass()
             .contentShape(.circle)
         }
-        .buttonStyle(HomeButtonPressStyle())
+        .buttonStyle(HomeButtonPressStyle(showsGlass: showsGlass))
         .sensoryFeedback(.impact(weight: .light), trigger: presses)
         .accessibilityHint("zc.home.homeButtonHint".loc)
+    }
+
+    private var buttonLabel: some View {
+        Label {
+            Text("zc.home.homeButton".loc)
+        } icon: {
+            HomeButtonGlyph()
+        }
+        .labelStyle(.iconOnly)
+        .frame(width: HomeDesign.homeButtonSize, height: HomeDesign.homeButtonSize)
     }
 
     private func press() {

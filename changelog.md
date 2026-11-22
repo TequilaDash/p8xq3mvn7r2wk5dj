@@ -1,3 +1,8 @@
+20261123-150000 1.1.90 Update：
+1. 后台卡片尺寸按原图像素重算：可见宽 593/1179 ≈ 0.503（再除以 1.018 聚焦缩放得布局宽），高度取 min(视口高×0.70, (deck 高−60)/1.018−34)，去掉 200pt 下限；stride 0.77、右移 0.125、34pt 头部、1.018 保持（依据 LCOrbitTaskSwitcher.m:552-576 与用户原图量测）。
+2. 辅助触控浮钮：新增 showsGlass（默认开），全局浮钮显式关闭 → 去掉外圈圆底/半透明圆斑；未保存过位置时默认落在左侧 (34, 屏高×0.62)，不再压住右侧 chevron；首次拖动基准改用 effectiveOffset，避免松手跳回右侧。
+3. 截图归属更正：此前被当作「首页渲染异常」的那张实际是访客浏览器主页，不是宿主首页，因此本轮不对宿主首页做盲改。
+
 20261123-130000 1.1.89 Update：
 1. 访客镜像对外路径补上 /private 前缀：真机正常安装是 /private/var/containers/Bundle/Application/<UUID>/<Name>.app/...，此前少了 /private，Reveil 仍把主可执行和它自带的 library_stub.framework 判成「注入的共享库」。
 2. 反向翻译同时接受带/不带 /private 两种写法（Foundation 常把 /private 去掉）。

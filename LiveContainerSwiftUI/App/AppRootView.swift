@@ -110,12 +110,19 @@ private struct TDGlobalHomeOverlay: View {
                     let margin = HomeDesign.homeButtonSize / 2 + 8
                     let base = CGPoint(x: proxy.size.width - margin,
                                        y: proxy.size.height * 0.62)
+                    // Keep the old right-origin offset protocol for saved drags.
+                    // Only an unset placement defaults to the left, away from chevrons.
+                    let hasSavedPlacement = LCUtils.appGroupUserDefault.object(forKey: "TDDesktopHomeOffsetX") != nil
+                        || LCUtils.appGroupUserDefault.object(forKey: "TDDesktopHomeOffsetY") != nil
+                    let effectiveOffset = hasSavedPlacement
+                        ? CGSize(width: offsetX, height: offsetY)
+                        : CGSize(width: margin - base.x, height: 0)
                     let center = CGPoint(
-                        x: min(max(base.x + offsetX, margin), proxy.size.width - margin),
-                        y: min(max(base.y + offsetY, margin), proxy.size.height - margin)
+                        x: min(max(base.x + effectiveOffset.width, margin), proxy.size.width - margin),
+                        y: min(max(base.y + effectiveOffset.height, margin), proxy.size.height - margin)
                     )
 
-                    HomeButton(action: {})
+                    HomeButton(action: {}, showsGlass: false)
                         .highPriorityGesture(
                             TapGesture(count: 2)
                                 .exclusively(before: TapGesture(count: 1))
@@ -142,7 +149,7 @@ private struct TDGlobalHomeOverlay: View {
                         DragGesture(minimumDistance: 4)
                             .onChanged { value in
                                 if dragBase == nil {
-                                    dragBase = CGSize(width: offsetX, height: offsetY)
+                                    dragBase = effectiveOffset
                                     dimmed = false
                                 }
                                 offsetX = (dragBase?.width ?? 0) + value.translation.width
