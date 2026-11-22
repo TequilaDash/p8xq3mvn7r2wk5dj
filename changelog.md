@@ -1,3 +1,8 @@
+20261122-020000 1.1.65 Update：
+1. NSKSign 四路 dyld 交叉检查修复：Ghidra 实锤 _AISCollectStableApiVersusTask 同时对比 stable API (_dyld_image_count 等) 和 task_info(TASK_DYLD_INFO) 返回的 dyld_all_image_infos.infoArray。隐藏 LC/TweakLoader 镜像只改了 stable API，内核 task_info 仍返回全部条目，两个列表数量/内容不一致 -> 必命中。现在 interpose task_info，当 flavor=TASK_DYLD_INFO 且 caller 是 guest 且 TD_PROC_SPOOF 开启时，把 all_image_info_addr 指向删除隐藏条目后的副本，两视图一致。不指向空结构（1.1.45 教训），其余字段逐字节保留。
+2. task_info interpose 用 litehook_rebind_symbol（GOT 重绑），不用 fishhook：NSKSign 的 _AISGuard_RestoreFishhookedDyldSymbols 会主动还原被 fishhook 改写的 dyld 符号 GOT 槽，但只针对固定 5 个 dyld 符号；task_info 不在其中。副本按 Dyld.m 同一 remap 状态填充（TDVDyldInfoVisibleIndices），与 stable API 保持一致。
+3. 本轮八项检查中 1-7 项已分析为绿（text caves/prologues/MSHook trampolines/cert/SecKey imports/critical IMPs/injected load commands 均不与 litehook GOT 型注入冲突；第 4 项在 R29 原件映射修复后也绿）。第 8 项由本次 interpose 修复。不宣称真机全绿，待复测。
+
 20261122-013000 1.1.64 Update：
 1. 修复多任务"应用程序分发配置文件被篡改"红项：Ghidra 实锤 Reveil 用 32 字节 SHA256 哈希当前 embedded.mobileprovision 字节并转 hex，然后对 secureMobileProvisioningProfileHashes 做 Set<String>.contains。之前的出厂空串基线永远不匹配真实 profile。现在改为记录当前 profile 的实际 SHA256（文件存在且非空时），不伪造。
 2. 输入包本身无 embedded.mobileprovision（如 ReveilPatch.ipa）：Reveil 的 pathForResource 返回 nil 时立即返回失败，空串基线不等于"缺文件可信任"。只能对有真实 profile 的签名包修复此红项，不能对缺 profile 的包伪造。
