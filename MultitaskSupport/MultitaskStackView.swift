@@ -772,7 +772,7 @@ struct MultitaskStackView: View {
     // 图标渲染抽成函数: 就地写 if let + 链式修饰器会让 Swift 类型检查超时(CI 报过).
     @ViewBuilder
     private func appIcon(_ app: DockAppModel, size: CGFloat, corner: CGFloat, border: Color? = nil) -> some View {
-        if let icon = app.appInfo?.icon(isDarkIcon: false) {
+        if let icon = app.appInfo?.iconIsDarkIcon(false) {
             Image(uiImage: icon)
                 .resizable()
                 .scaledToFill()
