@@ -843,7 +843,7 @@ struct AppStackCard: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(width: size.width, height: size.height)
-        .background(RoundedRectangle(cornerRadius: 28, style: .continuous).fill(Color.white))
+        .background(Color.clear)
         .overlay(RoundedRectangle(cornerRadius: 28, style: .continuous).stroke(.white.opacity(0.25), lineWidth: 1))
         .contentShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
         .onTapGesture(perform: onSelect)
