@@ -1,3 +1,8 @@
+20261122-031500 1.1.67 Update：
+1. 修复 1.1.66 引入的 Reveil 3.4 闪退（stack buffer overflow）：sigaction 查询伪值早先把 old 结构的 mask/flags 一并清零（24 字节），部分调用方以紧凑缓冲区作 old，越界写 8 字节触发检测线程 __stack_chk_fail（123758.ips：FUN_100147270 尾部）。现在只写 handler @0 一个字段——这正是检测语义判断的字段；mask/flags 保持真实值。
+2. 状态栏沉浸入口按用户要求迁到 iManager > 实验性（二级界面 + 卡片动画示例不变），不再放设置 > 高级。
+3. 全能签/Ensign 仍未过：新版 Reveil 的权限/分发配置文件读的是进程 entitlements/profile（非 bundle 文件），我们已有的 SecTask 伪值通道是否覆盖其读取路径待复测确认；快手崩溃同源（全能签 abort）。多任务状态栏偏高与全屏 guest 对比的新证据（图一 vs 图二）本轮继续分析，底部小块遮挡（图三）一并排查。
+
 20261122-023000 1.1.66 Update：
 1. 新版 Reveil 3.4 的"已设置信号处理器"红项修复：Ghidra 实锤 FUN_100147270 case 0x1f 对信号 1…31 逐个 sigaction(sig, NULL, &old)，old.handler 非 SIG_DFL 即红。zContainer 自己的崩溃记录/Guard 处理器是合法注册，不能撤。现在 interpose sigaction：只有查询调用（act == NULL）且 caller 是 guest 且 TD_PROC_SPOOF 开启时把返回的 old 改为 SIG_DFL 形；注册调用完全透传，我们的处理器照常工作。litehook 全局重绑，NSKSign 的 fishhook 还原路径覆盖不到它。
 2. 新增实验性功能"状态栏沉浸"：设置 > 高级 > 状态栏沉浸。开关存 app group（LCStatusBarImmersion），主屏幕把它并入现有状态栏隐藏条件；二级页面带卡片动画示例（状态栏滑出滑回的 spring 动画）。
