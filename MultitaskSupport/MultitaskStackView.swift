@@ -786,15 +786,17 @@ struct MultitaskStackView: View {
         // 整叠再右移 12.5% 卡宽，使左边的卡片露出边缘；聚焦卡片放大 1.018。
         let previewHeight = max(1, min(size.height - 60, size.height * 0.70))
         let maxCardWidth = size.width * 0.72
-        let aspect: CGFloat = 390.0 / 844.0
-        let cardHeight = min(previewHeight, maxCardWidth / aspect)
-        let cardWidth = min(maxCardWidth, cardHeight * aspect)
         let stride = max(1, maxCardWidth * 0.77)
         let deckShift = manager.apps.count > 1 ? maxCardWidth * 0.125 : 0
         let horizontal = dragAxis == .horizontal ? dragOffset.width : 0
         return ZStack {
             ForEach(Array(manager.apps.enumerated()), id: \.element.appUUID) { index, app in
                 let distance = CGFloat(index - manager.selectedIndex)
+                // 宽高按访客自己的画面比例算（旋转成横屏的卡片也不会被裁）。
+                let source = app.view?.bounds.size ?? .zero
+                let aspect = (source.width > 1 && source.height > 1) ? source.width / source.height : (390.0 / 844.0)
+                let cardHeight = min(previewHeight, maxCardWidth / aspect)
+                let cardWidth = min(maxCardWidth, cardHeight * aspect)
                 let vertical = app.appUUID == draggedUUID && dragAxis == .vertical ? min(0, dragOffset.height) : 0
                 let restartController = manager.restartTarget(for: app.appUUID)
                 AppStackCard(app: app, size: CGSize(width: cardWidth, height: cardHeight),
