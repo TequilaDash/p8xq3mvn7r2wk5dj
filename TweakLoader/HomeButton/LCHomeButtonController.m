@@ -216,10 +216,9 @@ static void LCHomeButtonSettingsDidChange(CFNotificationCenterRef center, void *
 
 - (void)showInScene:(UIWindowScene *)scene {
     @try {
-        // Embedded LiveProcess surfaces use the host scene's overlay. Classic
-        // fullscreen guests do not load AppRootView and must own their window.
-        if (NSUserDefaults.isLiveProcess &&
-            [LCHomeButtonSetting(@"TDAssistiveTouchMode") isEqualToString:@"always"]) {
+        // 「始终显示」全局只允许一个按钮：宿主那个单一悬浮窗负责所有界面（经典全屏
+        // 访客也跑在宿主进程里），这里一律不建自己的窗口，否则会出现两个按钮。
+        if ([LCHomeButtonSetting(@"TDAssistiveTouchMode") isEqualToString:@"always"]) {
             [self.buttonController reloadSettings];
             return;
         }

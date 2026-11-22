@@ -243,9 +243,9 @@ private struct TDOverlayHitRegion: UIViewRepresentable {
 final class TDHostHomeOverlayController {
     static let shared = TDHostHomeOverlayController()
 
-    // A host scene can be the Home Screen or a native multitask app window.
-    // Never move a single overlay to an arbitrary first connected scene.
-    private var windows: [String: TDHostHomeOverlayWindow] = [:]
+    // 全局只有一个按钮：单窗口，随前台场景移动，不在每个 scene 各建一个。
+    private var window: TDHostHomeOverlayWindow?
+    private var hosting: UIHostingController<TDGlobalHomeOverlay>?
     private var observers: [NSObjectProtocol] = []
 
     private init() {
@@ -296,47 +296,45 @@ final class TDHostHomeOverlayController {
     }
 
     func attach() {
-        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
-        let connected = Set(scenes.map { $0.session.persistentIdentifier })
-        for id in Array(windows.keys) where !connected.contains(id) {
-            windows.removeValue(forKey: id)?.isHidden = true
-        }
         let mode = LCUtils.appGroupUserDefault.string(forKey: "TDAssistiveTouchMode") ?? "default"
-        for scene in scenes where scene.session.role == .windowApplication {
-            let id = scene.session.persistentIdentifier
-            let foreground = scene.activationState == .foregroundActive || scene.activationState == .foregroundInactive
-            guard mode == "always", foreground else {
-                windows[id]?.isHidden = true
-                continue
+        let scenes = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .filter { $0.session.role == .windowApplication }
+        // 只跟一个前台场景走；找不到就藏，绝不为了多场景再开一个窗。
+        guard mode == "always",
+              let scene = scenes.first(where: { $0.activationState == .foregroundActive })
+                        ?? scenes.first(where: { $0.activationState == .foregroundInactive }),
+              !scene.coordinateSpace.bounds.isEmpty,
+              scene.windows.contains(where: {
+                  !($0 is TDHostHomeOverlayWindow) && !$0.isHidden &&
+                  $0.windowLevel == .normal && $0.rootViewController != nil
+              }) else {
+            window?.isHidden = true
+            return
+        }
+
+        if let overlay = window {
+            if overlay.windowScene !== scene { overlay.windowScene = scene }
+            if let host = overlay.rootViewController as? UIHostingController<TDGlobalHomeOverlay>,
+               host.rootView.mode != mode {
+                host.rootView = rootView(mode: mode)
             }
-            guard !scene.coordinateSpace.bounds.isEmpty,
-                  scene.windows.contains(where: {
-                      !($0 is TDHostHomeOverlayWindow) && !$0.isHidden &&
-                      $0.windowLevel == .normal && $0.rootViewController != nil
-                  }) else {
-                windows[id]?.isHidden = true
-                continue
-            }
-            if let overlay = windows[id] {
-                if let host = overlay.rootViewController as? UIHostingController<TDGlobalHomeOverlay>,
-                   host.rootView.mode != mode {
-                    host.rootView = rootView(mode: mode)
-                }
-                overlay.frame = scene.coordinateSpace.bounds
-                overlay.windowLevel = overlayLevel(in: scene)
-                overlay.isHidden = false
-                continue
-            }
-            let host = UIHostingController(rootView: rootView(mode: mode))
-            host.view.backgroundColor = .clear
-            let overlay = TDHostHomeOverlayWindow(windowScene: scene)
             overlay.frame = scene.coordinateSpace.bounds
             overlay.windowLevel = overlayLevel(in: scene)
-            overlay.backgroundColor = .clear
-            overlay.rootViewController = host
-            // Retain before showing: window-visible callbacks can be synchronous.
-            windows[id] = overlay
             overlay.isHidden = false
+            return
         }
+
+        let host = UIHostingController(rootView: rootView(mode: mode))
+        host.view.backgroundColor = .clear
+        let overlay = TDHostHomeOverlayWindow(windowScene: scene)
+        overlay.frame = scene.coordinateSpace.bounds
+        overlay.windowLevel = overlayLevel(in: scene)
+        overlay.backgroundColor = .clear
+        overlay.rootViewController = host
+        // Retain before showing: window-visible callbacks can be synchronous.
+        window = overlay
+        hosting = host
+        overlay.isHidden = false
     }
 }

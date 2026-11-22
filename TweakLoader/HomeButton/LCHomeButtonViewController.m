@@ -128,10 +128,9 @@ static const CGFloat LCHomeButtonFlingCarry = 0.12;
     NSString *mode = LCHomeButtonSetting(@"TDAssistiveTouchMode");
     BOOL always = [mode isEqualToString:@"always"];
     BOOL legacyShow = getenv("TD_SHOW_HOME_BUTTON_IN_APPS") && atoi(getenv("TD_SHOW_HOME_BUTTON_IN_APPS")) == 1;
-    // “保持现状”沿用原有主屏按键开关；只有“始终显示”才无视原有开关。
-    BOOL hostOwnsGlobalButton = always && NSUserDefaults.isLiveProcess;
-    // Only embedded LiveProcess surfaces share the host overlay. A classic
-    // guest has no AppRootView, so its dedicated window must show the button.
+    // 「始终显示」由宿主的单一悬浮窗负责，访客进程里一律不显示自己的按钮，
+    // 否则同一屏会出现两个；「保持现状」仍沿用原有主屏按键开关。
+    BOOL hostOwnsGlobalButton = always;
     self.buttonHidden = hostOwnsGlobalButton || (!always && !legacyShow);
     self.edgeSwipeEnabled = [LCHomeButtonSetting(@"TDSideSwipeMode") isEqualToString:@"always"];
     BOOL dimEnabled = LCHomeButtonBoolSetting(@"TDAssistiveTouchIdleDim", YES);
