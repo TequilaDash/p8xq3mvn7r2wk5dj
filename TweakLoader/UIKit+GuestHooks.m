@@ -11,8 +11,72 @@
 #import <os/lock.h>
 
 UIInterfaceOrientation LCOrientationLock = UIInterfaceOrientationUnknown;
+/// One-shot rotation from the stack card's 旋转方向 menu. Lives only for this
+/// guest session: the override key is deleted as soon as it is consumed, so
+/// the app's permanent 旋转锁定 keeps deciding future launches.
+static UIInterfaceOrientationMask LCOrientationOnceMask = UIInterfaceOrientationMaskAll;
 NSMutableArray<NSString*>* LCSupportedUrlSchemes = nil;
 BOOL launchURLProcessed = NO;
+
+/// Applies the stack card's one-shot rotation to this guest and clears it.
+/// dir: 0 default (clear), 1 landscape, 2 portrait, 3 upside-down. The key
+/// holds {"uuid": ..., "dir": ...}; a request for another guest is left for
+/// its own process, and a consumed request is deleted so a relaunch starts
+/// from the app's permanent 旋转锁定 again.
+static void LCApplyOnceOrientation(void) {
+    NSUserDefaults *defaults = NSUserDefaults.lcSharedDefaults;
+    NSDictionary *request = [defaults objectForKey:@"LCPendingOrientationOverride"];
+    if(![request isKindOfClass:NSDictionary.class]) return;
+    NSString *requestUUID = request[@"uuid"];
+    NSString *selfUUID = NSUserDefaults.lcGuestAppId;
+    if(requestUUID.length && selfUUID.length && ![requestUUID isEqualToString:selfUUID]) return;
+    [defaults removeObjectForKey:@"LCPendingOrientationOverride"];
+    [defaults synchronize];
+    NSInteger dir = [request[@"dir"] integerValue];
+    UIInterfaceOrientationMask mask = UIInterfaceOrientationMaskAll;
+    switch (dir) {
+        case 1: mask = UIInterfaceOrientationMaskLandscape; break;
+        case 2: mask = UIInterfaceOrientationMaskPortrait; break;
+        case 3: mask = UIInterfaceOrientationMaskPortraitUpsideDown; break;
+        case 0:
+        default:
+            mask = UIInterfaceOrientationMaskAll;
+            break;
+    }
+    dispatch_async(dispatch_get_main_queue(), ^{
+        LCOrientationOnceMask = mask;
+        if(@available(iOS 16.0, *)) {
+            UIWindowScene *scene = nil;
+            for (UIScene *connected in UIApplication.sharedApplication.connectedScenes) {
+                if([connected isKindOfClass:UIWindowScene.class]) { scene = (UIWindowScene *)connected; break; }
+            }
+            if(scene) {
+                [scene requestGeometryUpdateWithPreferences:
+                    [[UIWindowSceneGeometryPreferencesIOS alloc] initWithInterfaceOrientations:mask]
+                    errorHandler:nil];
+            }
+        }
+        [UIViewController attemptRotationToDeviceOrientation];
+    });
+}
+
+static void LCOrientationNotification(CFNotificationCenterRef center, void *observer,
+                                      CFStringRef name, const void *object,
+                                      CFDictionaryRef userInfo) {
+    LCApplyOnceOrientation();
+}
+
+__attribute__((constructor))
+static void LCRegisterOrientationOverrideNotification(void) {
+    CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL,
+                                    LCOrientationNotification,
+                                    CFSTR("com.kdt.livecontainer.applyOrientation"),
+                                    NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
+    // A request posted while this guest was launching still applies.
+    dispatch_async(dispatch_get_main_queue(), ^{
+        LCApplyOnceOrientation();
+    });
+}
 
 /// Tells zContainer a touch began on this app, in its multitasking window,
 /// so the window comes to the front. The notification is named for the app's
@@ -949,12 +1013,14 @@ static BOOL gLCLegacyAppHooksInstalled = NO;
 @implementation UIViewController(LiveContainerHook)
 
 - (UIInterfaceOrientationMask)hook___supportedInterfaceOrientations {
+    if(LCOrientationOnceMask != UIInterfaceOrientationMaskAll) {
+        return LCOrientationOnceMask;
+    }
     if(LCOrientationLock == UIInterfaceOrientationLandscapeRight) {
         return UIInterfaceOrientationMaskLandscape;
     } else {
         return UIInterfaceOrientationMaskPortrait;
     }
-
 }
 
 - (BOOL)hook_shouldAutorotateToInterfaceOrientation:(NSInteger)orientation {

@@ -596,6 +596,24 @@ public class MultitaskStackManager: NSObject, ObservableObject {
             self.dismiss()
         }
     }
+
+    /// One-shot orientation override: the guest applies it once and deletes
+    /// the key, so this never changes the app's permanent rotation lock.
+    @objc public func rotateApp(uuid: String, direction: Int) {
+        DispatchQueue.main.async {
+            guard self.appControllers().first(where: { $0.dataUUID == uuid }) != nil else {
+                self.message = "窗口已经关闭"
+                self.refreshApps()
+                return
+            }
+            let defaults = UserDefaults.lcSharedDefaults
+            defaults.set(["uuid": uuid, "dir": direction], forKey: "LCPendingOrientationOverride")
+            defaults.synchronize()
+            CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),
+                                                 CFSTR("com.kdt.livecontainer.applyOrientation"), nil, nil, true)
+            self.dismiss()
+        }
+    }
 }
 
 extension Notification.Name {
@@ -697,6 +715,7 @@ struct MultitaskStackView: View {
                              onSelect: { manager.selectApp(uuid: app.appUUID) },
                              onClose: { manager.closeApp(uuid: app.appUUID) },
                              onRestart: { manager.restartApp(uuid: app.appUUID, controller: restartController) },
+                             onRotate: { manager.rotateApp(uuid: app.appUUID, direction: $0) },
                              onAppInfo: { manager.showAppInfo(uuid: app.appUUID) },
                              onSplit: { manager.openInSplitScreen(uuid: app.appUUID) },
                              onPictureInPicture: { manager.togglePictureInPicture(uuid: app.appUUID) })
@@ -754,6 +773,7 @@ struct AppStackCard: View {
     var onSelect: () -> Void
     var onClose: () -> Void
     var onRestart: () -> Void
+    var onRotate: (Int) -> Void
     var onAppInfo: () -> Void
     var onSplit: () -> Void
     var onPictureInPicture: () -> Void
@@ -807,6 +827,14 @@ struct AppStackCard: View {
             }
             Button(action: onSplit) {
                 Label("分屏", systemImage: "rectangle.split.1x2")
+            }
+            Menu {
+                Button { onRotate(0) } label: { Label("默认", systemImage: "arrow.uturn.backward.circle") }
+                Button { onRotate(1) } label: { Label("横屏", systemImage: "arrow.left.and.right") }
+                Button { onRotate(2) } label: { Label("竖屏", systemImage: "arrow.up.and.down") }
+                Button { onRotate(3) } label: { Label("反转", systemImage: "arrow.2.squarepath") }
+            } label: {
+                Label("旋转方向", systemImage: "rotate.left")
             }
             Button(action: onPictureInPicture) {
                 Label("画中画模式", systemImage: "pip")
