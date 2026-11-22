@@ -132,30 +132,16 @@ struct TDAppStackSettingsView: View {
     var body: some View {
         List {
             Section {
-                Toggle("启用堆叠后台", isOn: $enabled)
+                Toggle("堆叠后台", isOn: $enabled)
                     .onChange(of: enabled) { _, _ in
-                        // The guest button reads the app group in another
-                        // process; flush it so a double tap sees the change.
                         LCUtils.appGroupUserDefault.synchronize()
                     }
-            } footer: {
-                Text("开启后，双击辅助触控打开堆叠后台；卡片显示应用当前界面（缩小显示），图标在左上角。关闭后双击不再响应。")
-            }
-            Section {
-                Toggle("启用「全部清除」按钮", isOn: $clearAllEnabled)
+                Toggle("全部清除", isOn: $clearAllEnabled)
                     .onChange(of: clearAllEnabled) { _, _ in
                         LCUtils.appGroupUserDefault.synchronize()
                     }
-                Button {
-                    MultitaskStackManager.terminateAllGuestWindows()
-                } label: {
-                    Label("全部清除", systemImage: "trash")
-                }
-                .disabled(!clearAllEnabled)
-            } footer: {
-                Text("关闭开关后这里和后台界面里的「全部清除」都会失效；按钮会终止所有正在运行的多任务窗口。")
             }
-            Section("卡片动画示例") {
+            Section {
                 TDStackDemoView()
                     .frame(height: 260)
                     .listRowInsets(EdgeInsets())

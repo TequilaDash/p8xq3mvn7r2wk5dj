@@ -658,29 +658,6 @@ public class MultitaskStackManager: NSObject, ObservableObject {
             self.dismiss()
         }
     }
-
-    /// 设置页「全部清除」用: 不依赖后台界面是否打开, 直接在宿主窗口树里找到
-    /// 正在运行的访客窗口并终止它们.
-    @objc public class func terminateAllGuestWindows() {
-        DispatchQueue.main.async {
-            var targets: [AppSceneViewController] = []
-            var seen = Set<ObjectIdentifier>()
-            func visit(_ vc: UIViewController) {
-                if let app = vc as? AppSceneViewController, app.pid > 0 {
-                    if seen.insert(ObjectIdentifier(app)).inserted { targets.append(app) }
-                }
-                for child in vc.children { visit(child) }
-            }
-            for scene in UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }) {
-                for window in scene.windows {
-                    if let root = window.rootViewController { visit(root) }
-                }
-            }
-            for app in targets {
-                app.terminate(completion: { _ in })
-            }
-        }
-    }
 }
 
 extension Notification.Name {
@@ -698,7 +675,6 @@ extension Notification.Name {
 @available(iOS 16.0, *)
 struct MultitaskStackView: View {
     @EnvironmentObject var manager: MultitaskStackManager
-    @ObservedObject private var dockManager = MultitaskDockManager.shared
     @AppStorage("TDAppStackClearAllEnabled", store: LCUtils.appGroupUserDefault)
     private var showClearAll = true
     @State private var dragOffset: CGSize = .zero
@@ -712,54 +688,31 @@ struct MultitaskStackView: View {
                 .overlay(Color.black.opacity(0.35))
                 .ignoresSafeArea()
                 .onTapGesture { manager.dismiss() }
-            VStack(spacing: 14) {
-                HStack {
-                    Text("多任务后台").font(.title2.bold())
-                    Spacer()
-                    Button { manager.dismiss() } label: { Image(systemName: "xmark.circle.fill").font(.title2) }
-                        .accessibilityLabel("关闭后台视图")
-                }
-                .padding(.horizontal, 24)
+            VStack(spacing: 0) {
                 if manager.apps.isEmpty {
                     Spacer()
                     Image(systemName: "rectangle.stack").font(.system(size: 46, weight: .light))
-                    Text("没有正在运行的多任务窗口").font(.callout)
                     Spacer()
                 } else {
                     iconStrip
                     GeometryReader { geometry in deck(in: geometry.size) }
-                    HStack(spacing: 28) {
-                        Button { moveSelection(by: -1) } label: { Image(systemName: "chevron.left") }
-                            .disabled(manager.selectedIndex == 0)
-                            .accessibilityLabel("上一个窗口")
-                        Text("\(manager.selectedIndex + 1) / \(manager.apps.count)").monospacedDigit()
-                        Button { moveSelection(by: 1) } label: { Image(systemName: "chevron.right") }
-                            .disabled(manager.selectedIndex >= manager.apps.count - 1)
-                            .accessibilityLabel("下一个窗口")
-                    }
-                    Text("左右滑动切换 · 点按打开 · 长按更多 · 上滑关闭")
-                        .font(.footnote)
-                        .foregroundStyle(.white.opacity(0.7))
                     if showClearAll {
                         Button {
                             manager.closeAll()
                         } label: {
-                            Label("全部清除", systemImage: "trash")
-                                .font(.subheadline.weight(.semibold))
-                                .padding(.horizontal, 22)
-                                .padding(.vertical, 11)
-                                .background(.ultraThinMaterial, in: Capsule())
-                                .overlay(Capsule().stroke(.white.opacity(0.2), lineWidth: 1))
+                            Image(systemName: "trash")
+                                .font(.system(size: 18, weight: .semibold))
+                                .frame(width: 46, height: 46)
+                                .background(.ultraThinMaterial, in: Circle())
                         }
                         .buttonStyle(.plain)
-                        .accessibilityLabel("关闭全部多任务窗口")
+                        .accessibilityLabel("全部清除")
+                        .padding(.bottom, 8)
                     }
                 }
-                if let message = manager.message { Text(message).font(.footnote).accessibilityAddTraits(.updatesFrequently) }
-                if !dockManager.apps.isEmpty { dockStrip }
             }
             .foregroundStyle(.white)
-            .padding(.vertical, 24)
+            .padding(.top, 12)
         }
     }
 
@@ -798,66 +751,46 @@ struct MultitaskStackView: View {
         }
     }
 
-    // iOS 后台底部那条 dock: 复用 dock 的 app 列表, 点图标直接切过去.
-    private var dockStrip: some View {
-        HStack(spacing: 20) {
-            ForEach(dockManager.apps) { app in
-                Button {
-                    manager.selectApp(uuid: app.appUUID)
-                } label: {
-                    appIcon(app, size: 56, corner: 13)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(app.appName)
-            }
-        }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 14)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 30, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 30, style: .continuous)
-            .stroke(.white.opacity(0.18), lineWidth: 0.5))
-        .padding(.horizontal, 20)
-    }
-
     // iOS 后台顶部那排 app 图标: 当前卡片高亮, 点图标直接切过去.
     private var iconStrip: some View {
-        HStack(spacing: 18) {
-            ForEach(Array(manager.apps.enumerated()), id: \.element.appUUID) { index, app in
-                Button {
-                    withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-                        manager.focus(index: index)
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 18) {
+                ForEach(Array(manager.apps.enumerated()), id: \.element.appUUID) { index, app in
+                    Button {
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                            manager.focus(index: index)
+                        }
+                    } label: {
+                        appIcon(app, size: 44, corner: 10,
+                                border: .white.opacity(index == manager.selectedIndex ? 0.9 : 0.15))
+                            .opacity(index == manager.selectedIndex ? 1 : 0.75)
                     }
-                } label: {
-                    appIcon(app, size: 44, corner: 10,
-                            border: .white.opacity(index == manager.selectedIndex ? 0.9 : 0.15))
-                        .opacity(index == manager.selectedIndex ? 1 : 0.75)
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(app.appName)
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel(app.appName)
+                if manager.apps.indices.contains(manager.selectedIndex) {
+                    Text(manager.apps[manager.selectedIndex].appName)
+                        .font(.headline)
+                        .lineLimit(1)
+                        .padding(.leading, 4)
+                }
             }
-            if manager.apps.indices.contains(manager.selectedIndex) {
-                Text(manager.apps[manager.selectedIndex].appName)
-                    .font(.headline)
-                    .lineLimit(1)
-                    .padding(.leading, 4)
-            }
+            .padding(.horizontal, 24)
         }
-        .padding(.horizontal, 24)
+        .frame(height: 52)
     }
 
     private func deck(in size: CGSize) -> some View {
-        // The card follows the phone's aspect, so a full-screen guest picture
-        // fills it without black bars above and below.
+        // 原生 iOS 后台: 卡片几乎占满宽度, 相邻卡片在边缘露出一条, 不缩放、不下沉.
         let screen = UIScreen.main.bounds
         let phoneRatio = screen.height / max(screen.width, 1)
-        let width = min(420, size.width * 0.72)
-        let height = min(size.height * 0.84, width * phoneRatio)
-        let stride = max(1, width * 0.48)
+        let width = min(size.width - 12, 460)
+        let height = min(size.height - 4, width * phoneRatio)
+        let stride = width + 10
         let horizontal = dragAxis == .horizontal ? dragOffset.width : 0
         return ZStack {
             ForEach(Array(manager.apps.enumerated()), id: \.element.appUUID) { index, app in
                 let distance = CGFloat(index - manager.selectedIndex)
-                let depth = min(4, abs(distance))
                 let vertical = app.appUUID == draggedUUID && dragAxis == .vertical ? min(0, dragOffset.height) : 0
                 let restartController = manager.restartTarget(for: app.appUUID)
                 AppStackCard(app: app, size: CGSize(width: width, height: height),
@@ -869,8 +802,7 @@ struct MultitaskStackView: View {
                              onAppInfo: { manager.showAppInfo(uuid: app.appUUID) },
                              onSplit: { manager.openInSplitScreen(uuid: app.appUUID) },
                              onPictureInPicture: { manager.togglePictureInPicture(uuid: app.appUUID) })
-                    .scaleEffect(1 - depth * 0.055)
-                    .offset(x: distance * stride + horizontal, y: depth * 14 + vertical)
+                    .offset(x: distance * stride + horizontal, y: vertical)
                     .zIndex(Double(manager.apps.count) - Double(abs(distance)))
                     .accessibilityHidden(index != manager.selectedIndex)
             }
