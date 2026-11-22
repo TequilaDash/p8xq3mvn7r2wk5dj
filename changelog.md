@@ -1,3 +1,8 @@
+20261122-033500 1.1.68 Update：
+1. 修复多任务浮动窗口状态栏偏高（图一 vs 图二对比定位）：updateAppSafeArea 在顶栏隐藏（hideWindowBar）时仍清 44pt 顶部避让，guest 状态栏被推到真实状态栏下方 44pt；全屏 guest 无此 44pt 所以正常。现在避让跟随 navigationBar.hidden 同一个 hideWindowBar 条件，顶栏可见才清 44pt。
+2. 1.1.67 已含：sigaction 查询伪值越界修复（只写 handler 字段）+ 状态栏沉浸迁入 iManager > 实验性。
+3. 底部小块遮挡（图三 iManager 页"我的"上方）与全能签/Ensign 权限分发红项继续待复测；快手崩溃与全能签同源，等 1.1.68 复测。
+
 20261122-031500 1.1.67 Update：
 1. 修复 1.1.66 引入的 Reveil 3.4 闪退（stack buffer overflow）：sigaction 查询伪值早先把 old 结构的 mask/flags 一并清零（24 字节），部分调用方以紧凑缓冲区作 old，越界写 8 字节触发检测线程 __stack_chk_fail（123758.ips：FUN_100147270 尾部）。现在只写 handler @0 一个字段——这正是检测语义判断的字段；mask/flags 保持真实值。
 2. 状态栏沉浸入口按用户要求迁到 iManager > 实验性（二级界面 + 卡片动画示例不变），不再放设置 > 高级。
