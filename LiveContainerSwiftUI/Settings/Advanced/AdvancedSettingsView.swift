@@ -89,6 +89,17 @@ struct AdvancedSettingsView: View {
             }
 
             Section {
+                NavigationLink {
+                    StatusImmersionSettingsView()
+                        .settingsPageMargins()
+                } label: {
+                    Text("zc.settings.immersion".loc)
+                }
+            } footer: {
+                Text("zc.settings.immersion.desc".loc)
+            }
+
+            Section {
                 Toggle("lc.settings.FrameIcon".loc, isOn: $frameShortcutIcons)
             } footer: {
                 Text("zc.settings.advanced.frameIconsFooter".deviceLoc)

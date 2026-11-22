@@ -12,6 +12,9 @@ import SwiftUI
 /// app's settings and search over itself. It is the main window's root, so it
 /// also runs HomeRouter's launch checks and links.
 struct HomeScreenView: View {
+    /// The experimental status bar immersion toggle, in the app group so
+    /// guest windows and multitask read the same choice.
+    @AppStorage("LCStatusBarImmersion", store: LCUtils.appGroupUserDefault) private var statusImmersion = false
     @Environment(HomeScreenModel.self) private var model
     @Environment(HomeRouter.self) private var router
     @Environment(AppLaunchCoordinator.self) private var coordinator
@@ -91,7 +94,7 @@ struct HomeScreenView: View {
         .environment(\.colorScheme, .dark)
         // Edit mode's buttons take the status bar's place, and an open folder
         // blurs it away with the rest of the Home Screen, as on iOS.
-        .homeStatusBarHidden(model.isEditing || model.isFolderShown)
+        .homeStatusBarHidden(statusImmersion || model.isEditing || model.isFolderShown)
         // A screen over the Home Screen, onboarding, or a sheet from edit
         // mode's Edit menu, keeps the setting, as iOS's widget gallery is
         // light or dark as iOS is.
