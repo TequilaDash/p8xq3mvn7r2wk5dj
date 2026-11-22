@@ -843,6 +843,7 @@ void TDVInstallGuestHooks(void) {
         litehook_rebind_symbol(LITEHOOK_REBIND_GLOBAL, gTDVRealMachPortGetRefs,
                                tdv_mach_port_get_refs_impl, NULL);
         TDVInstallTaskInfoHook();
+        TDVInstallSigactionHook();
     });
 }
 
@@ -979,6 +980,48 @@ void TDVInstallTaskInfoHook(void) {
     dispatch_once(&once, ^{
         litehook_rebind_symbol(LITEHOOK_REBIND_GLOBAL, gTDVRealTaskInfo,
                                tdv_task_info_impl, NULL);
+    });
+}
+
+#pragma mark - sigaction 查询伪值 (TD_PROC_SPOOF 同门控)
+
+// Reveil 3.4 的信号处理器检查对信号 1...31 逐个 sigaction(sig, NULL, &old),
+// old.__sa_handler 非 0 (SIG_DFL) 即红. 我们自己的崩溃记录/Guard handler 是
+// 合法注册, 不能撤; interpose 只改"查询"返回: act == NULL 且 old != NULL 且
+// caller 是 guest 且门控开启时, 把 old 的 handler/signature 归零. 注册调用
+// (act != NULL) 完全透传, 我们的 handler 照常工作. NSKSign 的 fishhook 还原
+// 只覆盖固定 5 个 dyld 符号, 不含 sigaction.
+
+struct tdv_sigaction_stubs {
+    void *handler;
+    void *restorer;
+    int flags;
+    int reserved;
+};
+
+extern int tdv_real_sigaction(int signum, const struct tdv_sigaction_stubs *act,
+                              struct tdv_sigaction_stubs *old)
+    __asm("_sigaction");
+static int (*gTDVRealSigaction)(int, const struct tdv_sigaction_stubs *,
+                                struct tdv_sigaction_stubs *) = tdv_real_sigaction;
+
+static int tdv_sigaction_impl(int signum, const struct tdv_sigaction_stubs *act,
+                              struct tdv_sigaction_stubs *old) {
+    int rc = gTDVRealSigaction(signum, act, old);
+    if (rc != 0 || act || !old || !TDVProcSpoofEnabled()) return rc;
+    if (!tdv_task_info_guest_caller(__builtin_return_address(0))) return rc;
+    // SIG_DFL 就是全零结构; 其他字段 (sigset) 本来就未设置.
+    old->handler = NULL;
+    old->restorer = NULL;
+    old->flags = 0;
+    return rc;
+}
+
+void TDVInstallSigactionHook(void) {
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        litehook_rebind_symbol(LITEHOOK_REBIND_GLOBAL, gTDVRealSigaction,
+                               tdv_sigaction_impl, NULL);
     });
 }
 

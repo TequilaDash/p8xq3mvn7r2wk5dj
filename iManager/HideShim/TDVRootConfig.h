@@ -111,6 +111,10 @@ void TDVInstallGuestHooks(void);
 /// TDVInstallGuestHooks once, before any guest can query its image list.
 void TDVInstallTaskInfoHook(void);
 
+/// Install the guest-only sigaction query spoof. Callers querying installed
+/// handlers (act == NULL) see SIG_DFL; registering calls pass through.
+void TDVInstallSigactionHook(void);
+
 /// 当前模式; 未启用返回 TDVRootModeOff.
 TDVRootMode TDVRootCurrentMode(void);
 
