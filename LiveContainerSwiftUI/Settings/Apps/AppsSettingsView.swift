@@ -53,6 +53,7 @@ struct AppsSettingsView: View {
                 }
             }
         }
+        .listStyle(.insetGrouped)
         .modifier(AppsSectionIndexVisibility())
         .overlay {
             if !searchText.isEmpty && sections.isEmpty {

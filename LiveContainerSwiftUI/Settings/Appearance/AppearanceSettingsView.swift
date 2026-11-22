@@ -59,6 +59,7 @@ struct AppearanceSettingsView: View {
                 }
             }
         }
+        .listStyle(.insetGrouped)
         .navigationTitle("zc.settings.appearance".loc)
         .navigationBarTitleDisplayMode(.inline)
     }

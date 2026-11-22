@@ -46,6 +46,7 @@ struct ZeusSettingsView: View {
                 ZeusCertificateActions()
             }
         }
+        .listStyle(.insetGrouped)
         .listSectionSpacing(.compact)
         .navigationTitle("zc.settings.zeus".loc)
         .navigationBarTitleDisplayMode(.inline)

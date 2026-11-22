@@ -31,6 +31,7 @@ struct SettingsRootList: View {
                 List {
                     content
                 }
+                .listStyle(.insetGrouped)
             }
         }
         // At the bottom on iPhone, as in the Settings app, and always at the
@@ -87,6 +88,9 @@ private struct SettingsBottomSearch: ViewModifier {
 /// Puts a page's search field along the bottom on iPhone, with zContainer's
 /// Home button beside it.
 private struct SettingsBottomSearchField: ViewModifier {
+    @AppStorage("TDAssistiveTouchMode", store: LCUtils.appGroupUserDefault)
+    private var assistiveTouchMode = "default"
+
     /// What the Home button does.
     let goHome: () -> Void
 
@@ -103,15 +107,17 @@ private struct SettingsBottomSearchField: ViewModifier {
         if #available(iOS 26.0, *), Self.isUsed {
             content.toolbar {
                 DefaultToolbarItem(kind: .search, placement: .bottomBar)
-                ToolbarSpacer(.fixed, placement: .bottomBar)
-                ToolbarItem(placement: .bottomBar) {
-                    Button(action: goHome) {
-                        HomeButtonGlyph(color: .primary)
-                            .scaleEffect(SettingsDesign.toolbarHomeGlyphScale)
-                            .frame(width: SettingsDesign.toolbarHomeGlyphSize, height: SettingsDesign.toolbarHomeGlyphSize)
+                if assistiveTouchMode != "always" {
+                    ToolbarSpacer(.fixed, placement: .bottomBar)
+                    ToolbarItem(placement: .bottomBar) {
+                        Button(action: goHome) {
+                            HomeButtonGlyph(color: .primary)
+                                .scaleEffect(SettingsDesign.toolbarHomeGlyphScale)
+                                .frame(width: SettingsDesign.toolbarHomeGlyphSize, height: SettingsDesign.toolbarHomeGlyphSize)
+                        }
+                        .accessibilityLabel("zc.home.homeButton".loc)
+                        .accessibilityHint("zc.home.homeButtonHint".loc)
                     }
-                    .accessibilityLabel("zc.home.homeButton".loc)
-                    .accessibilityHint("zc.home.homeButtonHint".loc)
                 }
             }
         } else {

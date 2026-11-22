@@ -36,9 +36,6 @@ struct AppRootView: View {
         }
         .onChange(of: onboarding.isPresented, onboardingChanged)
         .onAppear { TDHostHomeOverlayController.shared.attach() }
-        .onChange(of: home.isCoveredByScreen) { _, covered in
-            TDHostHomeOverlayController.shared.setHostScreenCovered(covered)
-        }
         .onReceive(NotificationCenter.default.publisher(for: .lcHostHomePressed)) { _ in
             if #available(iOS 16.0, *) {
                 MultitaskStackManager.shared.dismiss()
@@ -91,8 +88,8 @@ struct AppRootView: View {
 private struct TDGlobalHomeOverlay: View {
     let action: () -> Void
 
-    @AppStorage("TDAssistiveTouchMode", store: LCUtils.appGroupUserDefault)
-    private var mode = "default"
+    // Refreshed by the controller on local and cross-process setting changes.
+    let mode: String
     @AppStorage("TDAssistiveTouchIdleDim", store: LCUtils.appGroupUserDefault)
     private var dimEnabled = true
     @AppStorage("TDAssistiveTouchIdleAlpha", store: LCUtils.appGroupUserDefault)
@@ -161,6 +158,8 @@ private struct TDGlobalHomeOverlay: View {
                 // the status bar, home indicator, or bottom controls while dragged.
                 .onAppear(perform: scheduleDim)
                 .onChange(of: mode) { _, _ in scheduleDim() }
+                .onChange(of: dimEnabled) { _, _ in scheduleDim() }
+                .onChange(of: dimAlpha) { _, _ in scheduleDim() }
             }
         }
     }
@@ -241,76 +240,103 @@ private struct TDOverlayHitRegion: UIViewRepresentable {
 /// alerts, which a view inside the root hierarchy cannot cover, and it starts
 /// without loading TweakLoader or global user tweaks.
 @MainActor
-private final class TDHostHomeOverlayController {
+final class TDHostHomeOverlayController {
     static let shared = TDHostHomeOverlayController()
 
-    private var window: TDHostHomeOverlayWindow?
-    private var hosting: UIHostingController<TDGlobalHomeOverlay>?
-    private var observer: NSObjectProtocol?
-    private var stackVisibilitySubscription: AnyCancellable?
-    private var stackIsVisible = false
-    private var hostScreenCovered = false
-
-    private var overlayShouldHide: Bool { stackIsVisible || hostScreenCovered }
+    // A host scene can be the Home Screen or a native multitask app window.
+    // Never move a single overlay to an arbitrary first connected scene.
+    private var windows: [String: TDHostHomeOverlayWindow] = [:]
+    private var observers: [NSObjectProtocol] = []
 
     private init() {
-        observer = NotificationCenter.default.addObserver(
-            forName: UIScene.didActivateNotification, object: nil, queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.attach() }
+        let center = NotificationCenter.default
+        for name in [UIScene.didActivateNotification, UIScene.didDisconnectNotification,
+                     UIScene.didEnterBackgroundNotification,
+                     UIWindow.didBecomeVisibleNotification, UserDefaults.didChangeNotification] {
+            observers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] note in
+                // Showing our window emits the same notification. Do not recurse.
+                if note.object is TDHostHomeOverlayWindow { return }
+                MainActor.assumeIsolated { self?.attach() }
+            })
         }
+        CFNotificationCenterAddObserver(
+            CFNotificationCenterGetDarwinNotifyCenter(), nil,
+            { _, _, _, _, _ in
+                Task { @MainActor in
+                    LCUtils.appGroupUserDefault.synchronize()
+                    TDHostHomeOverlayController.shared.attach()
+                }
+            },
+            "com.kdt.livecontainer.assistiveTouchSettingsChanged" as CFString,
+            nil, .deliverImmediately
+        )
     }
 
-    func attach() {
-        observeStackVisibility()
-        guard let scene = UIApplication.shared.connectedScenes
-            .compactMap({ $0 as? UIWindowScene })
-            .first(where: { $0.activationState == .foregroundActive }) else { return }
-        if let window, window.windowScene === scene {
-            window.isHidden = overlayShouldHide
-            return
-        }
-
-        window?.isHidden = true
-        let host = UIHostingController(rootView: TDGlobalHomeOverlay(action: {
-            // Over a guest, minimizing is what the Home press means; on the
-            // host's own screens the observer below closes what is open.
+    private func rootView(mode: String) -> TDGlobalHomeOverlay {
+        TDGlobalHomeOverlay(action: {
             CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),
                                                  CFNotificationName("com.kdt.livecontainer.minimizeAll" as CFString),
                                                  nil, nil, true)
             NotificationCenter.default.post(name: .lcHostHomePressed, object: nil)
-        }))
-        host.view.backgroundColor = .clear
-        let overlay = TDHostHomeOverlayWindow(windowScene: scene)
-        overlay.frame = scene.coordinateSpace.bounds
-        overlay.windowLevel = UIWindow.Level.alert + 2
-        overlay.backgroundColor = .clear
-        overlay.rootViewController = host
-        overlay.isHidden = overlayShouldHide
-        hosting = host
-        window = overlay
-    }
-    private func observeStackVisibility() {
-        guard #available(iOS 16.0, *) else { return }
-        let manager = MultitaskStackManager.shared
-        stackIsVisible = manager.isVisible
-        guard stackVisibilitySubscription == nil else { return }
-        stackVisibilitySubscription = manager.$isVisible.sink { [weak self] visible in
-            Task { @MainActor [weak self] in
-                self?.setStackVisible(visible)
+            // A native app window has its own scene; bring the accepted Home
+            // scene forward as well, rather than only changing a hidden model.
+            if let scene = MainWindow.scene {
+                UIApplication.shared.requestSceneSessionActivation(scene.session, userActivity: nil, options: nil) { error in
+                    NSLog("[TDHome] Home scene activation failed: %@", error.localizedDescription)
+                }
             }
+        }, mode: mode)
+    }
+
+    private func overlayLevel(in scene: UIWindowScene) -> UIWindow.Level {
+        let highest = scene.windows.filter {
+            !($0 is TDHostHomeOverlayWindow) && !$0.isHidden && $0.alpha > 0 && $0.rootViewController != nil
+        }.map { $0.windowLevel.rawValue }.max() ?? UIWindow.Level.normal.rawValue
+        return UIWindow.Level(rawValue: max(UIWindow.Level.alert.rawValue + 2, highest + 1))
+    }
+
+    func attach() {
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        let connected = Set(scenes.map { $0.session.persistentIdentifier })
+        for id in Array(windows.keys) where !connected.contains(id) {
+            windows.removeValue(forKey: id)?.isHidden = true
         }
-    }
-
-    private func setStackVisible(_ visible: Bool) {
-        stackIsVisible = visible
-        window?.isHidden = overlayShouldHide
-    }
-
-    /// Host screens such as Settings already have their own back button; the
-    /// floating control would sit over their rows, so it steps aside.
-    func setHostScreenCovered(_ covered: Bool) {
-        hostScreenCovered = covered
-        window?.isHidden = overlayShouldHide
+        let mode = LCUtils.appGroupUserDefault.string(forKey: "TDAssistiveTouchMode") ?? "default"
+        for scene in scenes where scene.session.role == .windowApplication {
+            let id = scene.session.persistentIdentifier
+            let foreground = scene.activationState == .foregroundActive || scene.activationState == .foregroundInactive
+            guard mode == "always", foreground else {
+                windows[id]?.isHidden = true
+                continue
+            }
+            guard !scene.coordinateSpace.bounds.isEmpty,
+                  scene.windows.contains(where: {
+                      !($0 is TDHostHomeOverlayWindow) && !$0.isHidden &&
+                      $0.windowLevel == .normal && $0.rootViewController != nil
+                  }) else {
+                windows[id]?.isHidden = true
+                continue
+            }
+            if let overlay = windows[id] {
+                if let host = overlay.rootViewController as? UIHostingController<TDGlobalHomeOverlay>,
+                   host.rootView.mode != mode {
+                    host.rootView = rootView(mode: mode)
+                }
+                overlay.frame = scene.coordinateSpace.bounds
+                overlay.windowLevel = overlayLevel(in: scene)
+                overlay.isHidden = false
+                continue
+            }
+            let host = UIHostingController(rootView: rootView(mode: mode))
+            host.view.backgroundColor = .clear
+            let overlay = TDHostHomeOverlayWindow(windowScene: scene)
+            overlay.frame = scene.coordinateSpace.bounds
+            overlay.windowLevel = overlayLevel(in: scene)
+            overlay.backgroundColor = .clear
+            overlay.rootViewController = host
+            // Retain before showing: window-visible callbacks can be synchronous.
+            windows[id] = overlay
+            overlay.isHidden = false
+        }
     }
 }

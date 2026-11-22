@@ -364,6 +364,8 @@ struct MultitaskAppWindow: View {
                 }
             }
         }
+        // Native guest scenes can be the first scene on cold reconnect.
+        .onAppear { TDHostHomeOverlayController.shared.attach() }
         .onReceive(pub) { out in
             if let scene1 = sceneDelegate.window?.windowScene, let scene2 = out.object as? UIWindowScene, scene1 == scene2 {
                 // recorded on every screen, so a later launch knows this window is gone once its session is

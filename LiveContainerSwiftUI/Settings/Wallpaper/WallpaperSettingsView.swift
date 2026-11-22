@@ -42,6 +42,7 @@ struct WallpaperSettingsView: View {
                 }
             }
         }
+        .listStyle(.insetGrouped)
         .navigationTitle("zc.settings.wallpaper".loc)
         .navigationBarTitleDisplayMode(.inline)
         .animation(.default, value: hasPhoto)

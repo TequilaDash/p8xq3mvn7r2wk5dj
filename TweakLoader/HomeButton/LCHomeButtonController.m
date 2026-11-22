@@ -70,6 +70,7 @@ static void LCHomeButtonSettingsDidChange(CFNotificationCenterRef center, void *
                                           CFDictionaryRef userInfo) {
     LCHomeButtonController *controller = (__bridge LCHomeButtonController *)observer;
     dispatch_async(dispatch_get_main_queue(), ^{
+        [NSUserDefaults.lcSharedDefaults synchronize];
         [controller showInActiveScenes];
     });
 }
@@ -186,12 +187,26 @@ static void LCHomeButtonSettingsDidChange(CFNotificationCenterRef center, void *
     return NO;
 }
 
+- (UIWindowLevel)overlayLevelInScene:(UIWindowScene *)scene {
+    if (![LCHomeButtonSetting(@"TDAssistiveTouchMode") isEqualToString:@"always"]) {
+        return UIWindowLevelAlert + 1;
+    }
+    UIWindowLevel level = UIWindowLevelAlert + 2;
+    for (UIWindow *other in scene.windows) {
+        if (other != self.window && !other.hidden && other.alpha > 0 && other.rootViewController) {
+            level = MAX(level, other.windowLevel + 1);
+        }
+    }
+    return level;
+}
+
 - (void)applyGeometry:(CGRect)bounds inScene:(UIWindowScene *)scene resetPlacement:(BOOL)reset {
     LCHomeButtonWindow *window = self.window;
     if (!window || !self.buttonController) return;
     BOOL broken = CGRectGetWidth(window.bounds) < 200 || CGRectGetHeight(window.bounds) < 200;
     if (window.windowScene != scene) window.windowScene = scene;
     window.frame = bounds;
+    window.windowLevel = [self overlayLevelInScene:scene];
     self.buttonController.view.frame = window.bounds;
     [self.buttonController reloadSettings];
     if (reset || broken) [self.buttonController resetPlacementToDefault];
@@ -201,10 +216,11 @@ static void LCHomeButtonSettingsDidChange(CFNotificationCenterRef center, void *
 
 - (void)showInScene:(UIWindowScene *)scene {
     @try {
-        // "Always" is drawn once by the host overlay window, above every guest
-        // and alert. A guest window here was the duplicate button seen in each
-        // app, and it cannot sit above host alerts anyway.
-        if ([LCHomeButtonSetting(@"TDAssistiveTouchMode") isEqualToString:@"always"]) {
+        // Embedded LiveProcess surfaces use the host scene's overlay. Classic
+        // fullscreen guests do not load AppRootView and must own their window.
+        if (NSUserDefaults.isLiveProcess &&
+            [LCHomeButtonSetting(@"TDAssistiveTouchMode") isEqualToString:@"always"]) {
+            [self.buttonController reloadSettings];
             return;
         }
         if (![self appHasWindowInScene:scene]) {
@@ -249,7 +265,7 @@ static void LCHomeButtonSettingsDidChange(CFNotificationCenterRef center, void *
         };
         LCHomeButtonWindow *window = [[LCHomeButtonWindow alloc] initWithFrame:bounds];
         window.windowScene = scene;
-        window.windowLevel = UIWindowLevelAlert + 1;
+        window.windowLevel = [self overlayLevelInScene:scene];
         window.backgroundColor = UIColor.clearColor;
         window.rootViewController = buttonController;
         self.buttonController = buttonController;

@@ -115,6 +115,7 @@ struct AdvancedSettingsView: View {
                 SettingsVersionFooter()
             }
         }
+        .listStyle(.insetGrouped)
         .navigationTitle("zc.settings.advanced".loc)
         .navigationBarTitleDisplayMode(.inline)
     }
