@@ -1,3 +1,8 @@
+20261122-013000 1.1.64 Update：
+1. 修复多任务"应用程序分发配置文件被篡改"红项：Ghidra 实锤 Reveil 用 32 字节 SHA256 哈希当前 embedded.mobileprovision 字节并转 hex，然后对 secureMobileProvisioningProfileHashes 做 Set<String>.contains。之前的出厂空串基线永远不匹配真实 profile。现在改为记录当前 profile 的实际 SHA256（文件存在且非空时），不伪造。
+2. 输入包本身无 embedded.mobileprovision（如 ReveilPatch.ipa）：Reveil 的 pathForResource 返回 nil 时立即返回失败，空串基线不等于"缺文件可信任"。只能对有真实 profile 的签名包修复此红项，不能对缺 profile 的包伪造。
+3. 本轮不宣称全能签/环境检查全绿。Nyxian/Switzach/roothide 的隐藏技术分析继续，但同进程 dlopen 注入与 NSKSign 的内存完整性检查（text caves/prologues/MSHook trampolines/cert/SecKey imports/critical IMPs/injected load commands/dyld 四路交叉）存在根本冲突。
+
 20261122-003000 1.1.63 Update：
 1. 安装补丁 revision 恢复为 8；本地兼容性修复不再擅自提升它。只有相关上游源码更新确有需要时才同步调整。宿主发行版本号与补丁 revision 分开管理。
 2. 修复 1.1.62 创建多任务窗口时的宿主 UIKit 层级异常：Home 与虚拟窗口宿主改为普通 UIKit 容器中的兄弟子控制器，访客视图只挂在其真实父控制器的视图内；不再把 Home 子控制器的视图放到 Home 视图外面。保留 SwiftUI 手势隔离，不新增悬浮 UIWindow。
