@@ -735,7 +735,7 @@ struct MultitaskStackView: View {
                 let cardWidth = min(maxCardWidth, cardHeight * aspect)
                 let vertical = app.appUUID == draggedUUID && dragAxis == .vertical ? min(0, dragOffset.height) : 0
                 let restartController = manager.restartTarget(for: app.appUUID)
-                AppStackCard(app: app, size: CGSize(width: cardWidth, height: cardHeight + 44),
+                AppStackCard(app: app, size: CGSize(width: cardWidth, height: cardHeight + 34),
                              preview: manager.previewSnapshot(for: app.appUUID),
                              onSelect: { manager.selectApp(uuid: app.appUUID) },
                              onClose: { manager.closeApp(uuid: app.appUUID) },
@@ -825,7 +825,7 @@ struct AppStackCard: View {
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, 2)
-            .frame(height: 44)
+            .frame(height: 34)
 
             Group {
                 if let preview {
