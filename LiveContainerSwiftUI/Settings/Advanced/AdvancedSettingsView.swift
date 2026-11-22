@@ -88,16 +88,6 @@ struct AdvancedSettingsView: View {
                 Text("lc.settings.silentOpenWebPageDesc".loc)
             }
 
-            Section {
-                NavigationLink {
-                    StatusImmersionSettingsView()
-                        .settingsPageMargins()
-                } label: {
-                    Text("zc.settings.immersion".loc)
-                }
-            } footer: {
-                Text("zc.settings.immersion.desc".loc)
-            }
 
             Section {
                 Toggle("lc.settings.FrameIcon".loc, isOn: $frameShortcutIcons)

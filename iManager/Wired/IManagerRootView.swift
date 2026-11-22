@@ -77,6 +77,11 @@ struct IManagerRootView: View {
                 } label: {
                     Label("堆叠后台", systemImage: "rectangle.stack")
                 }
+                NavigationLink {
+                    TDStatusImmersionSettingsView()
+                } label: {
+                    Label("状态栏沉浸", systemImage: "rectangle.topthird.inset.filled")
+                }
             } header: {
                 Text("实验性")
             } footer: {

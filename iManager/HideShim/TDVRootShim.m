@@ -988,34 +988,30 @@ void TDVInstallTaskInfoHook(void) {
 // Reveil 3.4 的信号处理器检查对信号 1...31 逐个 sigaction(sig, NULL, &old),
 // old.__sa_handler 非 0 (SIG_DFL) 即红. 我们自己的崩溃记录/Guard handler 是
 // 合法注册, 不能撤; interpose 只改"查询"返回: act == NULL 且 old != NULL 且
-// caller 是 guest 且门控开启时, 把 old 的 handler/signature 归零. 注册调用
+// caller 是 guest 且门控开启时, 把 old 的 handler 归零. 注册调用
 // (act != NULL) 完全透传, 我们的 handler 照常工作. NSKSign 的 fishhook 还原
 // 只覆盖固定 5 个 dyld 符号, 不含 sigaction.
 
+// 只写检测语义判断的字段 handler @0。早先实现把 mask/flags 一并清零，对以
+// 紧凑缓冲区作 old 的调用方越界写 8 字节，触发 Reveil 检测线程
+// __stack_chk_fail（123758.ips：FUN_100147270 尾部 bl __stack_chk_fail）。
 struct tdv_sigaction_stubs {
     void *handler;
-    void *restorer;
-    int flags;
-    int reserved;
 };
 
-extern int tdv_real_sigaction(int signum, const struct tdv_sigaction_stubs *act,
-                              struct tdv_sigaction_stubs *old)
+extern int tdv_real_sigaction(int signum, const void *act, struct tdv_sigaction_stubs *old)
     __asm("_sigaction");
-static int (*gTDVRealSigaction)(int, const struct tdv_sigaction_stubs *,
-                                struct tdv_sigaction_stubs *) = tdv_real_sigaction;
+static int (*gTDVRealSigaction)(int, const void *, struct tdv_sigaction_stubs *) = tdv_real_sigaction;
 
-static int tdv_sigaction_impl(int signum, const struct tdv_sigaction_stubs *act,
-                              struct tdv_sigaction_stubs *old) {
+static int tdv_sigaction_impl(int signum, const void *act, struct tdv_sigaction_stubs *old) {
     int rc = gTDVRealSigaction(signum, act, old);
     if (rc != 0 || act || !old || !TDVProcSpoofEnabled()) return rc;
     if (!tdv_task_info_guest_caller(__builtin_return_address(0))) return rc;
-    // SIG_DFL 就是全零结构; 其他字段 (sigset) 本来就未设置.
+    // SIG_DFL 的判定字段只有 handler；mask/flags 属于调用方的缓冲区，保持真值。
     old->handler = NULL;
-    old->restorer = NULL;
-    old->flags = 0;
     return rc;
 }
+
 
 void TDVInstallSigactionHook(void) {
     static dispatch_once_t once;
