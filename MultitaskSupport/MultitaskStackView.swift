@@ -724,6 +724,71 @@ struct MultitaskStackView: View {
         }
     }
 
+    // 背景：跟随壁纸（模糊后铺满）或跟随应用（毛玻璃压暗），点击空白回前台。
+    @ViewBuilder
+    private var backgroundLayer: some View {
+        if backgroundSource == "wallpaper", let wallpaperImage {
+            Image(uiImage: wallpaperImage)
+                .resizable()
+                .scaledToFill()
+                .blur(radius: backgroundBlur)
+                .overlay(Color.black.opacity(0.18))
+                .ignoresSafeArea()
+                .onTapGesture { manager.dismiss() }
+        } else {
+            Rectangle()
+                .fill(.ultraThinMaterial)
+                .overlay(Color.black.opacity(0.12 + backgroundBlur / 60))
+                .ignoresSafeArea()
+                .onTapGesture { manager.dismiss() }
+        }
+    }
+
+    // 图标渲染抽成函数: 就地写 if let + 链式修饰器会让 Swift 类型检查超时.
+    @ViewBuilder
+    private func appIcon(_ app: DockAppModel, size: CGFloat, corner: CGFloat) -> some View {
+        if let icon = app.appInfo?.iconIsDarkIcon(false) {
+            Image(uiImage: icon)
+                .resizable()
+                .scaledToFill()
+                .frame(width: size, height: size)
+                .clipShape(RoundedRectangle(cornerRadius: corner, style: .continuous))
+        } else {
+            Image(systemName: "app.fill")
+                .resizable()
+                .scaledToFit()
+                .padding(size * 0.16)
+                .frame(width: size, height: size)
+                .clipShape(RoundedRectangle(cornerRadius: corner, style: .continuous))
+        }
+    }
+
+    private func moveSelection(by distance: Int) {
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+            manager.focus(index: manager.selectedIndex + distance)
+        }
+    }
+
+    // 底部 dock：复用 dock 里的 app 列表，点图标切过去。
+    private var dockStrip: some View {
+        HStack(spacing: 18) {
+            ForEach(dockManager.apps) { app in
+                Button {
+                    manager.selectApp(uuid: app.appUUID)
+                } label: {
+                    appIcon(app, size: 54, corner: 13)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(app.appName)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
+        .padding(.horizontal, 18)
+        .padding(.bottom, 10)
+    }
+
     private func deck(in size: CGSize) -> some View {
         // 参考项目的堆叠几何：卡片宽 ≤ 屏宽 72%，高 ≤ 可用高度 70%；
         // 相邻卡片按 0.77 倍卡宽排，整叠右移 12.5% 卡宽让左侧卡片露边，聚焦卡放大 1.018。
