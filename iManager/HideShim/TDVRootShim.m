@@ -200,6 +200,17 @@ static inline bool tdv_guest_backup_hidden(const char *path, void *caller) {
     if (!path || path[0] != '/') return false;
     Dl_info info = {0};
     const char *callerImage = caller && dladdr(caller, &info) ? info.dli_fname : NULL;
+    if (!TDVGuestCallerIsGuestImage(callerImage) && path && strstr(path, ".app/")) {
+        // Same as the mapping: the frame we were called from belongs to
+        // Foundation, not to the guest, so find the guest's own frame.
+        void *guestFrame = TDVGuestCallerFrame();
+        memset(&info, 0, sizeof(info));
+        if (guestFrame && dladdr(guestFrame, &info) != 0) {
+            callerImage = info.dli_fname;
+        } else {
+            callerImage = NULL;
+        }
+    }
     char backup[PATH_MAX];
     return TDVGuestMapBundleFile(path, callerImage, backup, sizeof(backup)) == TDVGuestFileMapHidden;
 }
