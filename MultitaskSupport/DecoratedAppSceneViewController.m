@@ -1885,9 +1885,13 @@ static NSNotificationName const LCWindowTouchedNotification = @"LCWindowTouchedN
 
 /// The controls' clearance belongs to the app container in both presentation
 /// APIs; the scene publisher combines it with the actual display occlusion.
+// Follow the title bar's actual visibility (updateVerticalConstraints'
+// hideWindowBar): clearing 44pt while the bar is hidden pushed the guest's
+// status bar 44pt below the real one in floating multitask windows.
 - (void)updateAppSafeArea {
     BOOL bottomWindowBar = [NSUserDefaults.lcSharedDefaults boolForKey:@"LCMultitaskBottomWindowBar"];
-    CGFloat top = !self.isMaximized && !bottomWindowBar && !LCWindowSnapManager.usesPhoneLayout ? LCWindowTopStripHeight : 0;
+    BOOL hideWindowBar = self.isMaximized || !bottomWindowBar || LCWindowSnapManager.usesPhoneLayout;
+    CGFloat top = hideWindowBar ? 0 : LCWindowTopStripHeight;
     self.appSceneVC.additionalSafeAreaInsets = UIEdgeInsetsMake(top, 0, 0, 0);
 }
 
