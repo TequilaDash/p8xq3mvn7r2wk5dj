@@ -1,3 +1,8 @@
+20261122-023000 1.1.66 Update：
+1. 新版 Reveil 3.4 的"已设置信号处理器"红项修复：Ghidra 实锤 FUN_100147270 case 0x1f 对信号 1…31 逐个 sigaction(sig, NULL, &old)，old.handler 非 SIG_DFL 即红。zContainer 自己的崩溃记录/Guard 处理器是合法注册，不能撤。现在 interpose sigaction：只有查询调用（act == NULL）且 caller 是 guest 且 TD_PROC_SPOOF 开启时把返回的 old 改为 SIG_DFL 形；注册调用完全透传，我们的处理器照常工作。litehook 全局重绑，NSKSign 的 fishhook 还原路径覆盖不到它。
+2. 新增实验性功能"状态栏沉浸"：设置 > 高级 > 状态栏沉浸。开关存 app group（LCStatusBarImmersion），主屏幕把它并入现有状态栏隐藏条件；二级页面带卡片动画示例（状态栏滑出滑回的 spring 动画）。
+3. 权限/分发配置文件两环境红项：新版 Reveil 读的是进程 entitlements/provisioning profile 而非 bundle 文件（图三图四两环境一致红），非同一根因；旧版多任务多红一项的差异需要真机复测后再定位。本轮先交付信号处理器修复，红项变化等复测。
+
 20261122-020000 1.1.65 Update：
 1. NSKSign 四路 dyld 交叉检查修复：Ghidra 实锤 _AISCollectStableApiVersusTask 同时对比 stable API (_dyld_image_count 等) 和 task_info(TASK_DYLD_INFO) 返回的 dyld_all_image_infos.infoArray。隐藏 LC/TweakLoader 镜像只改了 stable API，内核 task_info 仍返回全部条目，两个列表数量/内容不一致 -> 必命中。现在 interpose task_info，当 flavor=TASK_DYLD_INFO 且 caller 是 guest 且 TD_PROC_SPOOF 开启时，把 all_image_info_addr 指向删除隐藏条目后的副本，两视图一致。不指向空结构（1.1.45 教训），其余字段逐字节保留。
 2. task_info interpose 用 litehook_rebind_symbol（GOT 重绑），不用 fishhook：NSKSign 的 _AISGuard_RestoreFishhookedDyldSymbols 会主动还原被 fishhook 改写的 dyld 符号 GOT 槽，但只针对固定 5 个 dyld 符号；task_info 不在其中。副本按 Dyld.m 同一 remap 状态填充（TDVDyldInfoVisibleIndices），与 stable API 保持一致。
