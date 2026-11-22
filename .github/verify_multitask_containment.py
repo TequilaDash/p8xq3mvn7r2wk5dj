@@ -137,7 +137,7 @@ final class SmokeApp: UIResponder, UIApplicationDelegate {
     try:
         if booted_here:
             run('xcrun', 'simctl', 'boot', udid)
-        run('xcrun', 'simctl', 'bootstatus', udid, '-b', timeout=180)
+        run('xcrun', 'simctl', 'bootstatus', udid, '-b', timeout=600)
         with tempfile.TemporaryDirectory(prefix='zcontainer-containment-') as directory:
             work = Path(directory)
             source = work / 'Smoke.swift'
