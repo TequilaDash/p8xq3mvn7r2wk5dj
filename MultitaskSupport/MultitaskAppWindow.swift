@@ -160,7 +160,7 @@ struct AppSceneViewSwiftUI: UIViewControllerRepresentable {
             func describe(_ view: UIView, in container: UIView, depth: Int) {
                 let frame = view.convert(view.bounds, to: container)
                 if frame.maxY >= container.bounds.maxY - band {
-                    lines.append("\(String(repeating: "  ", count: depth))\(type(of: view)) frame=\(NSStringFromCGRect(frame)) alpha=\(view.alpha) hidden=\(view.isHidden)")
+                    lines.append("\(String(repeating: "  ", count: depth))\(type(of: view)) frame=\(String(describing: frame)) alpha=\(view.alpha) hidden=\(view.isHidden)")
                 }
                 for sub in view.subviews {
                     describe(sub, in: container, depth: depth + 1)
