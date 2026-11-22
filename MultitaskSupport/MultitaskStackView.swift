@@ -678,17 +678,19 @@ struct MultitaskStackView: View {
     @ObservedObject private var dockManager = MultitaskDockManager.shared
     @AppStorage("TDAppStackClearAllEnabled", store: LCUtils.appGroupUserDefault)
     private var showClearAll = true
+    // 背景来源：wallpaper = 跟随壁纸（iOS 后台那样），app = 跟随当前应用
+    @AppStorage("TDAppStackBackground", store: LCUtils.appGroupUserDefault)
+    private var backgroundSource = "app"
+    @AppStorage("TDAppStackBlur", store: LCUtils.appGroupUserDefault)
+    private var backgroundBlur = 12.0
+    @State private var wallpaperImage: UIImage?
     @State private var dragOffset: CGSize = .zero
     @State private var dragAxis: Axis?
     @State private var draggedUUID: String?
 
     var body: some View {
         ZStack {
-            Rectangle()
-                .fill(.ultraThinMaterial)
-                .overlay(Color.black.opacity(0.28))
-                .ignoresSafeArea()
-                .onTapGesture { manager.dismiss() }
+            backgroundLayer
             VStack(spacing: 0) {
                 if manager.apps.isEmpty {
                     Spacer()
@@ -714,6 +716,11 @@ struct MultitaskStackView: View {
             }
             .foregroundStyle(.white)
             .padding(.top, 10)
+        }
+        .task {
+            guard wallpaperImage == nil else { return }
+            let isPad = UIDevice.current.userInterfaceIdiom == .pad
+            wallpaperImage = WallpaperFile.load() ?? WallpaperFile.loadDefault(isPad: isPad)
         }
     }
 

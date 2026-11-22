@@ -128,6 +128,10 @@ struct TDAppStackSettingsView: View {
     private var enabled = true
     @AppStorage("TDAppStackClearAllEnabled", store: LCUtils.appGroupUserDefault)
     private var clearAllEnabled = true
+    @AppStorage("TDAppStackBackground", store: LCUtils.appGroupUserDefault)
+    private var backgroundSource = "app"
+    @AppStorage("TDAppStackBlur", store: LCUtils.appGroupUserDefault)
+    private var backgroundBlur = 12.0
 
     var body: some View {
         List {
@@ -140,6 +144,26 @@ struct TDAppStackSettingsView: View {
                     .onChange(of: clearAllEnabled) { _, _ in
                         LCUtils.appGroupUserDefault.synchronize()
                     }
+            }
+            Section {
+                Picker("背景", selection: $backgroundSource) {
+                    Text("跟随壁纸").tag("wallpaper")
+                    Text("跟随应用").tag("app")
+                }
+                .pickerStyle(.segmented)
+                .onChange(of: backgroundSource) { _, _ in
+                    LCUtils.appGroupUserDefault.synchronize()
+                }
+                HStack {
+                    Text("背景模糊")
+                    Slider(value: $backgroundBlur, in: 0...30, step: 1)
+                        .onChange(of: backgroundBlur) { _, _ in
+                            LCUtils.appGroupUserDefault.synchronize()
+                        }
+                    Text("\(Int(backgroundBlur))")
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                }
             }
             Section {
                 TDStackDemoView()
