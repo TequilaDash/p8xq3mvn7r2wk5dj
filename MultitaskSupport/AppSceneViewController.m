@@ -416,7 +416,11 @@ extern const char *TDHostHomeDocumentsPath(void);
         }
         [self updateSettingsWithBlock:^(UIMutableApplicationSceneSettings *settings) {
             settings.deviceOrientation = UIDevice.currentDevice.orientation;
-            settings.interfaceOrientation = self.view.window.windowScene.interfaceOrientation;
+            // 堆叠卡片的「旋转方向」: 有覆盖就用访客自己的方向, 否则跟随宿主.
+            UIInterfaceOrientation orientation = self.orientationOverride != UIInterfaceOrientationUnknown
+                ? self.orientationOverride
+                : self.view.window.windowScene.interfaceOrientation;
+            settings.interfaceOrientation = orientation;
             CGRect frame = self.view.frame;
             if(!self.usesHostingControllerAPI) {
                 frame.size.width /= self.scaleRatio;

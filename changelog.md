@@ -1,3 +1,6 @@
+20261122-203000 1.1.73 Update：
+1. 真正修掉「旋转方向」点了不转：之前宿主只往共享 defaults 写请求，靠访客进程里的 mask hook 生效，但嵌入的场景没有被要求按新方向重排，所以画面不动。现在宿主直接设置访客场景的 interfaceOrientation 并触发重排（默认=跟随宿主、横屏=LandscapeRight、竖屏=Portrait、反转=PortraitUpsideDown），访客进程内的 mask hook 仍然保留，两边一致。
+
 20261122-190000 1.1.72 Update：
 1. 修复 iManager「发现注入的共享库」误报：你截图里列的是 Reveil 访客自己包里的 library_stub.framework（/Documents/Applications/com.reveil.app.app/Frameworks/...），访客包里的库不是注入到宿主的东西；现在注入检测跳过访客 Applications 目录和容器自身框架。
 2. 旋转方向没反应的根因已在 1.1.71 修掉：宿主写请求时用窗口 dataUUID，访客拿它跟 bundle id 比，永远对不上。1.1.71 起写 bundle id，四个方向才真正生效；如果你是在 1.1.69 上测的，装 1.1.72 即可（含全部修复）。

@@ -601,14 +601,23 @@ public class MultitaskStackManager: NSObject, ObservableObject {
     /// the key, so this never changes the app's permanent rotation lock.
     @objc public func rotateApp(uuid: String, direction: Int) {
         DispatchQueue.main.async {
-            guard self.appControllers().first(where: { $0.dataUUID == uuid }) != nil else {
+            guard let controller = self.appControllers().first(where: { $0.dataUUID == uuid }) else {
                 self.message = "窗口已经关闭"
                 self.refreshApps()
                 return
             }
-            // The guest reads the request from the shared app group defaults
-            // (NSUserDefaults.lcSharedDefaults), so write it to that same
-            // suite; a plain standard-defaults write never reaches the guest.
+            // 宿主这一侧必须自己把场景方向改掉: 访客进程里的 mask hook 只决定
+            // "允许哪些方向", 嵌入的场景还得被告知按新方向重排, 否则画面上什么
+            // 都不会转（这正是之前点了没反应的原因）。
+            let orientation: UIInterfaceOrientation
+            switch direction {
+            case 1: orientation = .landscapeRight
+            case 3: orientation = .portraitUpsideDown
+            case 2: orientation = .portrait
+            default: orientation = .unknown
+            }
+            controller.orientationOverride = orientation
+            controller.updateFrameWithSettingsBlock(nil)
             // The guest checks the request's uuid against NSUserDefaults.lcGuestAppId,
             // which is the BUNDLE ID (LCBootstrap). The stack card's uuid is the
             // data-UUID, so writing it here made every request be ignored.
