@@ -922,9 +922,9 @@ struct AppStackCard: View {
         ZStack(alignment: .topLeading) {
             if let preview {
                 ScaledSnapshotView(snapshot: preview)
-                    .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
+                    .clipShape(RoundedRectangle(cornerRadius: 40, style: .continuous))
             } else {
-                RoundedRectangle(cornerRadius: 26, style: .continuous)
+                RoundedRectangle(cornerRadius: 40, style: .continuous)
                     .fill(Color(white: 0.14))
                 Text(app.appName).font(.title3.weight(.semibold))
                     .multilineTextAlignment(.center).lineLimit(2)
@@ -949,9 +949,9 @@ struct AppStackCard: View {
             .padding(18)
         }
         .frame(width: size.width, height: size.height)
-        .background(RoundedRectangle(cornerRadius: 26, style: .continuous).fill(Color(white: 0.14)))
-        .overlay(RoundedRectangle(cornerRadius: 26, style: .continuous).stroke(.white.opacity(0.25), lineWidth: 1))
-        .contentShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
+        .background(RoundedRectangle(cornerRadius: 40, style: .continuous).fill(Color(white: 0.14)))
+        .overlay(RoundedRectangle(cornerRadius: 40, style: .continuous).stroke(.white.opacity(0.25), lineWidth: 1))
+        .contentShape(RoundedRectangle(cornerRadius: 40, style: .continuous))
         .onTapGesture(perform: onSelect)
         .contextMenu {
             if let bundleId = app.appInfo?.bundleIdentifier(), !bundleId.isEmpty {
