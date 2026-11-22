@@ -793,7 +793,9 @@ struct MultitaskStackView: View {
         // 参考项目的堆叠几何：卡片宽 ≤ 屏宽 72%，高 ≤ 可用高度 70%；
         // 相邻卡片按 0.77 倍卡宽排，整叠右移 12.5% 卡宽让左侧卡片露边，聚焦卡放大 1.018。
         let previewHeight = max(1, min(size.height - 40, size.height * 0.70))
-        let maxCardWidth = max(200, size.width * 0.72)
+        // 参考源码的 cap 是 0.72W，但实际宽度由 MIN(maxCardWidth, previewHeight*aspect) 决定；
+        // 用户在实机截图上量到的结果是 0.56W，这里直接按量到的比例收窄。
+        let maxCardWidth = max(200, size.width * 0.56)
         let stride = max(1, maxCardWidth * 0.77)
         let deckShift = manager.apps.count > 1 ? maxCardWidth * 0.125 : 0
         let horizontal = dragAxis == .horizontal ? dragOffset.width : 0
