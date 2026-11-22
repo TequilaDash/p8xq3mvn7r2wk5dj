@@ -617,7 +617,7 @@ public class MultitaskStackManager: NSObject, ObservableObject {
             default: orientation = .unknown
             }
             controller.orientationOverride = orientation
-            controller.updateFrameWithSettingsBlock(nil)
+            controller.updateFrame(settingsBlock: nil)
             // The guest checks the request's uuid against NSUserDefaults.lcGuestAppId,
             // which is the BUNDLE ID (LCBootstrap). The stack card's uuid is the
             // data-UUID, so writing it here made every request be ignored.
