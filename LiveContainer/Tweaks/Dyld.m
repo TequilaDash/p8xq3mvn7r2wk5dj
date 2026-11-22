@@ -29,6 +29,9 @@ typedef struct {
     uint32_t        version;
 } dyld_build_version_t;
 
+#include <mach/task_info.h>
+#include <mach-o/dyld_images.h>
+
 uint32_t lcImageIndex = 0;
 uint32_t appMainImageIndex = 0;
 void* appExecutableHandle = 0;
@@ -315,6 +318,29 @@ static void tdv_hide_image_if_needed(const struct mach_header *header) {
             return;
         }
     }
+}
+
+// 本镜像对外的"该真实镜像是否被隐藏"判定。task_info interpose 用它决定
+// dyld_all_image_infos.infoArray 里是否保留该条目。隐藏规则与
+// _dyld_image_count 重绑一致，保证 stable API 与 task_info 返回一致。
+bool TDVDyldInfoShouldHideImage(uint32_t realIndex) {
+    if (!gTDVRemapEnabled) return false;
+    const struct mach_header *h = orig_dyld_get_image_header(realIndex);
+    if (!h) return true;
+    const char *name = orig_dyld_get_image_name(realIndex);
+    if (tdv_header_is_hidden(h) || tdv_is_hidden_path(name)) return true;
+    return false;
+}
+
+// 当前可见镜像的真实索引表（与 gTDVRemap 一致），供 task_info 副本按同一顺序填充。
+uint32_t TDVDyldInfoVisibleIndices(uint32_t *out, uint32_t cap) {
+    if (!out || cap == 0) return 0;
+    if (!gTDVRemapEnabled) return 0;
+    int active = atomic_load(&gTDVRemapActive);
+    uint32_t n = gTDVRemapCount[active];
+    if (n > cap) n = cap;
+    memcpy(out, gTDVRemap[active], n * sizeof(uint32_t));
+    return n;
 }
 
 void* hook_dlsym(void * __handle, const char * __symbol) {

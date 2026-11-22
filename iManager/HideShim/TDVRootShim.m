@@ -21,6 +21,7 @@
 
 #import "TDVRootConfig.h"
 #import <Foundation/Foundation.h>
+#import <mach-o/dyld_images.h>
 #include "../../litehook/src/litehook.h"
 
 #include <dirent.h>
@@ -841,6 +842,7 @@ void TDVInstallGuestHooks(void) {
         // The captured pointer and source image are never rebound to our hook.
         litehook_rebind_symbol(LITEHOOK_REBIND_GLOBAL, gTDVRealMachPortGetRefs,
                                tdv_mach_port_get_refs_impl, NULL);
+        TDVInstallTaskInfoHook();
     });
 }
 
@@ -866,6 +868,118 @@ static kern_return_t tdv_bootstrap_look_up2_impl(mach_port_t bp, tdv_name_t serv
         }
     }
     return tdv_real_bootstrap_look_up(bp, service_name, sp, flags, version);
+}
+
+#pragma mark - task_info(TASK_DYLD_INFO) 镜像副本 (TD_PROC_SPOOF 同门控)
+
+// NSKSign 的 _AISCollectStableApiVersusTask 同时对比 stable API
+// (_dyld_image_count/_dyld_get_image_name) 和 task_info(TASK_DYLD_INFO) 返回的
+// dyld_all_image_infos.infoArray。我们隐藏 LC/TweakLoader 镜像时只改了 stable API，
+// 内核 task_info 仍返回全部条目，导致两个列表数量/内容不一致 -> 必命中。
+// 修法：interpose task_info，当 flavor=TASK_DYLD_INFO 且 caller 是 guest 且
+// TD_PROC_SPOOF 开启时，把返回的 all_image_info_addr 指向一个删除隐藏条目后的
+// dyld_all_image_infos 副本。副本按可见索引顺序填充（与 stable API 一致），
+// 其余字段从真实结构逐字节拷贝。不指向空结构（1.1.45 教训）。
+
+extern kern_return_t tdv_real_task_info(task_name_t target_task,
+                                        task_flavor_t flavor,
+                                        task_info_t task_info_out,
+                                        mach_msg_type_number_t *task_info_outCnt)
+    __asm("_task_info");
+static kern_return_t (*gTDVRealTaskInfo)(task_name_t, task_flavor_t,
+                                         task_info_t, mach_msg_type_number_t *)
+    = tdv_real_task_info;
+
+bool TDVDyldInfoShouldHideImage(uint32_t realIndex);
+uint32_t TDVDyldInfoVisibleIndices(uint32_t *out, uint32_t cap);
+
+static pthread_mutex_t gTDVDyldInfoCopyLock = PTHREAD_MUTEX_INITIALIZER;
+static struct dyld_all_image_infos *gTDVDyldInfoCopy = NULL;
+static uint32_t gTDVDyldInfoCopySource = 0;
+
+static bool tdv_task_info_guest_caller(void *caller) {
+    Dl_info info = {0};
+    return caller && dladdr(caller, &info) && TDVGuestCallerIsGuestImage(info.dli_fname);
+}
+
+static vm_address_t tdv_build_dyld_info_copy(const struct dyld_all_image_infos *real) {
+    if (!real) return 0;
+    const uint32_t realCount = real->infoArrayCount;
+    const struct dyld_image_info *realArray = real->infoArray;
+    if (!realArray || realCount == 0) return 0;
+
+    uint32_t visible[TDV_DYLD_INFO_MAX_VISIBLE];
+    uint32_t visibleCount = TDVDyldInfoVisibleIndices(visible, TDV_DYLD_INFO_MAX_VISIBLE);
+    if (visibleCount == 0) return 0;
+
+    struct dyld_image_info *copyArray = malloc((size_t)visibleCount * sizeof(struct dyld_image_info));
+    if (!copyArray) return 0;
+    uint32_t copyCount = 0;
+    for (uint32_t i = 0; i < visibleCount && i < realCount; ++i) {
+        uint32_t realIdx = visible[i];
+        if (realIdx >= realCount || TDVDyldInfoShouldHideImage(realIdx)) continue;
+        copyArray[copyCount] = realArray[realIdx];
+        ++copyCount;
+    }
+    if (copyCount == 0) {
+        free(copyArray);
+        return 0;
+    }
+
+    size_t total = sizeof(struct dyld_all_image_infos) + (size_t)copyCount * sizeof(struct dyld_image_info);
+    struct dyld_all_image_infos *copy = malloc(total);
+    if (!copy) {
+        free(copyArray);
+        return 0;
+    }
+    memcpy(copy, real, sizeof(struct dyld_all_image_infos));
+    copy->infoArrayCount = copyCount;
+    copy->infoArray = (struct dyld_image_info *)((uintptr_t)copy + sizeof(struct dyld_all_image_infos));
+    memcpy((void *)copy->infoArray, copyArray, (size_t)copyCount * sizeof(struct dyld_image_info));
+    free(copyArray);
+
+    pthread_mutex_lock(&gTDVDyldInfoCopyLock);
+    if (gTDVDyldInfoCopy) free(gTDVDyldInfoCopy);
+    gTDVDyldInfoCopy = copy;
+    gTDVDyldInfoCopySource = realCount;
+    pthread_mutex_unlock(&gTDVDyldInfoCopyLock);
+    return (vm_address_t)(uintptr_t)copy;
+}
+
+static kern_return_t tdv_task_info_impl(task_name_t target_task, task_flavor_t flavor,
+                                        task_info_t task_info_out,
+                                        mach_msg_type_number_t *task_info_outCnt) {
+    kern_return_t kr = gTDVRealTaskInfo(target_task, flavor, task_info_out, task_info_outCnt);
+    if (kr != KERN_SUCCESS || flavor != TASK_DYLD_INFO || !task_info_out || !task_info_outCnt) return kr;
+    if (*task_info_outCnt < TASK_DYLD_INFO_COUNT) return kr;
+    if (!TDVProcSpoofEnabled()) return kr;
+    if (!tdv_task_info_guest_caller(__builtin_return_address(0))) return kr;
+
+    task_dyld_info_data_t *out = (task_dyld_info_data_t *)task_info_out;
+    const struct dyld_all_image_infos *real = (const struct dyld_all_image_infos *)(uintptr_t)out->all_image_info_addr;
+    if (!real) return kr;
+
+    pthread_mutex_lock(&gTDVDyldInfoCopyLock);
+    bool reusable = gTDVDyldInfoCopy && gTDVDyldInfoCopySource == real->infoArrayCount;
+    vm_address_t copyAddr = reusable ? (vm_address_t)(uintptr_t)gTDVDyldInfoCopy : 0;
+    pthread_mutex_unlock(&gTDVDyldInfoCopyLock);
+    if (copyAddr) {
+        out->all_image_info_addr = copyAddr;
+        return kr;
+    }
+
+    copyAddr = tdv_build_dyld_info_copy(real);
+    if (!copyAddr) return kr;
+    out->all_image_info_addr = copyAddr;
+    return kr;
+}
+
+void TDVInstallTaskInfoHook(void) {
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        litehook_rebind_symbol(LITEHOOK_REBIND_GLOBAL, gTDVRealTaskInfo,
+                               tdv_task_info_impl, NULL);
+    });
 }
 
 

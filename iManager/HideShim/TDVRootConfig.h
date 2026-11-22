@@ -104,6 +104,13 @@ int TDVProcFilterPids(pid_t *pids, int count);
 // 门控仍在每次调用时读取, 不改宿主/其它端口的原生结果.
 void TDVInstallGuestHooks(void);
 
+/// task_info(TASK_DYLD_INFO) 副本可见索引上限（对齐 stable API remap 的容量）。
+#define TDV_DYLD_INFO_MAX_VISIBLE 4096
+
+/// Install the guest-only task_info(TASK_DYLD_INFO) interpose. Called by
+/// TDVInstallGuestHooks once, before any guest can query its image list.
+void TDVInstallTaskInfoHook(void);
+
 /// 当前模式; 未启用返回 TDVRootModeOff.
 TDVRootMode TDVRootCurrentMode(void);
 
