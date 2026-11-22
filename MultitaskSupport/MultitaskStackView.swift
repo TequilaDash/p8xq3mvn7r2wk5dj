@@ -822,9 +822,11 @@ struct MultitaskStackView: View {
         // 参考原生/iOS 后台的手感（自己按几何重写）：
         // 卡片宽不超过屏宽 72%，高度不超过可用高度 70%；相邻卡片按 0.77 倍卡宽排列，
         // 整叠再右移 12.5% 卡宽，使左边的卡片露出边缘；聚焦卡片放大 1.018。
-        let previewHeight = max(1, min(size.height - 24, size.height * 0.86))
-        let maxCardWidth = max(260, min(size.width * 0.58, 420))
-        let stride = max(1, maxCardWidth + 14)
+        // 原生 iOS 的后台：卡片接近满宽（左右各 10pt），高度吃满可视区；
+        // 相邻卡片只在横滑时露出一条，不缩放堆叠。
+        let previewHeight = max(1, size.height)
+        let maxCardWidth = max(240, size.width - 20)
+        let stride = max(1, maxCardWidth + 12)
         let deckShift: CGFloat = 0
         let horizontal = dragAxis == .horizontal ? dragOffset.width : 0
         return ZStack {
@@ -846,7 +848,7 @@ struct MultitaskStackView: View {
                              onAppInfo: { manager.showAppInfo(uuid: app.appUUID) },
                              onSplit: { manager.openInSplitScreen(uuid: app.appUUID) },
                              onPictureInPicture: { manager.togglePictureInPicture(uuid: app.appUUID) })
-                    .scaleEffect(distance == 0 ? 1 : 0.94)
+                    .scaleEffect(1)
                     .overlay(alignment: .top) {
                         if distance == 0 { cardChrome(app) }
                     }
