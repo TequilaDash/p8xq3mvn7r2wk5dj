@@ -612,7 +612,7 @@ public class MultitaskStackManager: NSObject, ObservableObject {
             // The guest checks the request's uuid against NSUserDefaults.lcGuestAppId,
             // which is the BUNDLE ID (LCBootstrap). The stack card's uuid is the
             // data-UUID, so writing it here made every request be ignored.
-            let guestId = self.appModel(for: uuid)?.appInfo?.bundleIdentifier() ?? uuid
+            let guestId = self.appModel(for: uuid)?.appInfo.bundleIdentifier() ?? uuid
             // The guest reads the request from the shared app group defaults
             // (NSUserDefaults.lcSharedDefaults), so write it to that same suite.
             let defaults = LCUtils.appGroupUserDefault
