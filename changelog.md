@@ -1,3 +1,10 @@
+20261123-190000 1.1.92 Update：
+1. 加低音量路径诊断（只在涉及 .app/、mobileprovision、DynamicLibraries、/Tweaks/ 时记录，上限 60+40 行）：
+   `[vroot] mask <真实> -> <对外>` 与 `[vroot] virtual->real <伪> -> <真实>`，直接落在设备日志，
+   iManager → ConsoleLog 就能看到检测器到底读了哪个文件、被翻译成了什么。
+2. 目的：Reveil 剩下两红（分发配置文件被篡改 / 权限配置文件被篡改）需要「它实际读到的文件与摘要」作为证据，
+   下一次真机 run 就能闭合，不用再猜。
+
 20261123-170000 1.1.91 Update：
 1. 访客镜像伪路径补上 `<Name>.app` 这一级：真机正常安装一定是 /private/var/containers/Bundle/Application/<UUID>/<Name>.app/<Exec>，
    此前对外是 /private/var/containers/Bundle/Application/<UUID>/<Exec>（Reveil 截图里就是这个形状），检测器一眼判非法。

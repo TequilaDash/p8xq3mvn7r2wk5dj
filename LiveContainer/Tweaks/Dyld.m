@@ -467,6 +467,13 @@ const char *tdv_masked_image_name(const char *realName) {
     NSString *guestId = NSUserDefaults.lcGuestAppId;
     if (guestId.length == 0) return realName;
     snprintf(masked, sizeof(masked), "%s/%s.app%s", gTDVMaskedPrefix, guestId.UTF8String, afterFolder);
+    {
+        static int noted = 0;
+        if (noted < 40 && (strstr(realName, ".app/") || strstr(realName, "Reveil"))) {
+            noted += 1;
+            NSLog(@"[vroot] mask %s -> %s", realName, masked);
+        }
+    }
     return masked;
 }
 

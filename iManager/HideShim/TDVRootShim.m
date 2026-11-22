@@ -149,6 +149,19 @@ static void tdv_log_tweaks_hit(const char *fn, const char *path) {
 
 // 把 path 映射到 vroot 或访客包内原件; 命中返回映射指针, 否则返回原指针.
 // TDVGuestFileMapHidden 以 NULL + ENOENT 通知 path hook.
+// 低音量路径诊断：只记与签名/应用包相关的路径，最多 60 行，方便下一次真机 run
+// 直接从 iManager → ConsoleLog 看出「检测器到底读的是哪个文件」。
+static void tdv_note_path(const char *tag, const char *a, const char *b) {
+    static int noted = 0;
+    if (noted >= 60) return;
+    if (!a) return;
+    if (!strstr(a, ".app/") && !strstr(a, "mobileprovision") &&
+        !strstr(a, "DynamicLibraries") && !strstr(a, "/Tweaks/")) return;
+    noted += 1;
+    if (b) NSLog(@"[vroot] %s %s -> %s", tag, a, b);
+    else NSLog(@"[vroot] %s %s", tag, a);
+}
+
 static inline const char *tdv_mapped_for_caller(const char *path, char *buf, size_t bufSize,
                                                 void *caller, bool *originalArtifact) {
     *originalArtifact = false;
@@ -162,6 +175,7 @@ static inline const char *tdv_mapped_for_caller(const char *path, char *buf, siz
         if (tdv_real_path_from_virtual) {
             const char *real = tdv_real_path_from_virtual(path);
             if (real && real != path) {
+                tdv_note_path("virtual->real", path, real);
                 path = real;
             }
         }
