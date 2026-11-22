@@ -781,19 +781,23 @@ struct MultitaskStackView: View {
     }
 
     private func deck(in size: CGSize) -> some View {
-        // 原生 iOS 后台: 卡片几乎占满宽度, 相邻卡片在边缘露出一条, 不缩放、不下沉.
-        let screen = UIScreen.main.bounds
-        let phoneRatio = screen.height / max(screen.width, 1)
-        let width = min(size.width - 48, 460)
-        let height = min(size.height - 4, width * phoneRatio)
-        let stride = width + 10
+        // 参考原生/iOS 后台的手感（自己按几何重写）：
+        // 卡片宽不超过屏宽 72%，高度不超过可用高度 70%；相邻卡片按 0.77 倍卡宽排列，
+        // 整叠再右移 12.5% 卡宽，使左边的卡片露出边缘；聚焦卡片放大 1.018。
+        let previewHeight = max(1, min(size.height - 60, size.height * 0.70))
+        let maxCardWidth = size.width * 0.72
+        let aspect: CGFloat = 390.0 / 844.0
+        let cardHeight = min(previewHeight, maxCardWidth / aspect)
+        let cardWidth = min(maxCardWidth, cardHeight * aspect)
+        let stride = max(1, maxCardWidth * 0.77)
+        let deckShift = manager.apps.count > 1 ? maxCardWidth * 0.125 : 0
         let horizontal = dragAxis == .horizontal ? dragOffset.width : 0
         return ZStack {
             ForEach(Array(manager.apps.enumerated()), id: \.element.appUUID) { index, app in
                 let distance = CGFloat(index - manager.selectedIndex)
                 let vertical = app.appUUID == draggedUUID && dragAxis == .vertical ? min(0, dragOffset.height) : 0
                 let restartController = manager.restartTarget(for: app.appUUID)
-                AppStackCard(app: app, size: CGSize(width: width, height: height),
+                AppStackCard(app: app, size: CGSize(width: cardWidth, height: cardHeight),
                              preview: manager.previewSnapshot(for: app.appUUID),
                              onSelect: { manager.selectApp(uuid: app.appUUID) },
                              onClose: { manager.closeApp(uuid: app.appUUID) },
@@ -802,7 +806,8 @@ struct MultitaskStackView: View {
                              onAppInfo: { manager.showAppInfo(uuid: app.appUUID) },
                              onSplit: { manager.openInSplitScreen(uuid: app.appUUID) },
                              onPictureInPicture: { manager.togglePictureInPicture(uuid: app.appUUID) })
-                    .offset(x: distance * stride + horizontal, y: vertical)
+                    .scaleEffect(distance == 0 ? 1.018 : 1)
+                    .offset(x: distance * stride + deckShift + horizontal, y: vertical)
                     .zIndex(Double(manager.apps.count) - Double(abs(distance)))
                     .accessibilityHidden(index != manager.selectedIndex)
             }
