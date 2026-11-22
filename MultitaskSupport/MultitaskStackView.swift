@@ -675,6 +675,7 @@ extension Notification.Name {
 @available(iOS 16.0, *)
 struct MultitaskStackView: View {
     @EnvironmentObject var manager: MultitaskStackManager
+    @ObservedObject private var dockManager = MultitaskDockManager.shared
     @AppStorage("TDAppStackClearAllEnabled", store: LCUtils.appGroupUserDefault)
     private var showClearAll = true
     @State private var dragOffset: CGSize = .zero
@@ -694,137 +695,35 @@ struct MultitaskStackView: View {
                     Image(systemName: "rectangle.stack").font(.system(size: 46, weight: .light))
                     Spacer()
                 } else {
-                    selectedHeader
                     GeometryReader { geometry in deck(in: geometry.size) }
-                    footer
+                    if showClearAll {
+                        Button {
+                            manager.closeAll()
+                        } label: {
+                            Image(systemName: "trash")
+                                .font(.system(size: 19, weight: .semibold))
+                                .frame(width: 54, height: 54)
+                                .background(.ultraThinMaterial, in: Circle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("全部清除")
+                        .padding(.bottom, 6)
+                    }
+                    if !dockManager.apps.isEmpty { dockStrip }
                 }
             }
             .foregroundStyle(.white)
-            .padding(.top, 8)
-        }
-    }
-
-    // 左上角：当前 App 的图标 + 名称（对齐参考图的三段式）。
-    private var selectedHeader: some View {
-        HStack(spacing: 16) {
-            if manager.apps.indices.contains(manager.selectedIndex) {
-                let app = manager.apps[manager.selectedIndex]
-                appIcon(app, size: 62, corner: 15)
-                Text(app.appName)
-                    .font(.system(size: 25, weight: .semibold))
-                    .lineLimit(1)
-            }
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, 28)
-        .frame(height: 92)
-        .contentShape(Rectangle())
-        .onTapGesture {
-            if manager.apps.indices.contains(manager.selectedIndex) {
-                manager.selectApp(uuid: manager.apps[manager.selectedIndex].appUUID)
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var footer: some View {
-        HStack {
-            Spacer()
-            if showClearAll {
-                Button {
-                    manager.closeAll()
-                } label: {
-                    Image(systemName: "trash")
-                        .font(.system(size: 21, weight: .semibold))
-                        .frame(width: 64, height: 64)
-                        .background(.ultraThinMaterial, in: Circle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("全部清除")
-            }
-            Spacer()
-        }
-        .frame(height: 92)
-    }
-
-    // 当前卡片顶部那条胶囊：App 名 + 关闭 + 设置，位置跟参考图一致。
-    @ViewBuilder
-    private func cardChrome(_ app: DockAppModel) -> some View {
-        HStack(spacing: 10) {
-            Text(app.appName)
-                .font(.system(size: 15, weight: .semibold))
-                .lineLimit(1)
-            Spacer(minLength: 0)
-            Button {
-                manager.closeApp(uuid: app.appUUID)
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 12, weight: .bold))
-                    .frame(width: 26, height: 26)
-                    .background(.ultraThinMaterial, in: Circle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("关闭窗口")
-            Button {
-                manager.showAppInfo(uuid: app.appUUID)
-            } label: {
-                Image(systemName: "gearshape.fill")
-                    .font(.system(size: 12, weight: .bold))
-                    .frame(width: 26, height: 26)
-                    .background(.ultraThinMaterial, in: Circle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("应用设置")
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 9)
-        .background(.ultraThinMaterial, in: Capsule())
-        .padding(.horizontal, 12)
-        .padding(.top, 10)
-    }
-
-    private func moveSelection(by distance: Int) {
-        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-            manager.focus(index: manager.selectedIndex + distance)
-        }
-    }
-
-    // 图标渲染抽成函数: 就地写 if let + 链式修饰器会让 Swift 类型检查超时(CI 报过).
-    @ViewBuilder
-    private func appIcon(_ app: DockAppModel, size: CGFloat, corner: CGFloat, border: Color? = nil) -> some View {
-        if let icon = app.appInfo?.iconIsDarkIcon(false) {
-            Image(uiImage: icon)
-                .resizable()
-                .scaledToFill()
-                .frame(width: size, height: size)
-                .clipShape(RoundedRectangle(cornerRadius: corner, style: .continuous))
-                .overlay {
-                    if let border {
-                        RoundedRectangle(cornerRadius: corner, style: .continuous).stroke(border, lineWidth: 2)
-                    }
-                }
-        } else {
-            Image(systemName: "app.fill")
-                .resizable()
-                .scaledToFit()
-                .padding(size * 0.16)
-                .frame(width: size, height: size)
-                .clipShape(RoundedRectangle(cornerRadius: corner, style: .continuous))
-                .overlay {
-                    if let border {
-                        RoundedRectangle(cornerRadius: corner, style: .continuous).stroke(border, lineWidth: 2)
-                    }
-                }
+            .padding(.top, 10)
         }
     }
 
     private func deck(in size: CGSize) -> some View {
-        // 原生 iOS 后台：卡片接近满宽（左右各 10pt），高度吃满可视区；
-        // 相邻卡片按「卡宽 + 12」排，只在横滑时露出一条，不缩放、不下沉。
-        let previewHeight = max(1, size.height)
-        let maxCardWidth = max(240, size.width - 20)
-        let stride = max(1, maxCardWidth + 12)
-        let deckShift: CGFloat = 0
+        // 参考项目的堆叠几何：卡片宽 ≤ 屏宽 72%，高 ≤ 可用高度 70%；
+        // 相邻卡片按 0.77 倍卡宽排，整叠右移 12.5% 卡宽让左侧卡片露边，聚焦卡放大 1.018。
+        let previewHeight = max(1, min(size.height - 40, size.height * 0.70))
+        let maxCardWidth = max(200, size.width * 0.72)
+        let stride = max(1, maxCardWidth * 0.77)
+        let deckShift = manager.apps.count > 1 ? maxCardWidth * 0.125 : 0
         let horizontal = dragAxis == .horizontal ? dragOffset.width : 0
         return ZStack {
             ForEach(Array(manager.apps.enumerated()), id: \.element.appUUID) { index, app in
@@ -836,7 +735,7 @@ struct MultitaskStackView: View {
                 let cardWidth = min(maxCardWidth, cardHeight * aspect)
                 let vertical = app.appUUID == draggedUUID && dragAxis == .vertical ? min(0, dragOffset.height) : 0
                 let restartController = manager.restartTarget(for: app.appUUID)
-                AppStackCard(app: app, size: CGSize(width: cardWidth, height: cardHeight),
+                AppStackCard(app: app, size: CGSize(width: cardWidth, height: cardHeight + 44),
                              preview: manager.previewSnapshot(for: app.appUUID),
                              onSelect: { manager.selectApp(uuid: app.appUUID) },
                              onClose: { manager.closeApp(uuid: app.appUUID) },
@@ -845,10 +744,7 @@ struct MultitaskStackView: View {
                              onAppInfo: { manager.showAppInfo(uuid: app.appUUID) },
                              onSplit: { manager.openInSplitScreen(uuid: app.appUUID) },
                              onPictureInPicture: { manager.togglePictureInPicture(uuid: app.appUUID) })
-                    .scaleEffect(1)
-                    .overlay(alignment: .top) {
-                        if distance == 0 { cardChrome(app) }
-                    }
+                    .scaleEffect(distance == 0 ? 1.018 : 1)
                     .offset(x: distance * stride + deckShift + horizontal, y: vertical)
                     .zIndex(Double(manager.apps.count) - Double(abs(distance)))
                     .accessibilityHidden(index != manager.selectedIndex)
@@ -910,19 +806,9 @@ struct AppStackCard: View {
     @State private var icon: UIImage?
 
     var body: some View {
-        ZStack(alignment: .topLeading) {
-            if let preview {
-                ScaledSnapshotView(snapshot: preview)
-                    .clipShape(RoundedRectangle(cornerRadius: 40, style: .continuous))
-            } else {
-                RoundedRectangle(cornerRadius: 40, style: .continuous)
-                    .fill(Color(white: 0.14))
-                Text(app.appName).font(.title3.weight(.semibold))
-                    .multilineTextAlignment(.center).lineLimit(2)
-                    .padding(24)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
-            HStack(spacing: 10) {
+        VStack(spacing: 0) {
+            // 卡片自带的头部（参考项目 card bounds 比画面高 34~44pt）：图标 + 名字。
+            HStack(spacing: 8) {
                 Group {
                     if let icon {
                         Image(uiImage: icon).resizable().scaledToFit()
@@ -931,18 +817,35 @@ struct AppStackCard: View {
                             .foregroundStyle(.white.opacity(0.65))
                     }
                 }
-                .frame(width: 40, height: 40)
-                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                Text(app.appName).font(.headline).lineLimit(1)
-                    .padding(.horizontal, 10).padding(.vertical, 6)
-                    .background(.black.opacity(0.55), in: Capsule())
+                .frame(width: 34, height: 34)
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                Text(app.appName)
+                    .font(.system(size: 17, weight: .semibold))
+                    .lineLimit(1)
+                Spacer(minLength: 0)
             }
-            .padding(18)
+            .padding(.horizontal, 2)
+            .frame(height: 44)
+
+            Group {
+                if let preview {
+                    ScaledSnapshotView(snapshot: preview)
+                        .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
+                } else {
+                    RoundedRectangle(cornerRadius: 28, style: .continuous)
+                        .fill(Color(white: 0.14))
+                    Text(app.appName).font(.title3.weight(.semibold))
+                        .multilineTextAlignment(.center).lineLimit(2)
+                        .padding(24)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(width: size.width, height: size.height)
-        .background(RoundedRectangle(cornerRadius: 40, style: .continuous).fill(Color(white: 0.14)))
-        .overlay(RoundedRectangle(cornerRadius: 40, style: .continuous).stroke(.white.opacity(0.25), lineWidth: 1))
-        .contentShape(RoundedRectangle(cornerRadius: 40, style: .continuous))
+        .background(RoundedRectangle(cornerRadius: 28, style: .continuous).fill(Color.white))
+        .overlay(RoundedRectangle(cornerRadius: 28, style: .continuous).stroke(.white.opacity(0.25), lineWidth: 1))
+        .contentShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
         .onTapGesture(perform: onSelect)
         .contextMenu {
             if let bundleId = app.appInfo?.bundleIdentifier(), !bundleId.isEmpty {
