@@ -168,7 +168,7 @@ static bool lC_refresh_guest_executable_header(void) {
                                                false,
                                                PROT_READ | PROT_WRITE | VM_PROT_COPY);
     if (result != KERN_SUCCESS) {
-        NSLog(@"[LC] failed to make guest executable header writable");
+        TDConsoleLog(@"[LC] failed to make guest executable header writable");
         return false;
     }
     lC_clean_guest_executable_header(header);
@@ -534,11 +534,11 @@ static void tdv_rebind_private_dyld_apis(void) {
     for (size_t i = 0; i < sizeof(table) / sizeof(table[0]); i++) {
         void *sym = orig_dlsym(RTLD_DEFAULT, table[i].name);
         if (!sym) {
-            NSLog(@"[hideLC] private dyld api %s not found", table[i].name);
+            TDConsoleLog(@"[hideLC] private dyld api %s not found", table[i].name);
             continue;
         }
         litehook_rebind_symbol(LITEHOOK_REBIND_GLOBAL, sym, table[i].replacement, NULL);
-        NSLog(@"[hideLC] private dyld api %s bound", table[i].name);
+        TDConsoleLog(@"[hideLC] private dyld api %s bound", table[i].name);
     }
 }
 
@@ -920,7 +920,7 @@ static bool tdv_guest_image_path_matches(const char *guestPath, const char *imag
 }
 
 static void tdv_log_image_map_failure(NSString *fileName, NSString *reason) {
-    NSLog(@"[TDImageMap] %@ failed: %@", fileName, reason);
+    TDConsoleLog(@"[TDImageMap] %@ failed: %@", fileName, reason);
     TDConsoleLog(@"[TDImageMap] %@ failed: %@", fileName, reason);
 }
 
@@ -1081,7 +1081,7 @@ void *dlopen_nolock(const char *path, int mode) {
                 trylockPtr = vtableLibSystemHelpers + trylockOffset;
                 saveCachedSymbol(tryLockPtrName, libdyldHeader, (uintptr_t)trylockPtr - (uintptr_t)libdyldHeader);
             } else {
-                NSLog(@"dyld has changed: trylockOffset not found in vtable");
+                TDConsoleLog(@"dyld has changed: trylockOffset not found in vtable");
                 shouldPatchTrylock = false;
             }
         }
@@ -1291,7 +1291,7 @@ kern_return_t catch_mach_exception_raise_state( mach_port_t exception_port, exce
         arm_thread_state64_set_pc_presigned_fptr(*new, arm_thread_state64_get_lr_fptr(*old) ?: (void *)arm_thread_state64_get_lr(*old));
         return KERN_SUCCESS;
     }
-    NSLog(@"[DyldLVBypass] Unknown breakpoint at pc: %p", (void*)pc);
+    TDConsoleLog(@"[DyldLVBypass] Unknown breakpoint at pc: %p", (void*)pc);
     return KERN_FAILURE;
 }
 

@@ -142,7 +142,7 @@ static void tdv_log_tweaks_hit(const char *fn, const char *path) {
     static _Atomic int hits = 0;
     int n = hits++;
     if (n < 5) {
-        NSLog(@"[TDVRoot] 隐藏 Tweaks 目录命中 (%s): %s", fn, path);
+        TDConsoleLog(@"[TDVRoot] 隐藏 Tweaks 目录命中 (%s): %s", fn, path);
     }
 }
 

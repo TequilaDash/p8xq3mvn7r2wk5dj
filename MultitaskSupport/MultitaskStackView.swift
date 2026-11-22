@@ -798,15 +798,14 @@ struct MultitaskStackView: View {
         // The inner GeometryReader already excludes the trash/Dock. Do not apply
         // 0.70 to that reduced height again. Reserve the reference's 60pt gutter,
         // and fit the complete scaled card (including its header) inside the deck.
+        // LCOrbitTaskSwitcher.m:552 原式：previewHeight = MIN(屏幕高*0.70, 可用高-60)；
+        // 卡片宽由 aspect 驱动，maxCardWidth 只是上限（:553 竖屏 width*0.72）。
+        // 不再用截图里的像素常量——那是我上一版走歪的地方。
         let maxDeckScale: CGFloat = 1.018
-        let previewHeight = max(1, min(viewportHeight * 0.70,
+        let screenHeight = UIScreen.main.bounds.height
+        let previewHeight = max(1, min(screenHeight * 0.70,
                                       (size.height - 60) / maxDeckScale - 34))
-        // Original screenshots 5/6: a 593px straight preview edge on 1179px width.
-        // Prefer the supplied original to the handoff's conflicting 0.56 estimate.
-        // Divide by focused scale so the measured target is the visible width.
-        // No 200pt floor: it would exceed the target ratio in narrow windows.
-        let visibleWidthRatio: CGFloat = 593.0 / 1179.0
-        let maxCardWidth = max(1, size.width) * visibleWidthRatio / maxDeckScale
+        let maxCardWidth = max(1, size.width * 0.72)
         let stride = max(1, maxCardWidth * 0.77)
         let deckShift = manager.apps.count > 1 ? maxCardWidth * 0.125 : 0
         let horizontal = dragAxis == .horizontal ? dragOffset.width : 0

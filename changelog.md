@@ -1,3 +1,7 @@
+20261123-230000 1.1.94 Update：
+1. 卡片尺寸回到参考项目的原式，不再用截图像素常量：`previewHeight = MIN(屏幕高×0.70, (deck 高−60)/1.018−34)`、`maxCardWidth = 屏宽×0.72`、最终宽由 `MIN(maxCardWidth, previewHeight×aspect)` 决定；stride 0.77、右移 0.125、34pt 头部、1.018 保持。
+2. Dyld.m 与 TDVRootShim.m 里剩下的 NSLog 全部改走 TDConsoleLog：`[vroot]`、`[hideLC]`、`[TDImageMap]`、`[LC]`、`[DyldLVBypass]` 这些行现在都写进 ConsoleLog 文件，iManager → ConsoleLog 能直接导出。
+
 20261123-210000 1.1.93 Update：
 1. 修首页图标要手动滑一下才出现：`@Published` 的 apps 只在数据变化时发一次，视图挂载前那次会被错过，之后一直是空数据列表。
    现在 Home 视图 `.onAppear` 与场景重新激活（UIScene.didActivateNotification）时都主动 `refreshAppsFromSource()` 重新同步并重排。
