@@ -247,6 +247,23 @@ public class MultitaskStackManager: NSObject, ObservableObject {
         return nil
     }
 
+    private func currentAppUUID() -> String? {
+        // iOS 的后台里当前 app 一定在最右边; 靠 key window 找出正在显示的那个访客窗口.
+        let keyWindow = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .filter { $0.activationState == .foregroundActive }
+            .flatMap(\.windows)
+            .first(where: { $0.isKeyWindow && $0 !== hostingWindow })
+        guard let keyWindow else { return nil }
+        for controller in appControllers() {
+            if let view = controller.viewIfLoaded, view.window === keyWindow { return controller.dataUUID }
+            if let decorated = decoratedController(for: controller)?.viewIfLoaded, decorated.window === keyWindow {
+                return controller.dataUUID
+            }
+        }
+        return nil
+    }
+
     private func refreshApps() {
         let controllers = appControllers()
         let byUUID = Dictionary(uniqueKeysWithValues: controllers.compactMap { controller -> (String, AppSceneViewController)? in
@@ -305,6 +322,14 @@ public class MultitaskStackManager: NSObject, ObservableObject {
             return DockAppModel(appName: name, appUUID: uuid, appInfo: info, view: view)
         }
         focus(index: selectedUUID.flatMap { uuid in apps.firstIndex(where: { $0.appUUID == uuid }) } ?? selectedIndex)
+        // 当前 app 排到最右边: iOS 的后台就是这个顺序, 打开后台默认聚焦它而不是最右那张.
+        if let current = currentAppUUID(),
+           let currentIndex = apps.firstIndex(where: { $0.appUUID == current }),
+           currentIndex != apps.count - 1 {
+            let card = apps.remove(at: currentIndex)
+            apps.append(card)
+            focus(index: apps.count - 1)
+        }
     }
 
     func previewSnapshot(for uuid: String) -> UIView? {
@@ -633,6 +658,29 @@ public class MultitaskStackManager: NSObject, ObservableObject {
             self.dismiss()
         }
     }
+
+    /// 设置页「全部清除」用: 不依赖后台界面是否打开, 直接在宿主窗口树里找到
+    /// 正在运行的访客窗口并终止它们.
+    @objc public class func terminateAllGuestWindows() {
+        DispatchQueue.main.async {
+            var targets: [AppSceneViewController] = []
+            var seen = Set<ObjectIdentifier>()
+            func visit(_ vc: UIViewController) {
+                if let app = vc as? AppSceneViewController, app.pid > 0 {
+                    if seen.insert(ObjectIdentifier(app)).inserted { targets.append(app) }
+                }
+                for child in vc.children { visit(child) }
+            }
+            for scene in UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }) {
+                for window in scene.windows {
+                    if let root = window.rootViewController { visit(root) }
+                }
+            }
+            for app in targets {
+                app.terminate(completion: { _ in })
+            }
+        }
+    }
 }
 
 extension Notification.Name {
@@ -650,6 +698,8 @@ extension Notification.Name {
 @available(iOS 16.0, *)
 struct MultitaskStackView: View {
     @EnvironmentObject var manager: MultitaskStackManager
+    @AppStorage("TDAppStackClearAllEnabled", store: LCUtils.appGroupUserDefault)
+    private var showClearAll = true
     @State private var dragOffset: CGSize = .zero
     @State private var dragAxis: Axis?
     @State private var draggedUUID: String?
@@ -675,6 +725,7 @@ struct MultitaskStackView: View {
                     Text("没有正在运行的多任务窗口").font(.callout)
                     Spacer()
                 } else {
+                    iconStrip
                     GeometryReader { geometry in deck(in: geometry.size) }
                     HStack(spacing: 28) {
                         Button { moveSelection(by: -1) } label: { Image(systemName: "chevron.left") }
@@ -688,18 +739,20 @@ struct MultitaskStackView: View {
                     Text("左右滑动切换 · 点按打开 · 长按更多 · 上滑关闭")
                         .font(.footnote)
                         .foregroundStyle(.white.opacity(0.7))
-                    Button {
-                        manager.closeAll()
-                    } label: {
-                        Label("全部清除", systemImage: "trash")
-                            .font(.subheadline.weight(.semibold))
-                            .padding(.horizontal, 22)
-                            .padding(.vertical, 11)
-                            .background(.ultraThinMaterial, in: Capsule())
-                            .overlay(Capsule().stroke(.white.opacity(0.2), lineWidth: 1))
+                    if showClearAll {
+                        Button {
+                            manager.closeAll()
+                        } label: {
+                            Label("全部清除", systemImage: "trash")
+                                .font(.subheadline.weight(.semibold))
+                                .padding(.horizontal, 22)
+                                .padding(.vertical, 11)
+                                .background(.ultraThinMaterial, in: Capsule())
+                                .overlay(Capsule().stroke(.white.opacity(0.2), lineWidth: 1))
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("关闭全部多任务窗口")
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("关闭全部多任务窗口")
                 }
                 if let message = manager.message { Text(message).font(.footnote).accessibilityAddTraits(.updatesFrequently) }
             }
@@ -712,6 +765,36 @@ struct MultitaskStackView: View {
         withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
             manager.focus(index: manager.selectedIndex + distance)
         }
+    }
+
+    // iOS 后台顶部那排 app 图标: 当前卡片高亮, 点图标直接切过去.
+    private var iconStrip: some View {
+        HStack(spacing: 18) {
+            ForEach(Array(manager.apps.enumerated()), id: \.element.appUUID) { index, app in
+                Button {
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                        manager.focus(index: index)
+                    }
+                } label: {
+                    Group {
+                        if let icon = app.appInfo?.icon(isDarkIcon: false) {
+                            Image(uiImage: icon).resizable().scaledToFill()
+                        } else {
+                            Image(systemName: "app.fill").resizable().scaledToFit().padding(6)
+                        }
+                    }
+                    .frame(width: 44, height: 44)
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(.white.opacity(index == manager.selectedIndex ? 0.9 : 0.15),
+                                lineWidth: index == manager.selectedIndex ? 2 : 1))
+                    .opacity(index == manager.selectedIndex ? 1 : 0.75)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(app.appName)
+            }
+        }
+        .padding(.horizontal, 24)
     }
 
     private func deck(in size: CGSize) -> some View {
