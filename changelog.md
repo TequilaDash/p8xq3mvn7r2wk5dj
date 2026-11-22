@@ -1,3 +1,7 @@
+20261122-190000 1.1.72 Update：
+1. 修复 iManager「发现注入的共享库」误报：你截图里列的是 Reveil 访客自己包里的 library_stub.framework（/Documents/Applications/com.reveil.app.app/Frameworks/...），访客包里的库不是注入到宿主的东西；现在注入检测跳过访客 Applications 目录和容器自身框架。
+2. 旋转方向没反应的根因已在 1.1.71 修掉：宿主写请求时用窗口 dataUUID，访客拿它跟 bundle id 比，永远对不上。1.1.71 起写 bundle id，四个方向才真正生效；如果你是在 1.1.69 上测的，装 1.1.72 即可（含全部修复）。
+
 20261122-172000 1.1.71 Update：
 1. 修复堆叠卡片「旋转方向」菜单点了没反应：宿主写的是窗口的数据 UUID，而访客拿这个 uuid 跟自己的 bundle id 比对（LCBootstrap 里 lcGuestAppId 是 bundle id），两边永远对不上，请求被直接忽略。现在写访客的 bundle id。
 2. iManager 的「动态库注入检测」不再把容器自己的 LiveContainerShared / TweakLoader / CydiaSubstrate 报成注入库——它们本来就是 zContainer 自身的一部分，不是被注入到访客里的东西。

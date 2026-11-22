@@ -167,9 +167,15 @@ enum SecurityScanner {
         for i in 0..<count {
             if let name = _dyld_get_image_name(i) {
                 let path = String(cString: name).lowercased()
-                // 容器自己的框架不是注入库: LiveContainerShared / TweakLoader /
-                // CydiaSubstrate 都是 zContainer 自身的一部分,  Always present
-                // in the host, so they must not be reported as injected guests.
+                // 访客 app 自己包里的库不是注入到宿主的东西: Reveil 等访客被
+                // 签名/安装时带的 library_stub.framework 属于访客自己的包,
+                // 出现在宿主的 dyld 视图里是容器化的正常结果, 不能报红.
+                if path.contains("/documents/applications/") ||
+                   path.contains("/livecontainer/applications/") {
+                    continue
+                }
+                // 容器自己的框架也不是注入库: LiveContainerShared / TweakLoader /
+                // CydiaSubstrate 都是 zContainer 自身的一部分.
                 if path.contains("livecontainershared") || path.contains("tweakloader") ||
                    path.contains("cydiasubstrate") || path.contains("livecontainer.app") {
                     continue
