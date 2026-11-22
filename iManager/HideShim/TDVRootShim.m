@@ -157,6 +157,19 @@ static inline const char *tdv_mapped_for_caller(const char *path, char *buf, siz
     }
     Dl_info info = {0};
     const char *callerImage = caller && dladdr(caller, &info) ? info.dli_fname : NULL;
+    if (!TDVGuestCallerIsGuestImage(callerImage) && path && strstr(path, ".app/")) {
+        // Foundation calls libc on the app's behalf, so the frame we were
+        // called from is never the app's. Find the app's frame for the paths
+        // that can be an app's own file; every other path keeps the direct
+        // caller, so the common case stays cheap.
+        void *guestFrame = TDVGuestCallerFrame();
+        memset(&info, 0, sizeof(info));
+        if (guestFrame && dladdr(guestFrame, &info) != 0) {
+            callerImage = info.dli_fname;
+        } else {
+            callerImage = NULL;
+        }
+    }
     TDVGuestFileMapResult guestMap = TDVGuestMapBundleFile(path, callerImage, buf, bufSize);
     if (guestMap == TDVGuestFileMapTo) {
         *originalArtifact = true;

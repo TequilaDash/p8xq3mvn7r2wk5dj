@@ -12,6 +12,10 @@
 // Foundation's libc calls identify Foundation as their caller, not the guest.
 // These hooks and the mapper both compile into LiveContainerShared; resolve
 // exact original-artifact mappings directly, without a late TweakLoader lookup.
+// The frame that asked for the file is found by walking the stack: inside an
+// Objective-C method hook the return address is libobjc's objc_msgSend, never
+// the guest's code, so a plain __builtin_return_address would always report
+// our own shim and the guest would keep reading the patched file.
 static NSString *lc_original_read_path(NSString *path, void *caller) {
     if (!path.isAbsolutePath || !caller) return path;
     Dl_info info = {0};
@@ -36,27 +40,27 @@ static NSData *(*lc_orig_data_read_path_options)(id, SEL, NSString *, NSDataRead
 static NSData *(*lc_orig_data_read_url_options)(id, SEL, NSURL *, NSDataReadingOptions, NSError *__autoreleasing *);
 
 static NSFileHandle *lc_handle_read_path(id cls, SEL cmd, NSString *path) {
-    return lc_orig_handle_read_path(cls, cmd, lc_original_read_path(path, __builtin_return_address(0)));
+    return lc_orig_handle_read_path(cls, cmd, lc_original_read_path(path, TDVGuestCallerFrame()));
 }
 
 static NSFileHandle *lc_handle_read_url(id cls, SEL cmd, NSURL *url, NSError *__autoreleasing *error) {
-    return lc_orig_handle_read_url(cls, cmd, lc_original_read_url(url, __builtin_return_address(0)), error);
+    return lc_orig_handle_read_url(cls, cmd, lc_original_read_url(url, TDVGuestCallerFrame()), error);
 }
 
 static NSData *lc_data_read_path(id cls, SEL cmd, NSString *path) {
-    return lc_orig_data_read_path(cls, cmd, lc_original_read_path(path, __builtin_return_address(0)));
+    return lc_orig_data_read_path(cls, cmd, lc_original_read_path(path, TDVGuestCallerFrame()));
 }
 
 static NSData *lc_data_read_url(id cls, SEL cmd, NSURL *url) {
-    return lc_orig_data_read_url(cls, cmd, lc_original_read_url(url, __builtin_return_address(0)));
+    return lc_orig_data_read_url(cls, cmd, lc_original_read_url(url, TDVGuestCallerFrame()));
 }
 
 static NSData *lc_data_read_path_options(id cls, SEL cmd, NSString *path, NSDataReadingOptions options, NSError *__autoreleasing *error) {
-    return lc_orig_data_read_path_options(cls, cmd, lc_original_read_path(path, __builtin_return_address(0)), options, error);
+    return lc_orig_data_read_path_options(cls, cmd, lc_original_read_path(path, TDVGuestCallerFrame()), options, error);
 }
 
 static NSData *lc_data_read_url_options(id cls, SEL cmd, NSURL *url, NSDataReadingOptions options, NSError *__autoreleasing *error) {
-    return lc_orig_data_read_url_options(cls, cmd, lc_original_read_url(url, __builtin_return_address(0)), options, error);
+    return lc_orig_data_read_url_options(cls, cmd, lc_original_read_url(url, TDVGuestCallerFrame()), options, error);
 }
 
 @interface NSData (LCOriginalReadInitializers)
@@ -68,16 +72,16 @@ static NSData *lc_data_read_url_options(id cls, SEL cmd, NSURL *url, NSDataReadi
 
 @implementation NSData (LCOriginalReadInitializers)
 - (instancetype)lc_original_initWithContentsOfFile:(NSString *)path {
-    return [self lc_original_initWithContentsOfFile:lc_original_read_path(path, __builtin_return_address(0))];
+    return [self lc_original_initWithContentsOfFile:lc_original_read_path(path, TDVGuestCallerFrame())];
 }
 - (instancetype)lc_original_initWithContentsOfURL:(NSURL *)url {
-    return [self lc_original_initWithContentsOfURL:lc_original_read_url(url, __builtin_return_address(0))];
+    return [self lc_original_initWithContentsOfURL:lc_original_read_url(url, TDVGuestCallerFrame())];
 }
 - (instancetype)lc_original_initWithContentsOfFile:(NSString *)path options:(NSDataReadingOptions)options error:(NSError *__autoreleasing *)error {
-    return [self lc_original_initWithContentsOfFile:lc_original_read_path(path, __builtin_return_address(0)) options:options error:error];
+    return [self lc_original_initWithContentsOfFile:lc_original_read_path(path, TDVGuestCallerFrame()) options:options error:error];
 }
 - (instancetype)lc_original_initWithContentsOfURL:(NSURL *)url options:(NSDataReadingOptions)options error:(NSError *__autoreleasing *)error {
-    return [self lc_original_initWithContentsOfURL:lc_original_read_url(url, __builtin_return_address(0)) options:options error:error];
+    return [self lc_original_initWithContentsOfURL:lc_original_read_url(url, TDVGuestCallerFrame()) options:options error:error];
 }
 @end
 

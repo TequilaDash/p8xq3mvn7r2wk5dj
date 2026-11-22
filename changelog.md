@@ -1,3 +1,8 @@
+20261122-163000 1.1.70 Update：
+1. 修复全能签(NSKSign)红项「检测到主程序依赖库与发行基线不一致」：这条检查(AISGuard_DepsMismatch)把磁盘上访客主可执行的依赖库列表与发行基线比对。容器把访客主可执行改成 dylib 并注入 TweakLoader 的加载命令，文件因此多出两条依赖，判定必然不一致。现在访客读自己主可执行时拿到的是"发行版"那份文件：安装时留存的原件优先；早期安装没有原件的，用当前文件去掉我们加的那两条命令生成一份。
+2. 修复「访客读自己原件」的映射一直没生效：Foundation 的 NSFileHandle/NSData 与 libobjc 的 objc_msgSend 夹在 app 与文件之间，hook 里的返回地址永远不是访客的，映射因此从未命中，访客一直读到打过补丁的文件。现在沿调用栈找访客自己的帧（open/openat 这类 libc 调用同样适用）。
+3. 1.1.69 已含：全能签四路 dyld 交叉校验修复（dyld 私有 API 一并重绑）+ litehook 重绑顺序修复 + 堆叠卡片「旋转方向」菜单编译修复。
+
 20261122-154629 1.1.69 Update：
 1. 全能签(NSKSign)四路 dyld 交叉校验修复：Ghidra 实锤 NSKSign 枚举镜像用的是 dyld 私有 API（__dyld_image_count / __dyld_get_image_name / __dyld_get_image_header / __dyld_get_image_vmaddr_slide），我们此前只重绑了公开的 _dyld_*，检测器看到的 stable API 仍是全量、而 task_info 副本是裁剪后的，两个列表必然不一致 -> 判红。现在私有变体一并重绑到同一过滤实现，两个通道给出同一个可见集合。
 2. 修正 litehook 重绑顺序：litehook 定位"重绑实现所在镜像"用的是公开 dyld API，原顺序先重绑公开 API 再建裁剪表，之后它只能看到裁剪后的表，本镜像被隐藏时后续重绑静默失效（index0 契约错位 -> 访客入口取错）。现在所有枚举重绑提前到裁剪表建立之前，并在裁剪未生效时不再做 index0 的访客头还原（避免改到宿主二进制头）。

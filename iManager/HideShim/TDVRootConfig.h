@@ -82,6 +82,14 @@ typedef enum {
 
 // imagePath 是否为 LC 本地或共享 Applications/<bundle>.app 内的访客镜像.
 bool TDVGuestCallerIsGuestImage(const char *imagePath);
+// The frame of the app code behind a file request.
+//
+// Foundation's NSFileHandle/NSData and libobjc's objc_msgSend sit between an app
+// and the bytes it reads, and libc's open() is called by Foundation rather than
+// by the app, so the return address inside such a hook is never the app's.
+// This walks the stack and returns the first frame that is not one of the
+// frameworks in between (and not our own shim), or NULL when there is none.
+void *TDVGuestCallerFrame(void);
 // caller 所在访客 bundle 目录 (绝对路径, 无尾斜杠). 非访客 / 解析失败 -> false.
 bool TDVGuestBundleDirFromCallerImage(const char *callerImage, char *out, size_t outSize);
 // path = 请求路径 (绝对), callerImage = 调用方镜像路径 (NULL = 未知).

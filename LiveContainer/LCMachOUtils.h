@@ -20,6 +20,15 @@ NSString* getEntitlementXML(struct mach_header_64* header, void** entitlementXML
 NSString* getExecutableEntitlementXML(NSString* path);
 bool checkCodeSignature(const char* path);
 bool LCRepairTweakDependencies(const char *path, const char *substrateFrameworkPath);
+// 访客读自己主可执行时看到的那份"发行版"文件.
+//
+// 容器把访客主可执行改成 dylib, 并加上 LC_ID_DYLIB 与 TweakLoader 的加载命令,
+// 文件因此与发行版不同. 检测器 (全能签 NSKSign 的 AISGuard_DepsMismatch) 会把
+// 磁盘上主可执行的依赖库列表与发行基线比对, 多出这两条就判"可能被注入或篡改".
+// 安装时留存的 <exec>.td-original.executable 就是原件; 早期安装的访客没有这个
+// 备份, 这里用当前文件去掉我们加的那两条命令生成一份, 让访客读到自己主可执行
+// 时拿到的是发行基线. 已存在时不改动.
+bool LCCreateGuestExecutableReleaseView(const char *execPath);
 
 // 反篡改: 读取安装时保存的原始主可执行备份 (<execPath>.td-original.executable),
 // 把访客进程内存中被打补丁的 mach header / load commands 换回原始结构.

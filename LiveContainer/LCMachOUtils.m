@@ -383,6 +383,77 @@ bool LCMachOExecutableHasDirtyTweakLoader(const char *path) {
     return dirty;
 }
 
+// 去掉一条加载命令: 后面的命令前移, 并修正 ncmds/sizeofcmds. 头部空洞还在,
+// 段的布局不受影响.
+static void lc_remove_load_command(struct mach_header_64 *header, struct load_command *target) {
+    uint32_t size = target->cmdsize;
+    uint8_t *cmds = (uint8_t *)(header + 1);
+    size_t offset = (size_t)((uint8_t *)target - cmds);
+    if (offset + size > header->sizeofcmds) return;
+    size_t tail = header->sizeofcmds - offset - size;
+    memmove(target, (uint8_t *)target + size, tail);
+    bzero((uint8_t *)target + tail, size);
+    header->ncmds--;
+    header->sizeofcmds -= size;
+}
+
+// 容器往访客主可执行里加的两条命令: LC_ID_DYLIB(用可执行文件名) 与
+// TweakLoader 的 LC_LOAD_DYLIB. 发行版的可执行没有这两条.
+static bool lc_is_container_added_command(const struct load_command *command, const char *execName) {
+    if (command->cmd != LC_LOAD_DYLIB && command->cmd != LC_LOAD_WEAK_DYLIB &&
+        command->cmd != LC_ID_DYLIB) {
+        return false;
+    }
+    if (command->cmdsize < sizeof(struct dylib_command)) return false;
+    const struct dylib_command *dylib = (const struct dylib_command *)command;
+    if (dylib->dylib.name.offset >= command->cmdsize) return false;
+    const char *name = (const char *)command + dylib->dylib.name.offset;
+    static const char *tweakLoaderPath = "@loader_path/../../Tweaks/TweakLoader.dylib";
+    if (command->cmd == LC_ID_DYLIB) {
+        return execName && strcmp(name, execName) == 0;
+    }
+    return strncmp(name, tweakLoaderPath, strlen(tweakLoaderPath)) == 0;
+}
+
+bool LCCreateGuestExecutableReleaseView(const char *execPath) {
+    if (!execPath || !execPath[0]) return false;
+    NSString *exec = [NSString stringWithUTF8String:execPath];
+    if (!exec.length) return false;
+    NSString *view = [exec stringByAppendingString:@".td-original.executable"];
+    NSFileManager *fm = NSFileManager.defaultManager;
+    if ([fm fileExistsAtPath:view]) {
+        return true; // 安装时留存的原件, 或者上一次已经生成过
+    }
+    NSError *error = nil;
+    if (![fm copyItemAtPath:exec toPath:view error:&error]) {
+        NSLog(@"[LC] failed to keep a release view of %@ (%@)", exec.lastPathComponent,
+              error.localizedDescription);
+        return false;
+    }
+    NSString *execName = exec.lastPathComponent;
+    __block bool removed = false;
+    LCParseMachO(view.fileSystemRepresentation, false,
+                 ^(const char *path, struct mach_header_64 *header, int fd, void *filePtr) {
+        if (header->cputype != CPU_TYPE_ARM64) return;
+        struct load_command *command = (struct load_command *)(header + 1);
+        for (uint32_t i = 0; i < header->ncmds; i++) {
+            if (command->cmdsize < sizeof(struct load_command)) break;
+            if (lc_is_container_added_command(command, execName.fileSystemRepresentation)) {
+                lc_remove_load_command(header, command);
+                removed = true;
+                continue; // 后面的命令已经移到这个位置
+            }
+            command = (struct load_command *)((char *)command + command->cmdsize);
+        }
+    });
+    if (!removed) {
+        [fm removeItemAtPath:view error:nil];
+        return false;
+    }
+    NSLog(@"[LC] kept a release view of %@ at %@", exec.lastPathComponent, view.lastPathComponent);
+    return true;
+}
+
 NSString *LCParseMachO(const char *path, bool readOnly, LCParseMachOCallback callback) {
     int fd = open(path, readOnly ? O_RDONLY : O_RDWR, (mode_t)readOnly ? 0400 : 0600);
     if (fd < 0) {

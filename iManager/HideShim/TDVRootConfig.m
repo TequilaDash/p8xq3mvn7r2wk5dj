@@ -11,7 +11,9 @@
 #import <Foundation/Foundation.h>
 
 #include <dirent.h>
+#include <dlfcn.h>
 #include <errno.h>
+#include <execinfo.h>
 #include <limits.h>
 #include <pthread.h>
 #include <stdio.h>
@@ -277,6 +279,34 @@ static const char *tdv_guest_bundle_component(const char *imagePath) {
 
 bool TDVGuestCallerIsGuestImage(const char *imagePath) {
     return tdv_guest_bundle_component(imagePath) != NULL;
+}
+
+// The frameworks that stand between an app and the bytes it reads. A frame in
+// one of them is not the app, so the walk skips it.
+static bool tdv_is_framework_frame(const char *imagePath) {
+    static const char *const skips[] = {
+        "/libobjc.", "/Foundation.", "/CoreFoundation.", "/libsystem_",
+        "/libdispatch.", "/libswift", "/dyld", "/UIKitCore.",
+        "/LiveContainerShared", "/TweakLoader",
+    };
+    for (size_t i = 0; i < sizeof(skips) / sizeof(skips[0]); ++i) {
+        if (strstr(imagePath, skips[i])) return true;
+    }
+    return false;
+}
+
+void *TDVGuestCallerFrame(void) {
+    void *frames[32];
+    int count = backtrace(frames, 32);
+    // frames[0] is this function; the app's frame is the first one that is not
+    // a framework in between.
+    for (int i = 1; i < count; ++i) {
+        Dl_info info = {0};
+        if (dladdr(frames[i], &info) == 0 || !info.dli_fname) continue;
+        if (tdv_is_framework_frame(info.dli_fname)) continue;
+        return frames[i];
+    }
+    return NULL;
 }
 
 bool TDVGuestBundleDirFromCallerImage(const char *callerImage, char *out, size_t outSize) {

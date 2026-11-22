@@ -192,7 +192,17 @@ static const CGFloat LCHomeButtonFlingCarry = 0.12;
             self.placement = [LCHomeButtonPlacement firstPlacementForInterfaceOrientation:self.currentInterfaceOrientation];
             center = [self.currentPlacement centerInArea:area];
         }
+        CGPoint previous = self.button.center;
         self.button.center = center;
+        if (!CGPointEqualToPoint(previous, center)) {
+            // One line per move, so the overlay that covers the bottom of the
+            // screen can be identified from the device log instead of a
+            // screenshot.
+            NSLog(@"[LCHomeButton] center=%@ frame=%@ screen=%@",
+                  NSStringFromCGPoint(center),
+                  NSStringFromCGRect(self.button.frame),
+                  NSStringFromCGRect(self.view.bounds));
+        }
     }
 }
 

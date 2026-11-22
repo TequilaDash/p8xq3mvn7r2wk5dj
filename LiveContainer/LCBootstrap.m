@@ -638,6 +638,10 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
         lcGuestAppId = appBundle.bundleIdentifier;
     }
     LCAdaptSecurityPresets(bundlePath, lcGuestAppId, appBundle.executablePath.lastPathComponent);
+    // 访客读自己主可执行时必须看到发行版的样子: 容器往里加的加载命令会被检测器
+    // (全能签的依赖库基线比对) 当成注入痕迹. 安装时留存的原件优先; 没有的用当前
+    // 文件去掉我们加的那两条命令生成一份.
+    LCCreateGuestExecutableReleaseView(appBundle.executablePath.fileSystemRepresentation);
     NSBundleGuestHooksInit();
 
     // Overwrite home and tmp path
