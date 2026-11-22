@@ -1084,6 +1084,22 @@ void TDVInstallSigactionHook(void) {
         (const void *)(uintptr_t)&replacee,                                           \
     }
 
+// dladdr 把镜像路径直接写进调用方的 dli_fname; 这里也换成伪路径, 与镜像枚举和
+// NSBundle.bundlePath 保持一致, 否则检测器把三者互比就能看出"从可写目录加载".
+extern int tdv_real_dladdr(const void *addr, Dl_info *info) __asm("_dladdr");
+
+static int tdv_dladdr(const void *addr, Dl_info *info) {
+    int rc = tdv_real_dladdr(addr, info);
+    if (rc == 0 || !info || !info->dli_fname) return rc;
+    extern const char *tdv_masked_image_name(const char *realName) __attribute__((weak));
+    if (!tdv_masked_image_name) return rc;
+    const char *masked = tdv_masked_image_name(info->dli_fname);
+    if (masked && masked != info->dli_fname) {
+        info->dli_fname = masked;
+    }
+    return rc;
+}
+
 TDV_INTERPOSE(tdv_open, tdv_real_open);
 TDV_INTERPOSE(tdv_openat, tdv_real_openat);
 TDV_INTERPOSE(tdv_open_nocancel, tdv_real_open_nocancel);
@@ -1101,6 +1117,7 @@ TDV_INTERPOSE(tdv_unlink, tdv_real_unlink);
 TDV_INTERPOSE(tdv_getattrlist, tdv_real_getattrlist);
 TDV_INTERPOSE(tdv_getmntinfo, tdv_real_getmntinfo);
 TDV_INTERPOSE(tdv_getmntinfo_r_np, tdv_real_getmntinfo_r_np);
+TDV_INTERPOSE(tdv_dladdr, tdv_real_dladdr);
 TDV_INTERPOSE(tdv_getuid, tdv_real_getuid);
 TDV_INTERPOSE(tdv_geteuid, tdv_real_geteuid);
 TDV_INTERPOSE(tdv_getgid, tdv_real_getgid);
