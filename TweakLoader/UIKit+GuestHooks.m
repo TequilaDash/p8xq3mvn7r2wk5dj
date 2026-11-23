@@ -6,6 +6,7 @@
 #import "Localization.h"
 #import "HomeButton/LCHomeButtonController.h"
 #include <notify.h>
+#include <dlfcn.h>
 #include <fcntl.h>
 #include <unistd.h>
 #import <os/lock.h>
@@ -114,7 +115,13 @@ static UIWindow *LCGuestApplicationKeyWindow(UIApplication *self, SEL _cmd) {
     return nil;
 }
 
-extern void TDConsoleLog(NSString *format, ...) NS_FORMAT_FUNCTION(1, 2) __attribute__((weak_import));
+typedef void (*TDConsoleLogFn)(NSString *format, ...) NS_FORMAT_FUNCTION(1, 2);
+static TDConsoleLogFn LCGuestConsoleLogFn(void) {
+    static TDConsoleLogFn fn;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ fn = (TDConsoleLogFn)dlsym(RTLD_DEFAULT, "TDConsoleLog"); });
+    return fn;
+}
 static IMP gOrigShowHUDAddedTo = NULL;
 static BOOL gLoggedNilHUDView = NO;
 
@@ -129,8 +136,11 @@ static id LCGuestShowHUDAddedTo(id self, SEL _cmd, id view, BOOL animated) {
         view = LCGuestApplicationKeyWindow(UIApplication.sharedApplication, @selector(keyWindow));
         if (!gLoggedNilHUDView) {
             gLoggedNilHUDView = YES;
-            if (TDConsoleLog) {
-                TDConsoleLog(@"[LC] MBProgressHUD received a nil view; substituted the guest key window");
+            TDConsoleLogFn logFn = LCGuestConsoleLogFn();
+            if (logFn) {
+                logFn(@"[LC] MBProgressHUD received a nil view; substituted the guest key window");
+            } else {
+                NSLog(@"[LC] MBProgressHUD received a nil view; substituted the guest key window");
             }
         }
     }
