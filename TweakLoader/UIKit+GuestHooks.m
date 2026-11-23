@@ -187,6 +187,39 @@ static BOOL gLoggedNilHUDView = NO;
 // 上游 LiveContainer 给访客独立 scene，它总拿得到窗口；我们把访客画在宿主 scene 的
 // 虚拟窗口里，有的取窗口路径仍是 nil。兜底：view 为 nil 时改传访客 keyWindow，
 // HUD 语义不变，只是不再把 nil 送进断言。
+
+// Read-only diagnostics (外包第四期). Never creates windows, reparents views,
+// sets delegate.window or changes key state; evidence only.
+static void LCLogGuestWindows(NSString *event) {
+    if (!NSThread.isMainThread) {
+        dispatch_async(dispatch_get_main_queue(), ^{ LCLogGuestWindows(event); });
+        return;
+    }
+    UIApplication *application = UIApplication.sharedApplication;
+    NSMutableString *text = [NSMutableString stringWithFormat:@"[window-lifecycle] event=%@ pid=%d liveProcess=%d", event, getpid(), NSUserDefaults.isLiveProcess];
+    UIWindow *originalKey = gOrigApplicationKeyWindow ? ((UIWindow *(*)(id, SEL))gOrigApplicationKeyWindow)(application, @selector(keyWindow)) : nil;
+    id<UIApplicationDelegate> appDelegate = application.delegate;
+    UIWindow *delegateWindow = [appDelegate respondsToSelector:@selector(window)] ? appDelegate.window : nil;
+    [text appendFormat:@" originalApplicationKey=%p appDelegate=%@ delegateWindow=%p", originalKey, NSStringFromClass([appDelegate class]), delegateWindow];
+    NSMutableArray<UIWindow *> *windows = [NSMutableArray array];
+    for (UIScene *connected in application.connectedScenes) {
+        if (![connected isKindOfClass:UIWindowScene.class]) continue;
+        UIWindowScene *scene = (UIWindowScene *)connected;
+        id<UIWindowSceneDelegate> delegate = (id)scene.delegate;
+        UIWindow *sceneDelegateWindow = [delegate respondsToSelector:@selector(window)] ? delegate.window : nil;
+        [text appendFormat:@"\n scene=%@ state=%ld key=%p delegateWindow=%p windows=%lu", scene.session.persistentIdentifier, (long)scene.activationState, scene.keyWindow, sceneDelegateWindow, (unsigned long)scene.windows.count];
+        for (UIWindow *window in scene.windows) if (![windows containsObject:window]) [windows addObject:window];
+    }
+    if (delegateWindow && ![windows containsObject:delegateWindow]) [windows addObject:delegateWindow];
+    for (UIWindow *window in windows) {
+        UIViewController *root = window.rootViewController;
+        UIView *view = root.viewIfLoaded;
+        [text appendFormat:@"\n window=%p class=%@ scene=%@ key=%d hidden=%d alpha=%.3f level=%.1f bounds=%@ safe=%@ root=%@ rootBounds=%@ clips=%d masks=%d", window, NSStringFromClass(window.class), window.windowScene.session.persistentIdentifier, window.isKeyWindow, window.hidden, window.alpha, window.windowLevel, NSStringFromCGRect(window.bounds), NSStringFromUIEdgeInsets(window.safeAreaInsets), NSStringFromClass(root.class), NSStringFromCGRect(view.bounds), view.clipsToBounds, view.layer.masksToBounds];
+    }
+    TDConsoleLogFn logFn = LCGuestConsoleLogFn();
+    if (logFn) logFn(@"%@", text); else NSLog(@"%@", text);
+}
+
 static id LCGuestShowHUDAddedTo(id self, SEL _cmd, id view, BOOL animated) {
     if (!view) {
         view = LCGuestApplicationKeyWindow(UIApplication.sharedApplication, @selector(keyWindow));
@@ -194,9 +227,10 @@ static id LCGuestShowHUDAddedTo(id self, SEL _cmd, id view, BOOL animated) {
             gLoggedNilHUDView = YES;
             TDConsoleLogFn logFn = LCGuestConsoleLogFn();
             if (logFn) {
-                logFn(@"[LC] MBProgressHUD received a nil view; substituted the guest key window");
+                LCLogGuestWindows(@"nil-HUD-view");
+                logFn(@"[LC] MBProgressHUD nil-view fallback result=%p", view);
             } else {
-                NSLog(@"[LC] MBProgressHUD received a nil view; substituted the guest key window");
+                NSLog(@"[LC] MBProgressHUD nil-view fallback result=%p", view);
             }
         }
     }
@@ -229,6 +263,14 @@ static void UIKitGuestHooksInit() {
             gOrigApplicationKeyWindow = method_getImplementation(keyWindowMethod);
             method_setImplementation(keyWindowMethod, (IMP)LCGuestApplicationKeyWindow);
         }
+    }
+    for (NSString *name in @[UISceneDidActivateNotification, UISceneWillDeactivateNotification,
+                             UIWindowDidBecomeKeyNotification, UIWindowDidBecomeVisibleNotification,
+                             UIWindowDidBecomeHiddenNotification]) {
+        [NSNotificationCenter.defaultCenter addObserverForName:name object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *note) {
+            NSString *event = note.name;
+            dispatch_async(dispatch_get_main_queue(), ^{ LCLogGuestWindows(event); });
+        }];
     }
     swizzle(UIApplication.class, @selector(_applicationOpenURLAction:payload:origin:), @selector(hook__applicationOpenURLAction:payload:origin:));
     swizzle(UIApplication.class, @selector(_connectUISceneFromFBSScene:transitionContext:), @selector(hook__connectUISceneFromFBSScene:transitionContext:));

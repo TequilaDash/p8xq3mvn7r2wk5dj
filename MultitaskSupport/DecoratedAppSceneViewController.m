@@ -821,7 +821,11 @@ static NSNotificationName const LCWindowTouchedNotification = @"LCWindowTouchedN
     // The overview supplies its own 34pt header. Capturing self.view here
     // would duplicate window controls/borders inside the guest preview.
     UIView *content = self.appSceneVC.viewIfLoaded;
-    self.stackContentPreview = !CGRectIsEmpty(content.bounds) ? [content snapshotViewAfterScreenUpdates:NO] : nil;
+    [content layoutIfNeeded];
+    UIView *contentPicture = !CGRectIsEmpty(content.bounds) ? [content snapshotViewAfterScreenUpdates:NO] : nil;
+    // Retain a valid last picture if a transition briefly returns nil.
+    if (contentPicture) self.stackContentPreview = contentPicture;
+    [MultitaskStackManager.shared rememberController:self.appSceneVC];
     UIView *flyer = [[UIView alloc] initWithFrame:self.view.frame];
     flyer.userInteractionEnabled = NO;
     picture.frame = flyer.bounds;
@@ -1253,6 +1257,7 @@ static NSNotificationName const LCWindowTouchedNotification = @"LCWindowTouchedN
     if (self.view.hidden || !self.view.superview) {
         return;
     }
+    [MultitaskManager recordUseOfContainer:self.dataUUID];
     [NSNotificationCenter.defaultCenter postNotificationName:LCWindowTouchedNotification object:self];
     // Reading the host view brings it back above the Home Screen first, in
     // case something the Home Screen drew since covered the windows.
@@ -1889,16 +1894,13 @@ static NSNotificationName const LCWindowTouchedNotification = @"LCWindowTouchedN
 }
 
 
-/// The controls' clearance belongs to the app container in both presentation
-/// APIs; the scene publisher combines it with the actual display occlusion.
-// Follow the title bar's actual visibility (updateVerticalConstraints'
-// hideWindowBar): clearing 44pt while the bar is hidden pushed the guest's
-// status bar 44pt below the real one in floating multitask windows.
+/// updateVerticalConstraints already removes a visible bottom bar from the
+/// app viewport. It must not also reserve a 44pt TOP inset. Display cutouts
+/// remain supplied once by LCGuestSceneSafeAreaInsets, including split mode.
+/// Upstream DecoratedAppSceneViewController.m:509-519 excludes the bar by
+/// constraints on its own edge, not by an extra top clearance.
 - (void)updateAppSafeArea {
-    BOOL bottomWindowBar = [NSUserDefaults.lcSharedDefaults boolForKey:@"LCMultitaskBottomWindowBar"];
-    BOOL hideWindowBar = self.isMaximized || !bottomWindowBar || LCWindowSnapManager.usesPhoneLayout;
-    CGFloat top = hideWindowBar ? 0 : LCWindowTopStripHeight;
-    self.appSceneVC.additionalSafeAreaInsets = UIEdgeInsetsMake(top, 0, 0, 0);
+    self.appSceneVC.additionalSafeAreaInsets = UIEdgeInsetsZero;
 }
 
 // Scene dimensions describe the constrained app viewport, never the decorated

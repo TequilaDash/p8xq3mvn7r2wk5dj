@@ -6,7 +6,7 @@
 //  双击辅助触控进入 -> 看到所有在跑的多任务窗口(卡片堆叠, 后一个压前一个),
 //  点卡片进入该 app 的多任务窗口, 卡片上滑删除该窗口(结束访客进程).
 //  设计:
-//   · 优先复用 Dock 的顺序, 同时收集实际窗口, 关闭 Dock 也不会漏掉后台
+//   · 实际窗口按 MRU 排序；Dock 只供元数据，未打开的 app 不进入后台
 //   · 卡片左右滑动切换, 当前卡片置顶, 相邻卡片始终露出可点击的部分
 //   · 点卡片恢复对应窗口; 原生 iPad 窗口激活自己的 scene
 //   · 上滑走真实 closeWindow/terminate 路径, 不用删列表冒充关闭
@@ -32,6 +32,8 @@ public class MultitaskStackManager: NSObject, ObservableObject {
     private weak var previousKeyWindow: UIWindow?
     private var pendingPresentation = false
     private var selectedUUID: String?
+    private var pendingFocusUUID: String?
+    private var lastRequestIdentifier: String?
     private var closingControllers: [String: ObjectIdentifier] = [:]
     // These survive removal of a card. A menu action is bound to the launch
     // it displayed, never merely to a container a newer guest might reuse.
@@ -41,6 +43,90 @@ public class MultitaskStackManager: NSObject, ObservableObject {
     // Static pictures taken while the guest windows are still on screen. The
     // cards show what each app actually looks like, shrunk, instead of an icon.
     private var previews: [String: UIView] = [:]
+    // Session-local recent tasks outlive process/controller removal. These
+    // records retain inert pictures and metadata, never a guest/controller.
+    private struct RecentTask {
+        let controllerID: ObjectIdentifier
+        let bundleID: String
+        let mode: MultitaskMode
+        let model: DockAppModel
+        var preview: UIView?
+    }
+    private var recentTasks: [String: RecentTask] = [:]
+    private var launchingRecent = Set<String>()
+
+    @objc(rememberController:)
+    public func rememberController(_ controller: AppSceneViewController) {
+        precondition(Thread.isMainThread)
+        guard let uuid = controller.dataUUID, !uuid.isEmpty,
+              let bundleID = controller.bundleId, !bundleID.isEmpty,
+              controller.pid > 0 else { return }
+        let identity = ObjectIdentifier(controller)
+        guard !controller.isUserTerminating, closingControllers[uuid] != identity else { return }
+        let previous = recentTasks[uuid]
+        // A delayed exit of an older process must not replace the successor.
+        if controller.isTerminated, let previous, previous.controllerID != identity { return }
+        let info = AppInfoProvider.shared.findAppInfo(appName: bundleID, dataUUID: uuid)
+        let decorated = decoratedController(for: controller)
+        var picture = previous?.controllerID == identity ? previous?.preview : nil
+        if let snapshot = decorated?.stackContentPreview {
+            picture = snapshot
+        } else if !controller.isTerminated, let source = controller.viewIfLoaded,
+                  source.window != nil, !source.bounds.isEmpty, !source.isHidden,
+                  decorated?.viewIfLoaded?.isHidden != true {
+            source.layoutIfNeeded()
+            picture = source.snapshotView(afterScreenUpdates: false) ?? picture
+        }
+        recentTasks[uuid] = RecentTask(controllerID: identity, bundleID: bundleID,
+                                      mode: controller.isNativeWindow ? .nativeWindow : .virtualWindow,
+                                      model: DockAppModel(appName: info?.displayName() ?? bundleID,
+                                                          appUUID: uuid, appInfo: info, view: nil),
+                                      preview: picture)
+    }
+
+    @objc(forgetController:)
+    public func forgetController(_ controller: AppSceneViewController) {
+        precondition(Thread.isMainThread)
+        guard let uuid = controller.dataUUID,
+              recentTasks[uuid]?.controllerID == ObjectIdentifier(controller) else { return }
+        recentTasks.removeValue(forKey: uuid)
+    }
+
+    private func launchRecentTask(uuid: String) {
+        guard !launchingRecent.contains(uuid), let recent = recentTasks[uuid],
+              let app = restartModel(bundleId: recent.bundleID, uuid: uuid) else {
+            message = "找不到最近任务的应用或容器，未启动"
+            return
+        }
+        guard !app.isAppRunning else { message = "应用正在启动，请稍候"; return }
+        // A retained native scene may still own an exited process record. Do
+        // not create a second native entry or remove a live successor.
+        if #available(iOS 16.1, *), recent.mode == .nativeWindow,
+           let oldInfo = MultitaskWindowManager.appDict[uuid] {
+            guard let old = appControllers().first(where: { $0.dataUUID == uuid && $0.isTerminated }),
+                  ObjectIdentifier(old) == recent.controllerID else {
+                message = "原生窗口记录尚未释放，未重复启动"
+                return
+            }
+            MultitaskWindowManager.removeAppInfo(oldInfo)
+        }
+        launchingRecent.insert(uuid)
+        Task { @MainActor [self] in
+            defer { self.launchingRecent.remove(uuid) }
+            do {
+                try await app.runApp(multitask: true, containerFolderName: uuid,
+                                     bundleIdOverride: recent.bundleID, multitaskWindowMode: recent.mode)
+                guard let replacement = self.appControllers().first(where: { $0.dataUUID == uuid && !$0.isTerminated }) else {
+                    throw "应用未建立新的多任务窗口"
+                }
+                self.rememberController(replacement)
+                MultitaskManager.recordUse(container: uuid)
+                self.selectApp(uuid: uuid)
+            } catch {
+                self.showRestartMessage("最近任务启动失败：\(error.localizedDescription)")
+            }
+        }
+    }
     private static let requestKey = "LCPendingAppStackRequest"
     static let enabledKey = "TDAppStackEnabled"
 
@@ -63,6 +149,7 @@ public class MultitaskStackManager: NSObject, ObservableObject {
         center.addObserver(self, selector: #selector(applicationDidActivate), name: UIApplication.didBecomeActiveNotification, object: nil)
         center.addObserver(self, selector: #selector(windowsDidChange(_:)), name: UIWindow.didBecomeVisibleNotification, object: nil)
         center.addObserver(self, selector: #selector(windowsDidChange(_:)), name: NSNotification.Name("LCMultitaskWindowsChanged"), object: nil)
+        center.addObserver(self, selector: #selector(recencyDidChange(_:)), name: MultitaskManager.recencyChanged, object: nil)
         dockSubscription = MultitaskDockManager.shared.$apps
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
@@ -79,6 +166,10 @@ public class MultitaskStackManager: NSObject, ObservableObject {
         DispatchQueue.main.async {
             guard Self.isEnabled else { return }
             self.readStoredRequest()
+            if !self.isVisible, self.pendingFocusUUID == nil, let uuid = self.currentAppUUID() {
+                MultitaskManager.recordUse(container: uuid)
+                self.pendingFocusUUID = uuid
+            }
             self.pendingPresentation = true
             self.message = nil
             self.presentIfPossible()
@@ -106,6 +197,16 @@ public class MultitaskStackManager: NSObject, ObservableObject {
             clearStoredRequest()
             return
         }
+        if identifier != lastRequestIdentifier {
+            lastRequestIdentifier = identifier
+            if let uuid = request["container"] as? String, !uuid.isEmpty,
+               appControllers().contains(where: { $0.dataUUID == uuid && !$0.isTerminated }) {
+                // The guest supplies its container before opening the host;
+                // shared host UIWindow identity cannot identify a virtual app.
+                MultitaskManager.recordUse(container: uuid)
+                pendingFocusUUID = uuid
+            }
+        }
         pendingPresentation = true
     }
 
@@ -122,6 +223,7 @@ public class MultitaskStackManager: NSObject, ObservableObject {
            window.windowScene?.activationState == .foregroundActive,
            hostingController?.viewIfLoaded?.window === window {
             refreshApps()
+            focusPendingApp()
             pendingPresentation = false
             clearStoredRequest()
             return
@@ -136,7 +238,7 @@ public class MultitaskStackManager: NSObject, ObservableObject {
 
         detachWindow()
         refreshApps()
-        focus(index: max(0, apps.count - 1))
+        focusPendingApp()
         let host = UIHostingController(rootView: AnyView(MultitaskStackView().environmentObject(self)))
         host.view.backgroundColor = .clear
         let window = UIWindow(windowScene: scene)
@@ -183,7 +285,21 @@ public class MultitaskStackManager: NSObject, ObservableObject {
     }
 
     @objc private func sceneDidActivate(_ notification: Notification) {
+        if let scene = notification.object as? UIWindowScene, !isVisible {
+            let native = appControllers().first { $0.isNativeWindow && $0.viewIfLoaded?.window?.windowScene === scene }
+            if let uuid = native?.dataUUID { MultitaskManager.recordUse(container: uuid) }
+        }
         applicationDidActivate()
+    }
+
+    @objc private func recencyDidChange(_ notification: Notification) {
+        if isVisible { refreshApps() }
+    }
+
+    private func focusPendingApp() {
+        let uuid = pendingFocusUUID
+        pendingFocusUUID = nil
+        focus(index: uuid.flatMap { id in apps.firstIndex { $0.appUUID == id } } ?? 0)
     }
 
     @objc private func sceneWillDeactivate(_ notification: Notification) {
@@ -248,28 +364,48 @@ public class MultitaskStackManager: NSObject, ObservableObject {
     }
 
     private func currentAppUUID() -> String? {
-        // iOS 的后台里当前 app 一定在最右边; 靠 key window 找出正在显示的那个访客窗口.
+        // A host window can contain several guests. Resolve virtual z-order
+        // first; a shared keyWindow alone cannot identify the current app.
         let keyWindow = UIApplication.shared.connectedScenes
             .compactMap { $0 as? UIWindowScene }
             .filter { $0.activationState == .foregroundActive }
             .flatMap(\.windows)
             .first(where: { $0.isKeyWindow && $0 !== hostingWindow })
         guard let keyWindow else { return nil }
-        for controller in appControllers() {
-            if let view = controller.viewIfLoaded, view.window === keyWindow { return controller.dataUUID }
-            if let decorated = decoratedController(for: controller)?.viewIfLoaded, decorated.window === keyWindow {
-                return controller.dataUUID
+        if let native = appControllers().first(where: {
+            $0.isNativeWindow && !$0.isTerminated && $0.viewIfLoaded?.window === keyWindow
+        }) { return native.dataUUID }
+        let host = MultitaskDockManager.shared.windowHostingView
+        if host.window != nil, host.window === keyWindow, !host.isHidden, host.alpha > 0 {
+            for view in host.subviews.reversed() where !view.isHidden && view.alpha > 0 {
+                if let decorated = view._viewDelegate() as? DecoratedAppSceneViewController,
+                   !decorated.isStashed, !decorated.appSceneVC.isTerminated {
+                    return decorated.appSceneVC.dataUUID
+                }
             }
         }
+        // Hidden virtual siblings share that window too. Do not select one
+        // just because its controller still belongs to the key host window.
         return nil
     }
 
     private func refreshApps() {
-        let controllers = appControllers()
+        // A retained termination card is still a recent task, not evidence of
+        // resident memory. Preserve its restart target and last-use order.
+        let controllers = appControllers().filter { $0.pid > 0 }
         let byUUID = Dictionary(uniqueKeysWithValues: controllers.compactMap { controller -> (String, AppSceneViewController)? in
             guard let uuid = controller.dataUUID else { return nil }
             return (uuid, controller)
         })
+        let previousControllers = displayedControllers
+        for controller in controllers {
+            if controller.isUserTerminating, let uuid = controller.dataUUID,
+               recentTasks[uuid]?.controllerID == ObjectIdentifier(controller) {
+                recentTasks.removeValue(forKey: uuid)
+            } else {
+                rememberController(controller)
+            }
+        }
         displayedControllers = byUUID
         closingControllers = closingControllers.filter { uuid, identifier in
             byUUID[uuid].map { ObjectIdentifier($0) == identifier } ?? false
@@ -280,6 +416,10 @@ public class MultitaskStackManager: NSObject, ObservableObject {
         for controller in controllers {
             guard let uuid = controller.dataUUID else { continue }
             let decorated = decoratedController(for: controller)
+            if controller.isTerminated {
+                freshPreviews[uuid] = decorated?.stackContentPreview
+                continue
+            }
             let source = controller.viewIfLoaded
             let wrapperVisible = (decorated?.viewIfLoaded).map { !$0.isHidden && $0.alpha > 0 } ?? true
             if let source, wrapperVisible, !source.isHidden, source.alpha > 0,
@@ -297,25 +437,32 @@ public class MultitaskStackManager: NSObject, ObservableObject {
                 freshPreviews[app.appUUID] = snapshot
             }
         }
+        // A transient nil snapshot must not replace the last real picture.
+        // Never carry a previous process's picture into a same-UUID relaunch.
+        for (uuid, controller) in byUUID where freshPreviews[uuid] == nil {
+            if previousControllers[uuid] === controller, let previous = previews[uuid] {
+                freshPreviews[uuid] = previous
+            }
+        }
+        for (uuid, recent) in recentTasks where freshPreviews[uuid] == nil {
+            freshPreviews[uuid] = recent.preview
+        }
         previews = freshPreviews
-        var seen = Set<String>()
-        let order = (dockApps.map(\.appUUID) + controllers.compactMap(\.dataUUID))
-            .filter { seen.insert($0).inserted }
+        // A recent record requires a real launch, never an installed-app list.
+        // Process exit does not erase history. Explicit close does.
+        let order = MultitaskManager.recentOrder(candidates: controllers.compactMap(\.dataUUID) + recentTasks.keys.sorted())
         var dockByUUID: [String: DockAppModel] = [:]
         for app in dockApps where dockByUUID[app.appUUID] == nil {
             dockByUUID[app.appUUID] = app
         }
         apps = order.compactMap { uuid in
             let controller = byUUID[uuid]
-            if let controller, closingControllers[uuid] == ObjectIdentifier(controller) { return nil }
-            if let existing = dockByUUID[uuid], existing.view != nil {
-                if let controller {
-                    if existing.view === decoratedController(for: controller)?.viewIfLoaded { return existing }
-                } else {
-                    return existing
-                }
+            if let controller, closingControllers[uuid] == ObjectIdentifier(controller) || controller.isUserTerminating { return nil }
+            if let existing = dockByUUID[uuid], let controller,
+               existing.view != nil, existing.view === decoratedController(for: controller)?.viewIfLoaded {
+                return existing
             }
-            guard let controller else { return dockByUUID[uuid] }
+            guard let controller else { return recentTasks[uuid]?.model }
             let existing = dockByUUID[uuid]
             let info = existing?.appInfo ?? AppInfoProvider.shared.findAppInfo(appName: existing?.appName ?? controller.bundleId ?? "", dataUUID: uuid)
             let name = existing?.appName ?? info?.displayName() ?? controller.bundleId ?? uuid
@@ -323,14 +470,6 @@ public class MultitaskStackManager: NSObject, ObservableObject {
             return DockAppModel(appName: name, appUUID: uuid, appInfo: info, view: view)
         }
         focus(index: selectedUUID.flatMap { uuid in apps.firstIndex(where: { $0.appUUID == uuid }) } ?? selectedIndex)
-        // 当前 app 排到最右边: iOS 的后台就是这个顺序, 打开后台默认聚焦它而不是最右那张.
-        if let current = currentAppUUID(),
-           let currentIndex = apps.firstIndex(where: { $0.appUUID == current }),
-           currentIndex != apps.count - 1 {
-            let card = apps.remove(at: currentIndex)
-            apps.append(card)
-            focus(index: apps.count - 1)
-        }
     }
 
     func previewSnapshot(for uuid: String) -> UIView? {
@@ -348,12 +487,15 @@ public class MultitaskStackManager: NSObject, ObservableObject {
             // them first so tapping a card really reveals its window.
             NotificationCenter.default.post(name: .lcCloseHostScreens, object: nil)
             let controllers = self.appControllers()
-            guard let controller = controllers.first(where: { $0.dataUUID == uuid }),
-                  self.closingControllers[uuid] != ObjectIdentifier(controller) else {
-                self.message = "窗口已经关闭"
-                self.refreshApps()
+            guard let controller = controllers.first(where: { $0.dataUUID == uuid }) else {
+                self.launchRecentTask(uuid: uuid)
                 return
             }
+            if controller.isTerminated {
+                self.restartApp(uuid: uuid, controller: controller)
+                return
+            }
+            guard self.closingControllers[uuid] != ObjectIdentifier(controller) else { return }
             if let target = self.decoratedController(for: controller) {
                 guard let view = target.viewIfLoaded, let container = view.superview else {
                     self.message = "窗口暂时无法恢复"
@@ -369,12 +511,14 @@ public class MultitaskStackManager: NSObject, ObservableObject {
                     container.bringSubviewToFront(view)
                     target.revealWindowControls()
                 }
+                MultitaskManager.recordUse(container: uuid)
                 self.dismiss()
             } else if let scene = controller.viewIfLoaded?.window?.windowScene {
                 UIApplication.shared.requestSceneSessionActivation(scene.session, userActivity: nil, options: nil) { error in
                     NSLog("[TDHome] app stack activation failed: %@", error.localizedDescription)
                     self.present()
                 }
+                MultitaskManager.recordUse(container: uuid)
                 self.dismiss()
             } else {
                 self.message = "窗口暂时无法恢复"
@@ -388,14 +532,16 @@ public class MultitaskStackManager: NSObject, ObservableObject {
                 self.message = "该应用正在重新启动，请稍候"
                 return
             }
+            guard !self.launchingRecent.contains(uuid) else { return }
             guard let controller = self.appControllers().first(where: { $0.dataUUID == uuid }) else {
-                self.message = "窗口已经关闭"
+                self.recentTasks.removeValue(forKey: uuid)
                 self.refreshApps()
                 return
             }
             let identifier = ObjectIdentifier(controller)
             guard self.closingControllers[uuid] != identifier else { return }
             self.closingControllers[uuid] = identifier
+            self.recentTasks.removeValue(forKey: uuid)
             if let decorated = self.decoratedController(for: controller) {
                 decorated.closeWindow()
             } else {
@@ -688,12 +834,25 @@ struct MultitaskStackView: View {
     @State private var backdropVisible = false
 
     var body: some View {
-        ZStack {
-            backgroundLayer.opacity(backdropVisible ? 1 : 0)
-            StackDeckRepresentable(manager: manager, dockApps: dockManager.apps,
-                                   showClearAll: showClearAll) { visible, duration in
-                withAnimation(.easeOut(duration: duration)) { backdropVisible = visible }
-            }
+        GeometryReader { geometry in
+            // A scaledToFill wallpaper may have a wider ideal size than the
+            // screen. It must never participate in the deck's layout proposal.
+            Color.clear
+                .frame(width: geometry.size.width, height: geometry.size.height)
+                .overlay {
+                    backgroundLayer
+                        .frame(width: geometry.size.width, height: geometry.size.height)
+                        .clipped()
+                        .opacity(backdropVisible ? 1 : 0)
+                        .allowsHitTesting(false)
+                }
+                .overlay {
+                    StackDeckRepresentable(manager: manager, dockApps: dockManager.apps,
+                                           showClearAll: showClearAll) { visible, duration in
+                        withAnimation(.easeOut(duration: duration)) { backdropVisible = visible }
+                    }
+                    .frame(width: geometry.size.width, height: geometry.size.height)
+                }
         }
         .ignoresSafeArea()
         .task {
@@ -733,7 +892,7 @@ private struct StackDeckRepresentable: UIViewRepresentable {
     let showClearAll: Bool
     let backdrop: (Bool, TimeInterval) -> Void
 
-    func makeUIView(context: Context) -> StackDeckViewport { StackDeckViewport() }
+    func makeUIView(context: Context) -> StackDeckViewport { StackDeckViewport(frame: .zero) }
     func updateUIView(_ view: StackDeckViewport, context: Context) {
         view.configure(manager: manager, dockApps: dockApps, showClearAll: showClearAll, backdrop: backdrop)
     }
@@ -783,6 +942,7 @@ private final class StackDeckCard: UIView, UIContextMenuInteractionDelegate {
     let preview = UIView()
     let icon = UIImageView()
     let centerIcon = UIImageView()
+    let unavailableLabel = UILabel()
     let name = UILabel()
     var snapshot: UIView?
     var sourceSize = CGSize.zero
@@ -820,6 +980,12 @@ private final class StackDeckCard: UIView, UIContextMenuInteractionDelegate {
         addSubview(icon)
         addSubview(name)
         preview.addSubview(centerIcon)
+        unavailableLabel.text = "画面快照暂不可用"
+        unavailableLabel.font = .systemFont(ofSize: 13)
+        unavailableLabel.textColor = .secondaryLabel
+        unavailableLabel.textAlignment = .center
+        unavailableLabel.numberOfLines = 2
+        preview.addSubview(unavailableLabel)
         // Shadow belongs to the preview, never to a transparent whole-card outline (:403-406).
         layer.shadowColor = UIColor.black.cgColor
         layer.shadowOpacity = 0.30
@@ -864,11 +1030,14 @@ private final class StackDeckCard: UIView, UIContextMenuInteractionDelegate {
         // Never derive preview aspect from the decorated window (:562-564).
         sourceSize = snapshot?.bounds.size ?? launch?.viewIfLoaded?.bounds.size ?? .zero
         updateExpandedFrame()
-        centerIcon.isHidden = snapshot != nil
+        // PiP keeps its explicit existing placeholder; never pretend an app
+        // icon is the last screen when a normal task snapshot was unavailable.
+        centerIcon.isHidden = !isPiP
+        unavailableLabel.isHidden = snapshot != nil || isPiP
         preview.backgroundColor = snapshot == nil ? UIColor(white: 0.16, alpha: 1) : .black
         preview.layer.borderWidth = snapshot == nil ? 0.5 : 0
         preview.layer.borderColor = UIColor.white.withAlphaComponent(0.20).cgColor
-        accessibilityHint = isPiP ? "此 App 的画面保留在画中画中" : (snapshot == nil ? "静态图标预览，轻点切换到此 App" : "轻点打开，上滑关闭，长按更多操作")
+        accessibilityHint = isPiP ? "此 App 的画面保留在画中画中" : (snapshot == nil ? "画面快照暂不可用，轻点切换到此 App" : "轻点打开，上滑关闭，长按更多操作")
         setNeedsLayout()
     }
     func updateExpandedFrame() {
@@ -896,6 +1065,7 @@ private final class StackDeckCard: UIView, UIContextMenuInteractionDelegate {
         let side: CGFloat = isPiP ? 54 : min(94, max(44, min(preview.bounds.width, preview.bounds.height) * 0.30))
         centerIcon.frame = CGRect(x: (preview.bounds.width - side) / 2, y: (preview.bounds.height - side) / 2, width: side, height: side)
         centerIcon.layer.cornerRadius = side * 0.225
+        unavailableLabel.frame = preview.bounds.insetBy(dx: 12, dy: 12)
         layer.shadowPath = UIBezierPath(roundedRect: preview.frame, cornerRadius: 28).cgPath
     }
     override func accessibilityActivate() -> Bool { owner?.activate(self); return true }
@@ -1028,7 +1198,9 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
         if self.showClearAll != showClearAll { lastBounds = .null }
         self.showClearAll = showClearAll
         var seen = Set<String>()
-        let apps = manager.apps.filter { seen.insert($0.appUUID).inserted }
+        // Logical MRU index 0 maps to the last visual slot. This preserves
+        // LCOrbit :654-668 (negative compression, increasing z), not its FIFO.
+        let apps = Array(manager.apps.filter { seen.insert($0.appUUID).inserted }.reversed())
         let old = cards
         let changed = old.map(\.uuid) != apps.map(\.appUUID) || apps.contains { app in
             old.first(where: { $0.uuid == app.appUUID })?.launch !== manager.restartTarget(for: app.appUUID)
@@ -1082,7 +1254,7 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
             }
             lastBounds = .null
         }
-        let desired = min(max(0, manager.selectedIndex), max(0, cards.count - 1))
+        let desired = cards.isEmpty ? 0 : cards.count - 1 - min(max(0, manager.selectedIndex), cards.count - 1)
         emptyLabel.isHidden = !cards.isEmpty
         clearButton.isHidden = !showClearAll || cards.isEmpty
         let hideDock = dockApps.isEmpty && clearButton.isHidden

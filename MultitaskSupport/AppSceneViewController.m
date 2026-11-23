@@ -285,6 +285,9 @@ extern const char *TDHostHomeDocumentsPath(void);
     self.hostScene = self.view.window.windowScene;
     self.settingsDiffKey = NSUUID.UUID.UUIDString;
     [self.hostScene _registerSettingsDiffActionArray:@[self] forKey:self.settingsDiffKey];
+    // A successful scene launch is usage, independent of Dock visibility.
+    [MultitaskManager recordUseOfContainer:self.dataUUID];
+    [MultitaskStackManager.shared rememberController:self];
     [NSNotificationCenter.defaultCenter postNotificationName:@"LCMultitaskWindowsChanged" object:self];
 }
 
@@ -552,6 +555,13 @@ extern const char *TDHostHomeDocumentsPath(void);
     }
     _isAppTerminationCleanUpCalled = true;
     dispatch_async(dispatch_get_main_queue(), ^{
+        // Preserve the last obtainable screen BEFORE the remote surface is
+        // invalidated. Explicit user close is not retained as a recent task.
+        if (self.isUserTerminating) {
+            [MultitaskStackManager.shared forgetController:self];
+        } else {
+            [MultitaskStackManager.shared rememberController:self];
+        }
         if(self.sceneID) {
             [[PrivClass(FBSceneManager) sharedInstance] destroyScene:self.sceneID withTransitionContext:nil];
             self.sceneID = nil;
@@ -661,6 +671,20 @@ static void LCMinimizeAllMultitaskWindows(CFNotificationCenterRef center, void *
     dispatch_async(dispatch_get_main_queue(), ^{
         if (NSUserDefaults.lcGuestAppId || NSUserDefaults.isLiveProcess) return;
         NSLog(@"[TDHome] minimizeAll notification received");
+        NSUserDefaults *defaults = NSUserDefaults.lcSharedDefaults;
+        id departure = [defaults objectForKey:@"LCRecentGuestDeparture"];
+        [defaults removeObjectForKey:@"LCRecentGuestDeparture"];
+        if ([departure isKindOfClass:NSDictionary.class]) {
+            id container = departure[@"container"];
+            id timestamp = departure[@"timestamp"];
+            if ([container isKindOfClass:NSString.class] && [container length] &&
+                [timestamp isKindOfClass:NSNumber.class]) {
+                NSTimeInterval age = NSDate.date.timeIntervalSince1970 - [timestamp doubleValue];
+                if (age >= -5 && age < 30 && [MultitaskManager isUsingWithContainer:container]) {
+                    [MultitaskManager recordUseOfContainer:container];
+                }
+            }
+        }
         for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
             if (![scene isKindOfClass:UIWindowScene.class]) continue;
             for (UIWindow *window in ((UIWindowScene *)scene).windows) {

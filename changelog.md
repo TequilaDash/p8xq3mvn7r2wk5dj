@@ -1,3 +1,16 @@
+20261124-193000 1.1.105 Update：
+1. 合入外包第四期（堆叠后台语义重做 + T3 状态栏修正 + 窗口诊断日志）：
+   - MultitaskStackView/Manager：MRU（最近使用优先）排序替代 Dock 登记顺序；回后台/新开/guest 返回
+     时当前 app 置前（selectedIndex=它）；RecentTask 会话内保留（元数据+惰性快照，非用户退出不清卡）；
+     deck 背景与内容分离坐标系（壁纸层不再带动内容偏移）；快照 nil 时保留上次画面，不用图标假画面。
+   - DecoratedAppSceneViewController：最小化前 layoutIfNeeded 再截图；底部栏模式不再额外加 top=44
+     （T3 状态栏偏高的确定性分支）；触摸置前记录 MRU。
+   - HomeButtonController：双击/单击请求携带访客身份（container/sender），供宿主置前验证。
+   - UIKit+GuestHooks：只读窗口生命周期诊断（[window-lifecycle] 事件日志，HUD nil-view 时输出
+     全部 scene/window 状态），不改变任何窗口行为；保留 keyWindow/mainBundle 兜底。
+2. 本版行为验收点：A→B→A 回后台 A 应排最前；跟随壁纸开启后 deck 不随壁纸偏移；
+   多任务窗口状态栏不再多出 44pt（酷我）；ConsoleLog 出现 [window-lifecycle] 行（诊断）。
+
 20261124-180000 1.1.104 Update：
 1. 「发现注入的共享库」依旧红的下一层根因（与路径形状无关，是 main bundle 指错）：
    多任务容器里访客跑在 LiveProcess 扩展进程内，+[NSBundle mainBundle] 默认返回扩展自己的

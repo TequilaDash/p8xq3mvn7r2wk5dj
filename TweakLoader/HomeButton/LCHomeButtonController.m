@@ -405,8 +405,13 @@ static const CGFloat LCHomeButtonGlobalEdgeTravel = 80;
 // background host, and a classic guest must restart the host process first.
 - (void)handleDoubleTap {
     if (self.isLeaving) return;
+    // Darwin notifications carry no sender identity. Preserve the leaving
+    // LiveProcess container before the host becomes key (several guests share
+    // that same host window). The host validates the request age and UUID.
+    NSString *container = NSUserDefaults.isLiveProcess ? NSHomeDirectory().lastPathComponent : @"";
     NSDictionary *request = @{@"identifier": NSUUID.UUID.UUIDString,
-                              @"timestamp": @(NSDate.date.timeIntervalSince1970)};
+                              @"timestamp": @(NSDate.date.timeIntervalSince1970),
+                              @"container": container ?: @""};
     NSUserDefaults *defaults = NSUserDefaults.lcSharedDefaults;
     [defaults setObject:request forKey:@"LCPendingAppStackRequest"];
     BOOL saved = [defaults synchronize];
@@ -431,6 +436,11 @@ static const CGFloat LCHomeButtonGlobalEdgeTravel = 80;
     // 以前先做 respondsToSelector 判断会直接 return, 导致按键点了没反应.
     if (NSUserDefaults.isLiveProcess) {
         self.isLeaving = YES;
+        NSUserDefaults *defaults = NSUserDefaults.lcSharedDefaults;
+        [defaults setObject:@{@"container": NSHomeDirectory().lastPathComponent ?: @"",
+                              @"timestamp": @(NSDate.date.timeIntervalSince1970)}
+                     forKey:@"LCRecentGuestDeparture"];
+        [defaults synchronize];
         CFNotificationCenterRef center = CFNotificationCenterGetDarwinNotifyCenter();
         CFStringRef name = CFSTR("com.kdt.livecontainer.minimizeAll");
         CFNotificationCenterPostNotification(center, name, NULL, NULL, true);

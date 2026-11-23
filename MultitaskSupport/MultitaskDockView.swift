@@ -662,6 +662,7 @@ class AppInfoProvider {
               let window = windowScene.windows.first else {
             return false
         }
+        MultitaskManager.recordUse(container: uuid)
         passURLSchemeToView(targetView)
         // On iPhone it may be coming forward into a half of the split screen.
         if let decoratedVC = targetView._viewDelegate() as? DecoratedAppSceneViewController,
@@ -782,6 +783,16 @@ class AppInfoProvider {
     
     @objc public func minimizeAllWindows(except: DecoratedAppSceneViewController? = nil) {
         let minimizeWindows = {
+            // Home navigation is one departure event, not N minimize events.
+            // Record only the top visible guest before any view is hidden.
+            if except == nil,
+               let front = self.hostView.subviews.reversed().first(where: {
+                   !$0.isHidden && $0.alpha > 0 && $0._viewDelegate() is DecoratedAppSceneViewController
+               }),
+               let decorated = front._viewDelegate() as? DecoratedAppSceneViewController,
+               let uuid = decorated.appSceneVC.dataUUID {
+                MultitaskManager.recordUse(container: uuid)
+            }
             self.apps.forEach { app in
                 if let vc = app.view?._viewDelegate() as? DecoratedAppSceneViewController,
                    vc != except {
