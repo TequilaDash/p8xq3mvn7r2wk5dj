@@ -1,3 +1,11 @@
+20261125-010000 1.1.108 Update：
+1. 修复内存管理页/堆叠后台内存胶囊完全无数据：jailed 进程无法枚举内核进程表
+   （sysctl KERN_PROC_ALL 无权限，实测返回空）。改为访客会话登记：TweakLoader
+   启动时把 pid/bundleId 写入 app group "TDLiveGuestPids"；宿主读取该表，
+   kill(pid,0) 探活过滤死项后逐个 proc_pid_rusage 取 physical footprint
+   （同 uid 进程内核允许）。内存管理页现在列出宿主+所有活跃访客；胶囊按
+   PID 精确匹配恢复显示。全屏模式访客同样走 TweakLoader constructor，一样登记。
+
 20261124-233000 1.1.107 Update：
 1. 合入外包第五期（堆叠后台三个 BUG + 内存胶囊）：
    - T2-a 命中穿透修复：StackDeckViewport 新增 hitTest override——命中点换算到各卡片 preview
