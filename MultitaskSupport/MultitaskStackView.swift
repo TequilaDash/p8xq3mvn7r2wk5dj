@@ -803,11 +803,10 @@ struct MultitaskStackView: View {
         // 不再用截图里的像素常量——那是我上一版走歪的地方。
         let maxDeckScale: CGFloat = 1.018
         let screenHeight = UIScreen.main.bounds.height
-        let previewHeight = max(1, min(screenHeight * 0.70,
-                                      (size.height - 60) / maxDeckScale - 34))
+        let previewHeight = max(1, min(screenHeight * 0.70, size.height - 60))
         let maxCardWidth = max(1, size.width * 0.72)
         let stride = max(1, maxCardWidth * 0.77)
-        let deckShift = manager.apps.count > 1 ? maxCardWidth * 0.125 : 0
+        let deckShift: CGFloat = 0
         let horizontal = dragAxis == .horizontal ? dragOffset.width : 0
         return ZStack {
             ForEach(Array(manager.apps.enumerated()), id: \.element.appUUID) { index, app in
@@ -828,7 +827,7 @@ struct MultitaskStackView: View {
                              onAppInfo: { manager.showAppInfo(uuid: app.appUUID) },
                              onSplit: { manager.openInSplitScreen(uuid: app.appUUID) },
                              onPictureInPicture: { manager.togglePictureInPicture(uuid: app.appUUID) })
-                    .scaleEffect(distance == 0 ? maxDeckScale : 1)
+                    .scaleEffect(1)
                     .offset(x: distance * stride + deckShift + horizontal, y: vertical)
                     .zIndex(Double(manager.apps.count) - Double(abs(distance)))
                     .accessibilityHidden(index != manager.selectedIndex)

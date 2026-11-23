@@ -122,7 +122,7 @@ private struct TDGlobalHomeOverlay: View {
                         y: min(max(base.y + effectiveOffset.height, margin), proxy.size.height - margin)
                     )
 
-                    HomeButton(action: {}, showsGlass: false)
+                    HomeButton(action: {}, showsGlass: true)
                         .highPriorityGesture(
                             TapGesture(count: 2)
                                 .exclusively(before: TapGesture(count: 1))

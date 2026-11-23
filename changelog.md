@@ -1,3 +1,8 @@
+20261124-010000 1.1.95 Update：
+1. 修 Reveil「发现注入的共享库」的**真正原因**：设备日志证明它对镜像调了 realpath，我们把它解析成了真实的 Documents 路径，于是"对外路径 vs realpath"不一致 → 判注入。现在 realpath 遇到对外伪路径就原样返回（文件操作走 open/stat 的反向翻译，不受影响）。
+2. 辅助触控按钮恢复可见：上一版去掉 glass 后几乎看不见，改回显示玻璃底（showsGlass: true），位置仍默认在左侧不压 chevron。
+3. 后台卡片去掉 0.125 右移和 1.018 放大（上一版截图里右侧被裁），宽度仍按 MIN(屏宽×0.72, previewHeight×aspect)，previewHeight = MIN(屏高×0.70, deck 高−60)。
+
 20261123-230000 1.1.94 Update：
 1. 卡片尺寸回到参考项目的原式，不再用截图像素常量：`previewHeight = MIN(屏幕高×0.70, (deck 高−60)/1.018−34)`、`maxCardWidth = 屏宽×0.72`、最终宽由 `MIN(maxCardWidth, previewHeight×aspect)` 决定；stride 0.77、右移 0.125、34pt 头部、1.018 保持。
 2. Dyld.m 与 TDVRootShim.m 里剩下的 NSLog 全部改走 TDConsoleLog：`[vroot]`、`[hideLC]`、`[TDImageMap]`、`[LC]`、`[DyldLVBypass]` 这些行现在都写进 ConsoleLog 文件，iManager → ConsoleLog 能直接导出。

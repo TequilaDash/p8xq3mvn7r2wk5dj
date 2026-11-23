@@ -430,7 +430,21 @@ static char *tdv_realpath(const char *path, char *resolved) {
     // realpath deliberately resolves the *visible* alias, not the backup: handing
     // the guest the `.td-original...` name would defeat the path virtualization.
     char buf[PATH_MAX];
-    return TDV_REAL(realpath)(tdv_vroot_mapped(path, buf, sizeof(buf)), resolved);
+    const char *use = tdv_vroot_mapped(path, buf, sizeof(buf));
+    if (use != path) {
+        // 输入本身就是"对外伪路径"（镜像枚举报的那个）。realpath 若解析成真实
+        // Documents 路径, 检测器把 announced path 和 realpath 一比就是"注入的共享库"。
+        // 这里原样返回伪路径: 文件操作走 open/stat 的反向翻译, 不受影响。
+        if (resolved) {
+            size_t n = strlen(path);
+            if (n >= PATH_MAX) n = PATH_MAX - 1;
+            memcpy(resolved, path, n);
+            resolved[n] = '\0';
+            return resolved;
+        }
+        return strdup(path);
+    }
+    return TDV_REAL(realpath)(use, resolved);
 }
 
 static ssize_t tdv_readlink(const char *path, char *buf, size_t bufSize) {
