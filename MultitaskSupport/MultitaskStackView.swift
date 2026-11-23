@@ -31,6 +31,7 @@ public class MultitaskStackManager: NSObject, ObservableObject {
     private var hostingWindow: UIWindow?
     private weak var previousKeyWindow: UIWindow?
     private var pendingPresentation = false
+    private var selectingTargetWindow = false
     private var selectedUUID: String?
     private var pendingFocusUUID: String?
     private var lastRequestIdentifier: String?
@@ -184,6 +185,32 @@ public class MultitaskStackManager: NSObject, ObservableObject {
         }
     }
 
+    func dismissToHome() {
+        precondition(Thread.isMainThread)
+        MultitaskDockManager.shared.minimizeAllWindows()
+        NotificationCenter.default.post(name: .lcCloseHostScreens, object: nil)
+        if let home = MainWindow.window {
+            previousKeyWindow = home
+            if let scene = home.windowScene, scene.activationState != .foregroundActive {
+                UIApplication.shared.requestSceneSessionActivation(scene.session, userActivity: nil, options: nil) { error in
+                    NSLog("[TDHome] return Home scene failed: %@", error.localizedDescription)
+                }
+            }
+        }
+        pendingPresentation = false
+        clearStoredRequest()
+        detachWindow(restoreKey: true)
+    }
+
+    // Target activation owns focus. Never queue dismiss(), which restores the
+    // old Home key window one run-loop turn after the guest is already shown.
+    private func finishAppSelection() {
+        pendingPresentation = false
+        clearStoredRequest()
+        detachWindow(restoreKey: false)
+        selectingTargetWindow = false
+    }
+
     private func readStoredRequest() {
         guard let defaults = UserDefaults.lcShared() else { return }
         guard let request = defaults.dictionary(forKey: Self.requestKey) else { return }
@@ -261,7 +288,7 @@ public class MultitaskStackManager: NSObject, ObservableObject {
         NSLog("[TDHome] app stack attached: scene=%@ cards=%ld", scene.session.persistentIdentifier, apps.count)
     }
 
-    private func detachWindow() {
+    private func detachWindow(restoreKey: Bool = true) {
         let previous = previousKeyWindow
         hostingWindow?.isHidden = true
         hostingWindow?.rootViewController = nil
@@ -274,7 +301,7 @@ public class MultitaskStackManager: NSObject, ObservableObject {
         previews.removeAll()
         displayedControllers.removeAll()
         focus(index: 0)
-        if let previous, !previous.isHidden, previous.windowScene?.activationState == .foregroundActive {
+        if restoreKey, let previous, !previous.isHidden, previous.windowScene?.activationState == .foregroundActive {
             previous.makeKey()
         }
     }
@@ -304,6 +331,11 @@ public class MultitaskStackManager: NSObject, ObservableObject {
 
     @objc private func sceneWillDeactivate(_ notification: Notification) {
         guard let scene = notification.object as? UIWindowScene, hostingWindow?.windowScene === scene else { return }
+        if selectingTargetWindow {
+            pendingPresentation = false
+            detachWindow(restoreKey: false)
+            return
+        }
         pendingPresentation = isVisible || pendingPresentation
         detachWindow()
     }
@@ -505,21 +537,27 @@ public class MultitaskStackManager: NSObject, ObservableObject {
                 for other in controllers {
                     if let decorated = self.decoratedController(for: other), decorated !== target { decorated.minimizeWindow() }
                 }
-                if !MultitaskDockManager.shared.bringMultitaskViewToFront(uuid: uuid) {
+                if !MultitaskDockManager.shared.bringMultitaskViewToFront(uuid: uuid, fromDeck: true) {
                     if let pip = PiPManager.shared, pip.isPiP(withDecoratedVC: target) { pip.stopPiP() }
-                    target.restoreFromDock()
+                    // The deck snapshot already performed the entrance. Reveal
+                    // the real surface in its final pose, without a second fly-in.
+                    MultitaskDockManager.shared.revealForDeckSelection(target)
                     container.bringSubviewToFront(view)
                     target.revealWindowControls()
                 }
                 MultitaskManager.recordUse(container: uuid)
-                self.dismiss()
-            } else if let scene = controller.viewIfLoaded?.window?.windowScene {
+                self.finishAppSelection()
+            } else if let targetWindow = controller.viewIfLoaded?.window,
+                      let scene = targetWindow.windowScene {
+                self.selectingTargetWindow = true
                 UIApplication.shared.requestSceneSessionActivation(scene.session, userActivity: nil, options: nil) { error in
                     NSLog("[TDHome] app stack activation failed: %@", error.localizedDescription)
                     self.present()
                 }
+                // Native app window, not the saved Home window, owns focus.
+                targetWindow.makeKey()
                 MultitaskManager.recordUse(container: uuid)
-                self.dismiss()
+                self.finishAppSelection()
             } else {
                 self.message = "窗口暂时无法恢复"
             }
@@ -685,20 +723,26 @@ public class MultitaskStackManager: NSObject, ObservableObject {
                         self.pendingPresentation = false
                         self.clearStoredRequest()
                         NotificationCenter.default.post(name: .lcCloseHostScreens, object: nil)
-                        self.detachWindow()
+                        // Keep the deck covering Home until the replacement
+                        // has been revealed and owns focus.
                         // Bring only the replacement forward; selectApp's
                         // minimize-other-windows policy is not a restart.
                         if let window = self.decoratedController(for: replacement),
                            let view = window.viewIfLoaded, let container = view.superview {
-                            if view.isHidden { window.restoreFromDock() }
+                            MultitaskDockManager.shared.revealForDeckSelection(window)
                             container.bringSubviewToFront(view)
                             window.revealWindowControls()
-                        } else if let scene = replacement.viewIfLoaded?.window?.windowScene {
+                            self.finishAppSelection()
+                        } else if let targetWindow = replacement.viewIfLoaded?.window,
+                                  let scene = targetWindow.windowScene {
+                            self.selectingTargetWindow = true
                             UIApplication.shared.requestSceneSessionActivation(scene.session, userActivity: nil, options: nil) { error in
                                 DispatchQueue.main.async {
                                     self.showRestartMessage("应用已重新启动，但窗口打开失败：\(error.localizedDescription)")
                                 }
                             }
+                            targetWindow.makeKey()
+                            self.finishAppSelection()
                         } else {
                             self.showRestartMessage("应用已重新启动，但暂时没有可显示的窗口")
                         }
@@ -969,7 +1013,9 @@ private final class StackDeckCard: UIView, UIContextMenuInteractionDelegate {
         name.textColor = .white
         name.lineBreakMode = .byTruncatingTail
         preview.layer.cornerRadius = 28
-        preview.layer.cornerCurve = .continuous
+        // One exact circular shape for rendering, hit testing and menu lift.
+        // Do not approximate a continuous corner with a circular hit region.
+        preview.layer.cornerCurve = .circular
         preview.clipsToBounds = true
         preview.isUserInteractionEnabled = false
         centerIcon.contentMode = .scaleAspectFit
@@ -1068,6 +1114,27 @@ private final class StackDeckCard: UIView, UIContextMenuInteractionDelegate {
         unavailableLabel.frame = preview.bounds.insetBy(dx: 12, dy: 12)
         layer.shadowPath = UIBezierPath(roundedRect: preview.frame, cornerRadius: 28).cgPath
     }
+    static func previewPath(bounds: CGRect, radius: CGFloat) -> UIBezierPath {
+        UIBezierPath(roundedRect: bounds, cornerRadius: min(max(0, radius), min(bounds.width, bounds.height) / 2))
+    }
+
+    private func menuPreview() -> UITargetedPreview? {
+        guard owner?.isCurrent(self) == true, preview.window != nil, !preview.bounds.isEmpty else { return nil }
+        let parameters = UIPreviewParameters()
+        parameters.backgroundColor = .clear
+        parameters.visiblePath = Self.previewPath(bounds: preview.bounds, radius: preview.layer.cornerRadius)
+        return UITargetedPreview(view: preview, parameters: parameters)
+    }
+
+    func contextMenuInteraction(_ interaction: UIContextMenuInteraction,
+                                previewForHighlightingMenuWithConfiguration configuration: UIContextMenuConfiguration) -> UITargetedPreview? {
+        menuPreview()
+    }
+    func contextMenuInteraction(_ interaction: UIContextMenuInteraction,
+                                previewForDismissingMenuWithConfiguration configuration: UIContextMenuConfiguration) -> UITargetedPreview? {
+        menuPreview()
+    }
+
     override func accessibilityActivate() -> Bool { owner?.activate(self); return true }
     @objc private func closeAccessible() -> Bool { owner?.close(self, velocity: 0); return true }
     @objc private func restartAccessible() -> Bool { perform { $0.restartApp(uuid: self.uuid, controller: self.launch) }; return true }
@@ -1076,9 +1143,11 @@ private final class StackDeckCard: UIView, UIContextMenuInteractionDelegate {
         action(manager)
     }
     func contextMenuInteraction(_ interaction: UIContextMenuInteraction, configurationForMenuAtLocation location: CGPoint) -> UIContextMenuConfiguration? {
-        guard owner?.isCurrent(self) == true else { return nil }
+        guard let owner, owner.isCurrent(self), owner.prepareContextMenu(for: self) else { return nil }
+        // previewProvider returns a UIViewController, NOT UITargetedPreview.
+        // Explicit highlight/dismiss previews above lift only this card surface.
         return UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { [weak self] _ in
-            guard let self else { return nil }
+            guard let self, self.owner?.isCurrent(self) == true else { return nil }
             func item(_ title: String, _ symbol: String, _ action: @escaping (MultitaskStackManager) -> Void) -> UIAction {
                 UIAction(title: title, image: UIImage(systemName: symbol)) { [weak self] _ in self?.perform(action) }
             }
@@ -1111,6 +1180,16 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
     private let emptyLabel = UILabel()
     private let messageLabel = UILabel()
     private var cards: [StackDeckCard] = []
+    private let blankPan = UIPanGestureRecognizer()
+    private var blankStartX: CGFloat = 0
+    private let memoryCapsule = UIVisualEffectView(effect: UIBlurEffect(style: .systemUltraThinMaterial))
+    private let memoryLabel = UILabel()
+    private var memoryTimer: Timer?
+    private var memoryReadPending = false
+    private var memoryPID: Int32?
+    private var memoryControllerID: ObjectIdentifier?
+    private var memoryBytes: UInt64?
+    private let memoryQueue = DispatchQueue(label: "com.zcontainer.deck.memory", qos: .utility)
     private var dockIDs: [String] = []
     private var dockButtons: [UIButton] = []
     private var stride: CGFloat = 1
@@ -1184,9 +1263,110 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
         let tap = UITapGestureRecognizer(target: self, action: #selector(backgroundTapped))
         tap.delegate = self
         addGestureRecognizer(tap)
+        blankPan.addTarget(self, action: #selector(blankPanned(_:)))
+        blankPan.delegate = self
+        addGestureRecognizer(blankPan)
+        tap.require(toFail: blankPan)
+        memoryCapsule.isUserInteractionEnabled = false
+        memoryCapsule.clipsToBounds = true
+        memoryCapsule.layer.cornerRadius = 16
+        memoryCapsule.isHidden = true
+        memoryLabel.font = .monospacedDigitSystemFont(ofSize: 12, weight: .semibold)
+        memoryLabel.textColor = .label
+        memoryLabel.textAlignment = .center
+        memoryLabel.adjustsFontSizeToFitWidth = true
+        memoryLabel.minimumScaleFactor = 0.8
+        memoryLabel.isUserInteractionEnabled = false
+        memoryCapsule.contentView.addSubview(memoryLabel)
+        addSubview(memoryCapsule) // above pages; contextMenu is a system overlay
     }
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        guard !isHidden, alpha >= 0.01, isUserInteractionEnabled, self.point(inside: point, with: event) else { return nil }
+        if transitioning || invalidated { return self }
+        if !dockScroll.isHidden, dockScroll.alpha >= 0.01 {
+            let local = dockScroll.convert(point, from: self)
+            if dockScroll.point(inside: local, with: event) {
+                return dockScroll.hitTest(local, with: event) ?? self
+            }
+        }
+        // No super.hitTest fallback: that would re-admit transparent card frames.
+        // Empty space is consumed by self, never a live guest behind this window.
+        if let card = frontmostPreviewCard(at: point) { return card }
+        return self
+    }
+
+    private func frontmostPreviewCard(at point: CGPoint) -> StackDeckCard? {
+        guard !pages.isHidden, pages.alpha >= 0.01 else { return nil }
+        let root = layer.presentation() ?? layer
+        let pageLayer = root === layer ? pages.layer : (pages.layer.presentation() ?? pages.layer)
+        // Use one tree consistently; never mix a presentation source with a
+        // model destination if a layer hasn't committed yet.
+        let usePresentation = root !== layer && pageLayer !== pages.layer
+        let source = usePresentation ? root : layer
+        let clipping = usePresentation ? pageLayer : pages.layer
+        guard clipping.opacity >= 0.01, clipping.bounds.contains(clipping.convert(point, from: source)) else { return nil }
+        var winner: StackDeckCard?
+        var bestZ = -CGFloat.greatestFiniteMagnitude
+        for card in cards where !card.isHidden && card.isUserInteractionEnabled && !card.preview.isHidden {
+            let candidate = usePresentation ? card.preview.layer.presentation() : nil
+            let cardLayer = usePresentation ? card.layer.presentation() : nil
+            // Both or neither: coordinates remain in a coherent layer tree.
+            let surface = candidate != nil && cardLayer != nil ? candidate! : card.preview.layer
+            let from = candidate != nil && cardLayer != nil ? source : layer
+            let visualCard = cardLayer ?? card.layer
+            guard visualCard.opacity >= 0.01, surface.opacity >= 0.01 else { continue }
+            let local = surface.convert(point, from: from)
+            guard StackDeckCard.previewPath(bounds: surface.bounds, radius: surface.cornerRadius).contains(local) else { continue }
+            let z = visualCard.zPosition
+            if winner == nil || z > bestZ || (z == bestZ && card.index > winner!.index) {
+                winner = card; bestZ = z
+            }
+        }
+        return winner
+    }
+
+    func prepareContextMenu(for card: StackDeckCard) -> Bool {
+        guard isCurrent(card), draggingCard == nil, !pages.isDragging,
+              let manager, let logical = manager.apps.firstIndex(where: { $0.appUUID == card.uuid }) else { return false }
+        finishEntrance(); stopRebound()
+        focusGeneration += 1 // discard a queued focus publication for another card
+        layingOut = true
+        pages.setContentOffset(pages.contentOffset, animated: false)
+        scrolling = false
+        selected = card.index
+        pages.setContentOffset(CGPoint(x: CGFloat(selected) * stride, y: 0), animated: false)
+        layingOut = false
+        updateDeck()
+        manager.focus(index: logical) // focus only; does NOT record MRU or launch
+        updateMemoryTarget()
+        return isCurrent(card)
+    }
+
+    @objc private func blankPanned(_ pan: UIPanGestureRecognizer) {
+        guard !transitioning, !invalidated else { return }
+        switch pan.state {
+        case .began:
+            finishEntrance(); stopRebound()
+            pages.setContentOffset(pages.contentOffset, animated: false)
+            blankStartX = pages.contentOffset.x
+            dragStartPage = (blankStartX / max(1, stride)).rounded()
+            scrolling = true
+        case .changed:
+            let x = min(max(0, blankStartX - pan.translation(in: self).x), max(0, pages.contentSize.width - pages.bounds.width))
+            pages.setContentOffset(CGPoint(x: x, y: 0), animated: false)
+        case .ended, .cancelled, .failed:
+            let velocity = pan.state == .ended ? -pan.velocity(in: self).x / max(1, pages.bounds.width) : 0
+            let page = StackDeckMath.targetPage(current: pages.contentOffset.x / max(1, stride), velocity: velocity,
+                                                start: dragStartPage, count: cards.count)
+            let animated = !UIAccessibility.isReduceMotionEnabled
+            pages.setContentOffset(CGPoint(x: page * stride, y: 0), animated: animated)
+            if !animated || abs(pages.contentOffset.x - page * stride) < 0.5 { finishScrolling() }
+        default: break
+        }
+    }
 
     func configure(manager: MultitaskStackManager, dockApps: [DockAppModel], showClearAll: Bool,
                    backdrop: @escaping (Bool, TimeInterval) -> Void) {
@@ -1278,16 +1458,107 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
             scrolling = animated
             pages.setContentOffset(CGPoint(x: CGFloat(selected) * stride, y: 0), animated: animated)
         }
+        updateMemoryTarget()
         setNeedsLayout()
     }
 
     override func didMoveToWindow() {
         super.didMoveToWindow()
-        if window != nil { lastBounds = .null; setNeedsLayout() }
+        if window != nil, !invalidated {
+            lastBounds = .null; setNeedsLayout()
+            if memoryTimer == nil {
+                let timer = Timer(timeInterval: 2.5, repeats: true) { [weak self] _ in self?.refreshMemory() }
+                timer.tolerance = 0.25
+                RunLoop.main.add(timer, forMode: .common)
+                memoryTimer = timer
+            }
+            updateMemoryTarget()
+            refreshMemory()
+        } else {
+            memoryTimer?.invalidate(); memoryTimer = nil
+            memoryCapsule.isHidden = true
+        }
     }
+
+    private func selectedMemoryController() -> AppSceneViewController? {
+        guard cards.indices.contains(selected), let controller = cards[selected].launch,
+              !controller.isTerminated, !controller.isUserTerminating, controller.pid > 0,
+              manager?.restartTarget(for: cards[selected].uuid) === controller else { return nil }
+        return controller
+    }
+
+    private func updateMemoryTarget() {
+        let controller = selectedMemoryController()
+        let pid = controller?.pid
+        let identity = controller.map { ObjectIdentifier($0) }
+        if memoryPID != pid || memoryControllerID != identity {
+            memoryPID = pid
+            memoryControllerID = identity
+            memoryBytes = nil
+        }
+        renderMemory()
+    }
+
+    private func renderMemory() {
+        let unit = LCUtils.appGroupUserDefault.string(forKey: "TDMemoryUnit") == "GB" ? "GB" : "MB"
+        if memoryPID != nil, let bytes = memoryBytes, bytes > 0 {
+            memoryLabel.text = TDMemoryManagerView.fmt(bytes, unit: unit)
+            memoryCapsule.isHidden = false
+            memoryCapsule.accessibilityLabel = "选中访客内存 " + (memoryLabel.text ?? "")
+        } else {
+            memoryLabel.text = nil
+            memoryCapsule.isHidden = true
+        }
+        layoutHeader()
+    }
+
+    private func refreshMemory() {
+        guard !invalidated, window != nil else { return }
+        updateMemoryTarget()
+        guard !memoryReadPending, let controller = selectedMemoryController() else { return }
+        let pid = controller.pid
+        let identity = ObjectIdentifier(controller)
+        memoryReadPending = true
+        // sysctl/proc enumeration is not a display-link task. One utility
+        // sample at a time; only UInt64? comes back to UIKit on the main queue.
+        memoryQueue.async { [weak self] in
+            let sample = TDMemoryManagerView.snapshot()
+            let bytes = sample.guests.first(where: { $0.pid == pid && $0.rssBytes > 0 })?.rssBytes
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.memoryReadPending = false
+                guard !self.invalidated, self.window != nil,
+                      let current = self.selectedMemoryController(), current.pid == pid,
+                      ObjectIdentifier(current) == identity else { return }
+                self.memoryBytes = bytes
+                self.renderMemory()
+            }
+        }
+    }
+
+    private func layoutHeader() {
+        let safe = safeAreaInsets
+        let available = max(0, bounds.width - safe.left - safe.right - 32)
+        // 32pt high; 12pt horizontal inset, 16pt right safe-area margin.
+        let natural = ceil(memoryLabel.intrinsicContentSize.width) + 24
+        let width = min(max(76, natural), min(160, available * 0.42))
+        memoryCapsule.frame = CGRect(x: bounds.maxX - safe.right - 16 - width,
+                                     y: safe.top + 10, width: width, height: 32)
+        memoryLabel.frame = memoryCapsule.bounds.insetBy(dx: 12, dy: 7)
+        let reserve = memoryCapsule.isHidden ? 0 : width + 12
+        let messageWidth = available - reserve
+        if !memoryCapsule.isHidden && messageWidth < 120 {
+            // Narrow split/native viewport: message goes below, never overlays.
+            messageLabel.frame = CGRect(x: safe.left + 16, y: safe.top + 54, width: max(1, available), height: 44)
+        } else {
+            messageLabel.frame = CGRect(x: safe.left + 16, y: safe.top + 4, width: max(1, messageWidth), height: 44)
+        }
+    }
+
     override func safeAreaInsetsDidChange() { super.safeAreaInsetsDidChange(); setNeedsLayout() }
     override func layoutSubviews() {
         super.layoutSubviews()
+        layoutHeader()
         guard !invalidated, !transitioning, draggingCard == nil, !scrolling,
               !pages.isDragging, !pages.isDecelerating, bounds.width > 0, bounds.height > 0 else { return }
         guard lastBounds != bounds || lastSafe != safeAreaInsets else { return }
@@ -1296,8 +1567,6 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
         defer { layingOut = false }
         lastBounds = bounds; lastSafe = safeAreaInsets
         let width = bounds.width, height = bounds.height, safe = safeAreaInsets
-        messageLabel.frame = CGRect(x: safe.left + 16, y: safe.top + 4,
-                                    width: max(1, width - safe.left - safe.right - 32), height: 44)
         // Reference :523-545. One scene-local coordinate system; no UIScreen.main.
         let dockHeight = max(54, ceil(dockIconSize) + 16)
         let dockTop = max(safe.top + 12, height - safe.bottom - dockHeight - 4)
@@ -1386,7 +1655,7 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
         guard scrollView === pages, !layingOut, !transitioning else { return }
         if !cards.isEmpty {
             let next = min(cards.count - 1, max(0, Int((pages.contentOffset.x / stride).rounded())))
-            if selected != next { selected = next; publishFocus() }
+            if selected != next { selected = next; publishFocus(); updateMemoryTarget() }
         }
         UIView.performWithoutAnimation { updateDeck() }
     }
@@ -1420,11 +1689,13 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
         guard !transitioning, !invalidated else { return false }
         if let pan = gestureRecognizer as? UIPanGestureRecognizer {
             let v = pan.velocity(in: self)
+            if pan === blankPan { return abs(v.x) > abs(v.y) * 1.2 }
             return abs(v.y) > abs(v.x) * 1.2
         }
         return true
     }
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+        if gestureRecognizer === blankPan { return touch.view === self }
         if gestureRecognizer.view === self {
             if touch.view?.isDescendant(of: dockScroll) == true || touch.view?.isDescendant(of: clearButton) == true { return false }
             if cards.contains(where: { touch.view?.isDescendant(of: $0) == true }) { return false }
@@ -1536,7 +1807,9 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
     private func runTransition(duration: TimeInterval, damping: CGFloat, velocity: CGFloat = 0,
                                animations: @escaping () -> Void, completion: @escaping () -> Void) {
         finishEntrance(); stopRebound()
-        transitioning = true; pages.isScrollEnabled = false; isUserInteractionEnabled = false
+        // Keep the full-screen viewport interactive as an input shield; its
+        // hitTest consumes transition touches instead of exposing live guests.
+        transitioning = true; pages.isScrollEnabled = false; isUserInteractionEnabled = true
         let done = { [weak self] in
             guard let self, !self.invalidated else { return }
             self.transitioning = false; self.pages.isScrollEnabled = true; self.isUserInteractionEnabled = true
@@ -1606,13 +1879,15 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
             guard let self else { return }
             self.hideDock(); self.pages.alpha = 0
             for card in self.cards { card.transform = card.resting.scaledBy(x: 0.86, y: 0.86); card.transform.ty += 46 }
-        }) { [weak self] in self?.manager?.dismiss() }
-        // Host policy is intentionally preserved: dismiss to previous window,
-        // unlike reference :1274-1279, which explicitly invokes showHome.
+        }) { [weak self] in self?.manager?.dismissToHome() }
+        // Blank/escape means Home, unlike selecting a card, which must never
+        // restore the old Home key window after revealing the target.
     }
     override func accessibilityPerformEscape() -> Bool { dismissDeck(); return true }
     func invalidate() {
         invalidated = true; focusGeneration += 1
+        memoryTimer?.invalidate(); memoryTimer = nil
+        memoryBytes = nil; memoryPID = nil; memoryControllerID = nil; memoryCapsule.isHidden = true
         entrance?.stopAnimation(true); transition?.stopAnimation(true); rebound?.stopAnimation(true)
         entrance = nil; transition = nil; rebound = nil
         pages.delegate = nil

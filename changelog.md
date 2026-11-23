@@ -1,3 +1,29 @@
+20261124-233000 1.1.107 Update：
+1. 合入外包第五期（堆叠后台三个 BUG + 内存胶囊）：
+   - T2-a 命中穿透修复：StackDeckViewport 新增 hitTest override——命中点换算到各卡片 preview
+     的局部空间（含缩放/滚动偏移/对齐），按可见性+圆角路径+z 序取最前卡；无卡覆盖返回 viewport
+     （空白点击回主屏）。压叠卡透明边缘不再误触；新增空白区专用横滑分页，卡内/坞内手势约束不变。
+   - T2-b 二次进入修复：selectApp 恢复目标后走 finishAppSelection（detachWindow(restoreKey:false)），
+     不再把 key 显式交还主屏；native 场景 targetWindow.makeKey 在 deck 隐藏前完成；
+     fromDeck 恢复走无动画的最终姿态（revealForDeckSelection），不再"快照放大后又飞入一次"。
+   - T2-c 长按残影修复：非当前卡长按先在 deck 内聚焦到该卡（prepareContextMenu），
+     并提供显式 UITargetedPreview（previewForHighlighting/Dismissing，只 lift 实心 preview、
+     圆角路径命中），不再整卡透明 frame 被 lift 成全屏残影；过期 launch 身份仍拒绝。
+   - T4 内存胶囊：deck 右上角 systemUltraThinMaterial 胶囊（高32/圆角16，不吃触摸），
+     精确匹配当前焦点卡对应 PID 的 phys_footprint，2.5s 刷新，单位跟随 TDMemoryUnit，
+     无数据时隐藏。卡片 preview 圆角曲线 continuous→circular（命中/显示同源，需真机复核）。
+2. 日志取证初步结论（详见回执）：
+   - 快手 nil-HUD：进程内唯一窗口 KSDarkModeWindow hidden=1 bounds=0x0 root=nil、scene state=0
+     （未连接）→ 快手把业务内容画在我们看不到的宿主窗口上，HUD 取不到任何 key 窗口。
+     修复方向=宿主把承载访客内容的窗口以标准语义暴露（方案B），下一期处理。
+   - 状态栏：geometry 行显示多任务 scene 的 statusBarManager.statusBarFrame={{0,0},{0,0}} 且
+     safeTop=0 → 访客 scene 从未收到系统状态栏布局；[fbsScene settings] 的物理条矩形也没有
+     透传进来。修复=宿主侧把物理状态栏矩形写入虚拟 scene 的 settings（下一期）。
+   - 环境：[env-view] 显示 mask 形状已正确（Reveil.app/Reveil）；日志里"乱码"只是
+     TDConsoleLog 的 %s→Latin1 显示层假象，检测器拿到的是正确 UTF-8 字节。
+     下一层疑点=library_stub/TweakLoader 等容器镜像在检测器枚举全量镜像时的身份
+     （需要 Reveil 红项展开的详情文本截图来定案）。
+
 20261124-210000 1.1.106 Update：
 1. [env-view] 检测器视角诊断（取证优先，不盲改）：访客进程内把检测器可比对的全部基准值
    （mainBundle 路径/标识/显示名、_NSGetExecutablePath、dyld 镜像前 24 条、csops 标志位）

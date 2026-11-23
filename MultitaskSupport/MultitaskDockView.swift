@@ -652,14 +652,14 @@ class AppInfoProvider {
     
     
     // Find and bring corresponding multitask view to front
-    func bringMultitaskViewToFront(uuid: String, from center: CGPoint? = nil) -> Bool {
+    func bringMultitaskViewToFront(uuid: String, from center: CGPoint? = nil, fromDeck: Bool = false) -> Bool {
         guard let windowScene = keyWindow?.windowScene else {
             return false
         }
         attachWindowHostingView()
 
         guard let targetView = apps.first(where: { $0.appUUID == uuid })?.view,
-              let window = windowScene.windows.first else {
+              let window = targetView.window, window.windowScene === windowScene else {
             return false
         }
         MultitaskManager.recordUse(container: uuid)
@@ -669,8 +669,30 @@ class AppInfoProvider {
            LCWindowSnapManager.shared.claimPhoneSplitRequest(forWindow: decoratedVC) {
             return true
         }
-        animateViewAppearance(targetView, from: center, in: window)
+        if fromDeck, let decorated = targetView._viewDelegate() as? DecoratedAppSceneViewController {
+            revealForDeckSelection(decorated)
+            bringViewToFront(targetView, in: window)
+            decorated.revealWindowControls()
+        } else {
+            animateViewAppearance(targetView, from: center, in: window)
+        }
         return true
+    }
+
+    /// The deck already animated a content snapshot to the final viewport.
+    /// End any Dock flyer synchronously under that snapshot, not in a second
+    /// run-loop/animation after deck dismissal. Virtual guests share the host
+    /// window: do not call makeKey on it or steal a native scene's focus.
+    func revealForDeckSelection(_ controller: DecoratedAppSceneViewController) {
+        if let pip = PiPManager.shared, pip.isPiP(withDecoratedVC: controller) { pip.stopPiP() }
+        UIView.performWithoutAnimation {
+            controller.restoreFromDock()
+            controller.view.layer.removeAllAnimations()
+            controller.view.transform = .identity
+            controller.view.alpha = 1
+            controller.view.isHidden = false
+            controller.view.layoutIfNeeded()
+        }
     }
 
     private func passURLSchemeToView(_ view: UIView) {
