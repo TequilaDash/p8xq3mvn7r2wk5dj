@@ -1221,7 +1221,8 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
         pages.showsHorizontalScrollIndicator = false
         pages.decelerationRate = .fast
         pages.isDirectionalLockEnabled = true
-        pages.bounces = false
+        pages.bounces = true
+        pages.alwaysBounceHorizontal = true
         pages.contentInsetAdjustmentBehavior = .never
         addSubview(pages)
         dock.layer.cornerRadius = 19
@@ -1355,7 +1356,8 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
             dragStartPage = (blankStartX / max(1, stride)).rounded()
             scrolling = true
         case .changed:
-            let x = min(max(0, blankStartX - pan.translation(in: self).x), max(0, pages.contentSize.width - pages.bounds.width))
+            // 允许越界拖出 overscroll（原生后台卡效果），松手由 targetPage 归位回弹。
+            let x = blankStartX - pan.translation(in: self).x
             pages.setContentOffset(CGPoint(x: x, y: 0), animated: false)
         case .ended, .cancelled, .failed:
             let velocity = pan.state == .ended ? -pan.velocity(in: self).x / max(1, pages.bounds.width) : 0
