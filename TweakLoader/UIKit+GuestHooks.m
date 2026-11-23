@@ -229,7 +229,7 @@ static void LCLogGuestWindows(NSString *event) {
         UIWindowScene *scene = (UIWindowScene *)connected;
         id<UIWindowSceneDelegate> delegate = (id)scene.delegate;
         UIWindow *sceneDelegateWindow = [delegate respondsToSelector:@selector(window)] ? delegate.window : nil;
-        [text appendFormat:@"\n scene=%@ state=%ld key=%p delegateWindow=%p windows=%lu role=%@ sessionState=%ld", scene.session.persistentIdentifier, (long)scene.activationState, scene.keyWindow, sceneDelegateWindow, (unsigned long)scene.windows.count, scene.session.role, (long)scene.session.state];
+        [text appendFormat:@"\n scene=%@ state=%ld key=%p delegateWindow=%p windows=%lu role=%@", scene.session.persistentIdentifier, (long)scene.activationState, scene.keyWindow, sceneDelegateWindow, (unsigned long)scene.windows.count, [scene.session valueForKey:@"role"]];
         for (UIWindow *window in scene.windows) if (![windows containsObject:window]) [windows addObject:window];
     }
     if (delegateWindow && ![windows containsObject:delegateWindow]) [windows addObject:delegateWindow];
@@ -1521,7 +1521,8 @@ static BOOL gLCLegacyAppHooksInstalled = NO;
     for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
         if (![scene isKindOfClass:UIWindowScene.class]) continue;
         UIWindowScene *windowScene = (UIWindowScene *)scene;
-        if (![windowScene.session.role isEqualToString:UIWindowSceneSessionRoleApplication]) continue;
+        NSString *sessionRole = [windowScene.session valueForKey:@"role"];
+        if (![sessionRole isKindOfClass:NSString.class] || ![sessionRole isEqualToString:UIWindowSceneSessionRoleApplication]) continue;
         UISceneActivationState state = windowScene.activationState;
         if (state == UISceneActivationStateBackground) continue;
         applicationSceneCount += 1;
