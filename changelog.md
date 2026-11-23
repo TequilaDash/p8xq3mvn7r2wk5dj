@@ -1,3 +1,15 @@
+20261123-235000 1.1.111 Update：
+1. 1.1.110 仍有访客启动即崩（Via/LocalDevVPN 三份 .ips，同 109 栈：dlopen 内
+   callInitializer SIGABRT）。本轮不猜，做二分：把六期 T2 唯一会在访客
+   initializer 阶段触达的"窗口挂接三件套"整体回退到 1.1.108 语义——
+   hook_setHidden 恢复"仅在显示时挂 scene"、updateWindowScene 去掉唯一
+   application scene 兜底、删除孤儿窗口收养定时器及其 scene 激活观察者。
+   保留：key window 兜底（防 HUD 断言）、role 的 respondsToSelector 门控、
+   T1 状态栏透传全套（settings-height/transport/sbSrc 探针）、T3 env-view 全量取证。
+2. 判读：若 111 访客能起 → 崩源锁定在被回退的挂接三件套（快手场景的
+   window-scene-attached 也随之暂不可用，等定位后用更窄的挂接条件重做）；
+   若 111 仍崩 → 剩余差异只有 T1/T3 与 108 的内存登记，范围极小。
+
 20261125-100000 1.1.110 Update：
 1. 修复 1.1.109 访客全面启动崩溃（"app 已终止"）：六期外包在 updateWindowScene
    与 window-lifecycle 日志里用 KVC（valueForKey:@"role"）读私有的
