@@ -9,6 +9,7 @@
 #include <dlfcn.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <stdlib.h>
 #import <os/lock.h>
 
 UIInterfaceOrientation LCOrientationLock = UIInterfaceOrientationUnknown;
@@ -96,6 +97,40 @@ static void LCPostWindowTouched(void) {
 static BOOL LCWindowHasVisibleGuestContent(UIWindow *window);
 
 static IMP gOrigApplicationKeyWindow = NULL;
+static IMP gOrigMainBundle = NULL;
+static NSBundle *gLCGuestMainBundle = nil;
+
+// 上游 LiveContainer 把访客的主 bundle 指回访客本身（LCBootstrap 里用
+// initWithPathForMainBundle: 构造访客 bundle）。我们的多任务容器让访客跑在
+// LiveProcess 扩展进程里，+[NSBundle mainBundle] 默认是扩展自己的 LiveProcess.appex
+// ——检测器拿 mainBundle 与镜像路径一比，访客自己的可执行文件和 framework 全部被判
+// "注入的共享库"。这里把 +[NSBundle mainBundle] 换成访客 bundle：真实目录直接由现有
+// 掩码逻辑对外呈现，bundlePath 钩子自然给出与镜像一致的伪路径，bundleIdentifier 钩子给访客 id。
+static NSBundle *LCGuestMainBundle(id self, SEL _cmd) {
+    if (gLCGuestMainBundle) return gLCGuestMainBundle;
+    NSString *guestId = NSUserDefaults.lcGuestAppId;
+    if (guestId.length == 0) {
+        return ((NSBundle *(*)(id, SEL))gOrigMainBundle)(self, _cmd);
+    }
+    NSString *realDir = nil;
+    const char *prefix = tdv_mask_real_prefix();
+    if (prefix) {
+        realDir = @(prefix);
+    } else {
+        const char *home = getenv("LC_HOME_PATH");
+        if (home && home[0]) {
+            NSString *dir = [NSString stringWithFormat:@"%s/Documents/Applications/%@.app", home, guestId];
+            if ([NSFileManager defaultManager].fileExistsAtPath:dir]) realDir = dir;
+        }
+    }
+    if (!realDir) {
+        return ((NSBundle *(*)(id, SEL))gOrigMainBundle)(self, _cmd);
+    }
+    NSBundle *bundle = [[NSBundle alloc] initWithPathForMainBundle:realDir];
+    if (bundle) gLCGuestMainBundle = bundle;
+    return gLCGuestMainBundle ? gLCGuestMainBundle : ((NSBundle *(*)(id, SEL))gOrigMainBundle)(self, _cmd);
+}
+
 
 // 上游 LiveContainer 给每个访客独立 scene，keyWindow 天然是访客窗口；我们跑在宿主 scene 里，
 // keyWindow 可能指向宿主浮层/设置窗，或者干脆没有 —— 快手注入的 llykwai.dylib 调
@@ -169,6 +204,13 @@ static void UIKitGuestHooksInit() {
                 gOrigShowHUDAddedTo = method_getImplementation(hudMethod);
                 method_setImplementation(hudMethod, (IMP)LCGuestShowHUDAddedTo);
             }
+        }
+    }
+    {
+        Method mainBundleMethod = class_getClassMethod(NSBundle.class, @selector(mainBundle));
+        if (mainBundleMethod) {
+            gOrigMainBundle = method_getImplementation(mainBundleMethod);
+            method_setImplementation(mainBundleMethod, (IMP)LCGuestMainBundle);
         }
     }
     {

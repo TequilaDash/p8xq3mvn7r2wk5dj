@@ -510,6 +510,12 @@ const char *tdv_masked_image_name(const char *realName) {
     return masked;
 }
 
+// 供其它{TRM_WILDCARD} 读取当前访客的真实目录前缀（已掩码过的路径前），
+// 例如给 NSBundle.mainBundle 重建访客 bundle 时需要真实目录。
+const char *tdv_mask_real_prefix(void) {
+    return gTDVRealPrefix[0] ? gTDVRealPrefix : NULL;
+}
+
 // 反向: 把对外伪路径翻回真实路径。只伪名字不翻文件, 检测器一比就矛盾, 1.1.54 就是
 // 这么炸的; 所有文件 API 收到虚路径都要先走这里。
 const char *tdv_real_path_from_virtual(const char *path) {

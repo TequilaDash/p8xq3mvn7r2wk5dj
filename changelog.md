@@ -1,3 +1,12 @@
+20261124-180000 1.1.104 Update：
+1. 「发现注入的共享库」依旧红的下一层根因（与路径形状无关，是 main bundle 指错）：
+   多任务容器里访客跑在 LiveProcess 扩展进程内，+[NSBundle mainBundle] 默认返回扩展自己的
+   LiveProcess.appex；检测器拿 mainBundle 与镜像路径一比，访客自己的可执行文件和自带 framework
+   全被判"从别处注入"。上游 LiveContainer 的做法是把访客主 bundle 指回访客本身
+   （LCBootstrap 用 initWithPathForMainBundle: 构造）；这里在访客进程内等价补上：
+   +[NSBundle mainBundle] 换成访客 bundle —— 真实目录由现有掩码逻辑对外呈现，
+   bundlePath 钩子给出与镜像一致的伪路径，bundleIdentifier 钩子给访客 id。
+
 20261124-170000 1.1.103 Update：
 1. 「发现注入的共享库」还红的下一层原因：对外伪路径的 .app 层级用的是**访客 bundle id**（com.reveil.app.app），
    真机安装不存在"反DNS串+.app"这种安装形态——正常是 <显示名>.app（Reveil.app）。检测器比对目录形状即可判假。
