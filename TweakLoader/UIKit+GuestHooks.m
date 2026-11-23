@@ -99,6 +99,7 @@ static void LCPostWindowTouched(void) {
 
 static BOOL LCWindowHasVisibleGuestContent(UIWindow *window);
 
+static void LCLogEnvView(NSString *reason);
 static IMP gOrigApplicationKeyWindow = NULL;
 static IMP gOrigMainBundle = NULL;
 static NSBundle *gLCGuestMainBundle = nil;
