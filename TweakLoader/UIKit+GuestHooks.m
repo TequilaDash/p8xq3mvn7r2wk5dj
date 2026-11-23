@@ -107,6 +107,14 @@ static NSBundle *gLCGuestMainBundle = nil;
 // ——检测器拿 mainBundle 与镜像路径一比，访客自己的可执行文件和 framework 全部被判
 // "注入的共享库"。这里把 +[NSBundle mainBundle] 换成访客 bundle：真实目录直接由现有
 // 掩码逻辑对外呈现，bundlePath 钩子自然给出与镜像一致的伪路径，bundleIdentifier 钩子给访客 id。
+typedef const char *(*TDMaskRealPrefixFn)(void);
+static TDMaskRealPrefixFn LCGuestMaskRealPrefixFn(void) {
+    static TDMaskRealPrefixFn fn;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ fn = (TDMaskRealPrefixFn)dlsym(RTLD_DEFAULT, "tdv_mask_real_prefix"); });
+    return fn;
+}
+
 static NSBundle *LCGuestMainBundle(id self, SEL _cmd) {
     if (gLCGuestMainBundle) return gLCGuestMainBundle;
     NSString *guestId = NSUserDefaults.lcGuestAppId;
@@ -114,7 +122,8 @@ static NSBundle *LCGuestMainBundle(id self, SEL _cmd) {
         return ((NSBundle *(*)(id, SEL))gOrigMainBundle)(self, _cmd);
     }
     NSString *realDir = nil;
-    const char *prefix = tdv_mask_real_prefix();
+    TDMaskRealPrefixFn maskFn = LCGuestMaskRealPrefixFn();
+    const char *prefix = maskFn ? maskFn() : NULL;
     if (prefix) {
         realDir = @(prefix);
     } else {
