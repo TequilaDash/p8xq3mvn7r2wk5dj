@@ -92,6 +92,8 @@ static void LCPostWindowTouched(void) {
     notify_post(name);
 }
 
+static BOOL LCWindowHasVisibleGuestContent(UIWindow *window);
+
 static IMP gOrigApplicationKeyWindow = NULL;
 
 // 上游 LiveContainer 给每个访客独立 scene，keyWindow 天然是访客窗口；我们跑在宿主 scene 里，

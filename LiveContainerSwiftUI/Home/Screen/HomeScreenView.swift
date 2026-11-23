@@ -109,6 +109,10 @@ struct HomeScreenView: View {
         .onReceive(NotificationCenter.default.publisher(for: UIScene.didActivateNotification)) { _ in
             model.refreshAppsFromSource()
         }
+        // 从访客/其它场景回到主屏幕: isCoveredByScreen 由 true 变 false, 正是"桌面重新可见"的时刻。
+        .onChange(of: model.isCoveredByScreen) { _, covered in
+            if !covered { model.refreshAppsFromSource() }
+        }
         .onReceive(NotificationCenter.default.publisher(for: .LCPhoneSplitDidChange)) { _ in
             model.phoneSplitDidChange()
         }

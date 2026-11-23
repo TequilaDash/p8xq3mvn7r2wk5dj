@@ -1,3 +1,7 @@
+20261124-050000 1.1.96 补丁：
+1. 修编译错误：给 LCWindowHasVisibleGuestContent 补前向声明（我的 swizzle 用在了定义之前）。
+2. 回到主屏幕的刷新再接一路信号：isCoveredByScreen 由 true→false（访客窗口让开、桌面重新可见）时也 refreshAppsFromSource()，覆盖"首次进入/从其它场景返回桌面图标不刷新"。
+
 20261124-030000 1.1.96 Update：
 1. 修快手崩溃的根本原因：Ghidra 反编译 llykwai.dylib（LC_ID=/Library/MobileSubstrate/DynamicLibraries/zzztest4.dylib）的 0x46a48 = MBProgressHUD::showHUDAddedTo:animated:，它把拿到的 view 传进 initWithView:，而 initWithView: 里 NSParameterAssert(view) → 抛「View must not be nil」。调用方拿到的 view 是 nil，是因为我们在宿主 scene 里跑访客，keyWindow 不是访客窗口（上游 LiveContainer 给访客独立 scene，所以没事）。
    现在给访客补上 keyWindow：swizzle UIApplication.keyWindow，优先返回"装着访客画面"的窗口（LCWindowHasVisibleGuestContent），没有访客窗口时回退原实现。
