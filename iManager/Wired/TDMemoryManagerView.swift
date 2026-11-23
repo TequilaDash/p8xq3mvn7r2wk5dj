@@ -21,6 +21,15 @@ struct rusage_info_v2 {
     var ri_interrupt_wkups64: UInt64
     var ri_pagesize: Int32
     var ri_reserved: (UInt32, UInt32)
+    init() {
+        ri_uuid = (0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0)
+        ri_user_time = 0; ri_system_time = 0; ri_pkg_idle_wkups = 0
+        ri_interrupt_wkups = 0; ri_pageins = 0; ri_wired_size = 0
+        ri_resident_size = 0; ri_phys_footprint = 0
+        ri_user_time64 = 0; ri_system_time64 = 0
+        ri_pkg_idle_wkups64 = 0; ri_interrupt_wkups64 = 0
+        ri_pagesize = 0; ri_reserved = (0, 0)
+    }
 }
 @_silgen_name("proc_pid_rusage")
 func proc_pid_rusage(_ pid: Int32, _ flavor: Int32, _ buffer: UnsafeMutablePointer<rusage_info_v2>?) -> Int32
@@ -141,22 +150,21 @@ struct TDMemoryManagerView: View {
 
     static func snapshot() -> Snapshot {
         var out = Snapshot()
-        var size: UInt32 = 0
         // sysctl({CTL_KERN, KERN_PROC, KERN_PROC_ALL, 0}) — same-uid visibility.
         var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_ALL, 0]
-        guard mib.withUnsafeMutableBufferPointer({ p in
+        var size: UInt = 0
+        let rc0 = mib.withUnsafeMutableBufferPointer { p in
             sysctl(p.baseAddress, 4, nil, &size, nil, 0)
-        }) == 0, size > 0 else { return out }
-        var count = Int(size) / MemoryLayout<kinfo_proc>.stride
-        var procs = [kinfo_proc](repeating: kinfo_proc(), count: count + 8)
-        size &= ~UInt32(MemoryLayout<kinfo_proc>.size - 1)
+        }
+        guard rc0 == 0, size > 0 else { return out }
+        var procs = [kinfo_proc](repeating: kinfo_proc(), count: Int(size) / MemoryLayout<kinfo_proc>.stride + 8)
         let rc = mib.withUnsafeMutableBufferPointer { p in
             procs.withUnsafeMutableBytes { raw in
                 sysctl(p.baseAddress, 4, raw.baseAddress, &size, nil, 0)
             }
         }
         guard rc == 0 else { return out }
-        count = Int(size) / MemoryLayout<kinfo_proc>.stride
+        let count = Int(size) / MemoryLayout<kinfo_proc>.stride
 
         var seen = Set<pid_t>()
         for i in 0..<count {
