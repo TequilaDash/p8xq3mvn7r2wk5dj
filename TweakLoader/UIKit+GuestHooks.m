@@ -114,9 +114,42 @@ static UIWindow *LCGuestApplicationKeyWindow(UIApplication *self, SEL _cmd) {
     return nil;
 }
 
+extern void TDConsoleLog(NSString *format, ...) NS_FORMAT_FUNCTION(1, 2) __attribute__((weak_import));
+static IMP gOrigShowHUDAddedTo = NULL;
+static BOOL gLoggedNilHUDView = NO;
+
+// 快手的注入库 llykwai.dylib 在启动数秒后的主队列回调里调
+// +[MBProgressHUD showHUDAddedTo:animated:]，传进来的 view 是 nil，
+// MBProgressHUD initWithView: 的 NSParameterAssert 抛 NSException → SIGABRT（表现为黑屏）。
+// 上游 LiveContainer 给访客独立 scene，它总拿得到窗口；我们把访客画在宿主 scene 的
+// 虚拟窗口里，有的取窗口路径仍是 nil。兜底：view 为 nil 时改传访客 keyWindow，
+// HUD 语义不变，只是不再把 nil 送进断言。
+static id LCGuestShowHUDAddedTo(id self, SEL _cmd, id view, BOOL animated) {
+    if (!view) {
+        view = LCGuestApplicationKeyWindow(UIApplication.sharedApplication, @selector(keyWindow));
+        if (!gLoggedNilHUDView) {
+            gLoggedNilHUDView = YES;
+            if (TDConsoleLog) {
+                TDConsoleLog(@"[LC] MBProgressHUD received a nil view; substituted the guest key window");
+            }
+        }
+    }
+    return ((id(*)(id, SEL, id, BOOL))gOrigShowHUDAddedTo)(self, _cmd, view, animated);
+}
+
 __attribute__((constructor))
 static void UIKitGuestHooksInit() {
     if(!NSUserDefaults.lcGuestAppId) return;
+    {
+        Class hudClass = NSClassFromString(@"MBProgressHUD");
+        if (hudClass) {
+            Method hudMethod = class_getClassMethod(hudClass, @selector(showHUDAddedTo:animated:));
+            if (hudMethod) {
+                gOrigShowHUDAddedTo = method_getImplementation(hudMethod);
+                method_setImplementation(hudMethod, (IMP)LCGuestShowHUDAddedTo);
+            }
+        }
+    }
     {
         Method keyWindowMethod = class_getInstanceMethod(UIApplication.class, @selector(keyWindow));
         if (keyWindowMethod) {

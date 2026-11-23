@@ -1,3 +1,11 @@
+20261124-130000 1.1.100 Update：
+1. 快手黑屏根因（1.1.99 的 LiveProcess .ips 已证）：启动约 7 秒后主队列回调里，快手注入库 llykwai.dylib 调
+   +[MBProgressHUD showHUDAddedTo:animated:] 传进 nil view，MBProgressHUD initWithView: 的
+   NSParameterAssert（源码 :109）抛 NSException → 未捕获 → SIGABRT，进程死亡 = 黑屏。
+   1.1.97 的 keyWindow swizzle 没覆盖它取窗口的那条路径。
+   兜底修法：swizzle +showHUDAddedTo:animated:，view 为 nil 时改传访客 keyWindow 并 TDConsoleLog 记一次
+   （[LC] MBHUD…），HUD 语义不变，nil 不再进断言。HUD 类由快手自带，NSClassFromString 按需挂接。
+
 20261124-110000 1.1.99 Update：
 1. 堆叠后台按参考工程 dompling/LC-SS-widget-export 的 LCOrbitTaskSwitcher.m 逐行对齐（上一版我误删了两条原式，导致卡片看着不对）：
    - :554 `deckCenterX = width/2 + (count>1 ? maxCardWidth*0.125 : 0)` —— 恢复 0.125 的右移。
