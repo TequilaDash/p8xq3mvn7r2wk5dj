@@ -1,3 +1,11 @@
+20261124-090000 1.1.98 Update：
+1. 修两个 .ips 直指的问题：伪装成"补丁版本变化就整包重签"的 forceSign 现在只在"实测签名已失效"时才为真。
+   - LiveContainer 崩溃(SIGBUS)栈顶是 ZSign 的 ZArchO::Init ← ZMachO::OpenFile ← +[ZSigner signMachOPathArr:...]，
+     就是启动时整包重签把 400MB+ 的二进制读崩。
+   - LiveProcess(访客)崩溃是 EXC_BAD_ACCESS / SIGKILL-CODESIGNING "Invalid Page"，发生在 dlopen 自己的
+     Frameworks/library_stub：重签后文件页与签名哈希对不上，被内核判非法页。
+   两处都源于"不必重签却重签"，所以先把强制重签关掉。
+
 20261124-070000 1.1.97 Update：
 1. 几何/底部图层日志并进 iManager 能列出的那份文件：`appendGeometryLine` 原来写 `geometry-<pid>.log`，页面上看不到、也导不出来；现在写 `console-yyyyMMdd-pid<pid>.log`，和 TDConsoleLog 同一个文件。
    这样下一次导出 ConsoleLog 就能看到 `[geometry]` 与 `[bottom-overlays]` 的实测坐标/alpha，状态栏偏高、底部遮挡才能按数据改，不靠猜。

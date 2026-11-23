@@ -640,7 +640,12 @@ static NSDictionary* LCFileIdentity(NSString* path) {
             self.spoofSDKVersion = YES;
         }
         info[@"LCPatchRevision"] = @(currentPatchRev);
-        forceSign = true;
+        // 只有"打过补丁之后确实需要重签"才 forceSign。以前每次 patchRev 变化都整包重签,
+        // 大二进制(快手 400MB+)在 ZSign 里会 SIGBUS, 而且重签后访客 frameworks 的页与
+        // 签名哈希对不上, 内核直接 SIGKILL-CODESIGNING "Invalid Page"(见 .ips)。
+        // 已签名且证书没换的场景由下面的 checkCodeSignature 决定, 这里不再强制。
+        NSString *patchedExecPath = [appPath stringByAppendingPathComponent:infoPlist[@"CFBundleExecutable"]];
+        forceSign = forceSign || !checkCodeSignature(patchedExecPath.UTF8String);
         
         [self save];
     }
