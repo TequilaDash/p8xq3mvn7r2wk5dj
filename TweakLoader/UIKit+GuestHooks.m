@@ -229,7 +229,9 @@ static void LCLogGuestWindows(NSString *event) {
         UIWindowScene *scene = (UIWindowScene *)connected;
         id<UIWindowSceneDelegate> delegate = (id)scene.delegate;
         UIWindow *sceneDelegateWindow = [delegate respondsToSelector:@selector(window)] ? delegate.window : nil;
-        [text appendFormat:@"\n scene=%@ state=%ld key=%p delegateWindow=%p windows=%lu role=%@", scene.session.persistentIdentifier, (long)scene.activationState, scene.keyWindow, sceneDelegateWindow, (unsigned long)scene.windows.count, [scene.session valueForKey:@"role"]];
+        NSString *loggedRole = nil;
+        if ([scene.session respondsToSelector:@selector(role)]) loggedRole = [scene.session performSelector:@selector(role)];
+        [text appendFormat:@"\n scene=%@ state=%ld key=%p delegateWindow=%p windows=%lu role=%@", scene.session.persistentIdentifier, (long)scene.activationState, scene.keyWindow, sceneDelegateWindow, (unsigned long)scene.windows.count, loggedRole];
         for (UIWindow *window in scene.windows) if (![windows containsObject:window]) [windows addObject:window];
     }
     if (delegateWindow && ![windows containsObject:delegateWindow]) [windows addObject:delegateWindow];
@@ -1521,8 +1523,19 @@ static BOOL gLCLegacyAppHooksInstalled = NO;
     for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
         if (![scene isKindOfClass:UIWindowScene.class]) continue;
         UIWindowScene *windowScene = (UIWindowScene *)scene;
-        NSString *sessionRole = [windowScene.session valueForKey:@"role"];
-        if (![sessionRole isKindOfClass:NSString.class] || ![sessionRole isEqualToString:UIWindowSceneSessionRoleApplication]) continue;
+        // UISceneSession.role is not public API. KVC (valueForKey:) raises
+        // NSUndefinedKeyException when the getter is absent, which aborted
+        // guests whose initializer touches a window (LocalDevVPN / Husk
+        // SIGABRT inside dyld callInitializer). Gate it with respondsToSelector
+        // and treat a missing role as an application scene: LiveProcess only
+        // ever carries application scenes, and the sole-scene fallback below
+        // keeps the multi-window shapes unchanged.
+        NSString *sessionRole = nil;
+        if ([windowScene.session respondsToSelector:@selector(role)]) {
+            sessionRole = [windowScene.session performSelector:@selector(role)];
+        }
+        if (sessionRole && ![sessionRole isKindOfClass:NSString.class]) sessionRole = nil;
+        if (sessionRole && ![sessionRole isEqualToString:UIWindowSceneSessionRoleApplication]) continue;
         UISceneActivationState state = windowScene.activationState;
         if (state == UISceneActivationStateBackground) continue;
         applicationSceneCount += 1;
