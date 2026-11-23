@@ -102,7 +102,7 @@ static BOOL LCWindowHasVisibleGuestContent(UIWindow *window);
 
 static void LCLogEnvView(NSString *reason);
 static BOOL LCScreenMatchesWindowScene(UIScreen *screen, UIWindowScene *windowScene);
-static void LCGuestScheduleOrphanAdoption(UIWindowScene *scene);
+// LCGuestScheduleOrphanAdoption removed in 1.1.111 (bisection).
 static void LCRefreshTransportedStatusBarHeight(void);
 static void LCGuestGeometryNotification(CFNotificationCenterRef center, void *observer,
                                         CFStringRef name, const void *object, CFDictionaryRef userInfo);
@@ -431,12 +431,6 @@ static void UIKitGuestHooksInit() {
                                         LCGuestGeometryNotification,
                                         CFSTR("com.kdt.livecontainer.guestGeometry"),
                                         NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
-    }
-    {
-        [NSNotificationCenter.defaultCenter addObserverForName:UISceneDidActivateNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *note) {
-            if (![note.object isKindOfClass:UIWindowScene.class]) return;
-            LCGuestScheduleOrphanAdoption((UIWindowScene *)note.object);
-        }];
     }
     {
         static dispatch_once_t envOnce;
@@ -1503,33 +1497,28 @@ static BOOL gLCLegacyAppHooksInstalled = NO;
     [self hook_resignKeyWindow];
 }
 - (void)hook_setHidden:(BOOL)hidden {
-    // Hiding an unattached host/overlay window must not attach it to the guest
-    // scene just to hide it (1.1.107 deck work). LiveProcess is the exception:
-    // that process contains guest windows only, and an app may create its
-    // business window already hidden (快手 KSDarkModeWindow: hidden=1,
-    // bounds=0) and only ever reach setHidden:.
-    BOOL guestOnlyProcess = NSUserDefaults.isLiveProcess;
-    if ((!hidden || guestOnlyProcess) && self.windowLevel < UIWindowLevelStatusBar) {
+    // Bisection 1.1.111: the sole-scene adoption set (hidden-window attach +
+    // sole-scene fallback + orphan adoption timers) is the only six-phase T2
+    // code guests touch during their initializers, and 1.1.110 still aborted
+    // inside dyld callInitializer (Via / LocalDevVPN). Revert to 1.1.108
+    // semantics (attach only on unhide, screen match only); the key-window
+    // fallback and the T1/T3 work stay.
+    if (!hidden && self.windowLevel < UIWindowLevelStatusBar) {
         [self updateWindowScene];
     }
     [self hook_setHidden:hidden];
 }
 - (void)updateWindowScene {
     if (self.windowScene) return;
+    // Bisection 1.1.111: sole-scene fallback removed (see hook_setHidden note).
     UIWindowScene *target = nil;
     NSInteger bestPriority = -1;
-    UIWindowScene *soleApplicationScene = nil;
-    NSInteger applicationSceneCount = 0;
     for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
         if (![scene isKindOfClass:UIWindowScene.class]) continue;
         UIWindowScene *windowScene = (UIWindowScene *)scene;
-        // UISceneSession.role is not public API. KVC (valueForKey:) raises
-        // NSUndefinedKeyException when the getter is absent, which aborted
-        // guests whose initializer touches a window (LocalDevVPN / Husk
-        // SIGABRT inside dyld callInitializer). Gate it with respondsToSelector
-        // and treat a missing role as an application scene: LiveProcess only
-        // ever carries application scenes, and the sole-scene fallback below
-        // keeps the multi-window shapes unchanged.
+        // UISceneSession.role is not public API: gate behind respondsToSelector,
+        // a missing role is treated as an application scene (LiveProcess only
+        // ever carries application scenes).
         NSString *sessionRole = nil;
         if ([windowScene.session respondsToSelector:@selector(role)]) {
             sessionRole = [windowScene.session performSelector:@selector(role)];
@@ -1538,20 +1527,11 @@ static BOOL gLCLegacyAppHooksInstalled = NO;
         if (sessionRole && ![sessionRole isEqualToString:UIWindowSceneSessionRoleApplication]) continue;
         UISceneActivationState state = windowScene.activationState;
         if (state == UISceneActivationStateBackground) continue;
-        applicationSceneCount += 1;
-        if (!soleApplicationScene) soleApplicationScene = windowScene;
         NSInteger priority = state == UISceneActivationStateForegroundActive ? 2 : (state == UISceneActivationStateForegroundInactive ? 1 : 0);
         if (LCScreenMatchesWindowScene(self.screen, windowScene) && priority > bestPriority) {
             target = windowScene;
             bestPriority = priority;
         }
-    }
-    if (!target && applicationSceneCount == 1) {
-        // Unambiguous: the only application scene is this window's scene even
-        // when the screen objects differ or it is still unattached (state 0).
-        // With two or more candidates a mismatch is real and stays unmapped --
-        // that is what keeps Via/酷我 multi-window shapes as they are.
-        target = soleApplicationScene;
     }
     if (target) {
         self.windowScene = target;
@@ -1572,36 +1552,7 @@ static BOOL LCScreenMatchesWindowScene(UIScreen *screen, UIWindowScene *windowSc
     return screen.scale == sceneScreen.scale;
 }
 
-// Windows the app created but never handed to a scene. UIKit still tracks them
-// in UIApplication.windows. Adopt them into the guest's application scene after
-// activation, and leave hidden/root/bounds untouched: the app's own launch path
-// stays the only thing allowed to size a window or give it a root controller
-// (task rule: 不能替 app 造 root). Restricted to LiveProcess, whose process
-// contains guest windows only -- this can never pull a host dock/overlay window
-// into the guest scene.
-static void LCGuestAdoptOrphanWindows(UIWindowScene *scene) {
-    if (!scene || !NSUserDefaults.isLiveProcess) return;
-    UIApplication *application = UIApplication.sharedApplication;
-    if (![application respondsToSelector:@selector(windows)]) return;
-    NSArray<UIWindow *> *windows = [(id)application windows];
-    for (UIWindow *window in windows) {
-        if (window.windowScene) continue;
-        if (window.windowLevel >= UIWindowLevelStatusBar) continue;
-        window.windowScene = scene;
-        LCLogGuestWindows(@"orphan-adopted");
-    }
-}
-
-// 快手在启动约 6 秒后才建窗, 没有统一入口可挂. 只在 scene 激活后做有限次扫描,
-// 不装常驻定时器; 新一代激活会让上一代的补扫自动作废.
-static void LCGuestScheduleOrphanAdoption(UIWindowScene *scene) {
-    if (!scene || !NSUserDefaults.isLiveProcess) return;
-    static NSUInteger generation = 0;
-    NSUInteger gen = ++generation;
-    for (NSNumber *delay in @[@0.5, @2.0, @6.0, @10.0]) {
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay.doubleValue * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            if (gen != generation) return;
-            LCGuestAdoptOrphanWindows(scene);
-        });
-    }
-}
+// Orphan adoption (six-phase T2) is disabled in 1.1.111 while bisection
+// isolates the guest-initializer abort (see hook_setHidden note). The
+// functions stay compiled out entirely; the UISceneDeactivate observer was
+// removed with them.
