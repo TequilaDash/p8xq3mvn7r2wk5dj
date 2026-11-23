@@ -806,7 +806,8 @@ struct MultitaskStackView: View {
         let previewHeight = max(1, min(screenHeight * 0.70, size.height - 60))
         let maxCardWidth = max(1, size.width * 0.72)
         let stride = max(1, maxCardWidth * 0.77)
-        let deckShift: CGFloat = 0
+        // LCOrbitTaskSwitcher.m:554 原式：deckCenterX = width/2 + (count>1 ? maxCardWidth*0.125 : 0)
+        let deckShift: CGFloat = manager.apps.count > 1 ? maxCardWidth * 0.125 : 0
         let horizontal = dragAxis == .horizontal ? dragOffset.width : 0
         return ZStack {
             ForEach(Array(manager.apps.enumerated()), id: \.element.appUUID) { index, app in
@@ -827,7 +828,8 @@ struct MultitaskStackView: View {
                              onAppInfo: { manager.showAppInfo(uuid: app.appUUID) },
                              onSplit: { manager.openInSplitScreen(uuid: app.appUUID) },
                              onPictureInPicture: { manager.togglePictureInPicture(uuid: app.appUUID) })
-                    .scaleEffect(1)
+                    // LCOrbitTaskSwitcher.m:571 原式：maxDeckScale = 1.018，只放大选中卡。
+                    .scaleEffect(distance == 0 ? maxDeckScale : 1)
                     .offset(x: distance * stride + deckShift + horizontal, y: vertical)
                     .zIndex(Double(manager.apps.count) - Double(abs(distance)))
                     .accessibilityHidden(index != manager.selectedIndex)

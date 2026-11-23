@@ -1,3 +1,9 @@
+20261124-110000 1.1.99 Update：
+1. 堆叠后台按参考工程 dompling/LC-SS-widget-export 的 LCOrbitTaskSwitcher.m 逐行对齐（上一版我误删了两条原式，导致卡片看着不对）：
+   - :554 `deckCenterX = width/2 + (count>1 ? maxCardWidth*0.125 : 0)` —— 恢复 0.125 的右移。
+   - :571 `maxDeckScale = 1.018` —— 恢复"只放大选中卡"。
+   其余保持原式：:552 previewHeight = MIN(屏高*0.70, 可用高-60)，:553 竖屏 maxCardWidth = width*0.72，:558 stride = maxCardWidth*0.77，:574 卡片高 = cardHeight+34（头部 34pt）。
+
 20261124-090000 1.1.98 Update：
 1. 修两个 .ips 直指的问题：伪装成"补丁版本变化就整包重签"的 forceSign 现在只在"实测签名已失效"时才为真。
    - LiveContainer 崩溃(SIGBUS)栈顶是 ZSign 的 ZArchO::Init ← ZMachO::OpenFile ← +[ZSigner signMachOPathArr:...]，
