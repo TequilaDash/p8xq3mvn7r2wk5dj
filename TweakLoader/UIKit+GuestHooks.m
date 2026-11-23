@@ -2,6 +2,7 @@
 #import "LCSharedUtils.h"
 #import "UIKitPrivate.h"
 #import "../LiveContainer/utils.h"
+#import "../LiveContainer/Tweaks/Tweaks.h"
 #import <LocalAuthentication/LocalAuthentication.h>
 #import "Localization.h"
 #import "HomeButton/LCHomeButtonController.h"
@@ -101,8 +102,8 @@ static IMP gOrigMainBundle = NULL;
 static NSBundle *gLCGuestMainBundle = nil;
 
 // 上游 LiveContainer 把访客的主 bundle 指回访客本身（LCBootstrap 里用
-// initWithPathForMainBundle: 构造访客 bundle）。我们的多任务容器让访客跑在
-// LiveProcess 扩展进程里，+[NSBundle mainBundle] 默认是扩展自己的 LiveProcess.appex
+// initWithPathForMainBundle: 构造访客 bundle）。我们的容器让访客跑在 LiveProcess
+// 扩展进程里（全屏与多任务都是），+[NSBundle mainBundle] 默认是扩展自己的 LiveProcess.appex
 // ——检测器拿 mainBundle 与镜像路径一比，访客自己的可执行文件和 framework 全部被判
 // "注入的共享库"。这里把 +[NSBundle mainBundle] 换成访客 bundle：真实目录直接由现有
 // 掩码逻辑对外呈现，bundlePath 钩子自然给出与镜像一致的伪路径，bundleIdentifier 钩子给访客 id。
@@ -120,7 +121,7 @@ static NSBundle *LCGuestMainBundle(id self, SEL _cmd) {
         const char *home = getenv("LC_HOME_PATH");
         if (home && home[0]) {
             NSString *dir = [NSString stringWithFormat:@"%s/Documents/Applications/%@.app", home, guestId];
-            if ([NSFileManager defaultManager].fileExistsAtPath:dir]) realDir = dir;
+            if (access([dir fileSystemRepresentation], F_OK) == 0) realDir = dir;
         }
     }
     if (!realDir) {
