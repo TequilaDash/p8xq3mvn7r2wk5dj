@@ -84,6 +84,20 @@ static void TweakLoaderConstructor() {
     NSString *globalTweakFolder = @(tweakFolderC);
     unsetenv("LC_GLOBAL_TWEAKS_FOLDER");
     
+    // 会话登记: 访客进程把 pid/bundleId/时间戳写进 app group, 供宿主内存管理页
+    // 与堆叠后台内存胶囊定位进程 (jailed 下 sysctl KERN_PROC_ALL 不可枚举,
+    // 但同 uid 进程 proc_pid_rusage/kill(pid,0) 可用; 宿主用 kill 探活过滤死项).
+    {
+        NSUserDefaults *shared = NSUserDefaults.lcSharedDefaults;
+        NSMutableDictionary *reg = [[shared dictionaryForKey:@"TDLiveGuestPids"] mutableCopy] ?: [NSMutableDictionary new];
+        reg[@(getpid())] = @{
+            @"bundleId": NSUserDefaults.lcGuestAppId ?: @"",
+            @"ts": @([[NSDate date] timeIntervalSince1970]),
+        };
+        [shared setObject:reg forKey:@"TDLiveGuestPids"];
+        [shared synchronize];
+    }
+
     if([NSUserDefaults.guestAppInfo[@"dontInjectTweakLoader"] boolValue]) {
         // don't load any tweak since tweakloader is loaded after all initializers
         NSLog(@"Skip loading tweaks");

@@ -149,57 +149,39 @@ struct TDMemoryManagerView: View {
     }
 
     static func snapshot() -> Snapshot {
+        // jailed 下列不出全系统进程表（sysctl KERN_PROC_ALL 无权限，实测为空）。
+        // 进程来源 = 宿主自身 + 访客会话登记表：TweakLoader constructor 启动时把
+        // pid/bundleId 写进 app group "TDLiveGuestPids"；这里 kill(pid,0) 探活过滤死项，
+        // 再逐个 proc_pid_rusage 取 physical footprint（同 uid 进程内核允许）。
         var out = Snapshot()
-        // sysctl({CTL_KERN, KERN_PROC, KERN_PROC_ALL, 0}) — same-uid visibility.
-        var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_ALL, 0]
-        var size: UInt = 0
-        let rc0 = mib.withUnsafeMutableBufferPointer { p in
-            sysctl(p.baseAddress, 4, nil, &size, nil, 0)
+        let defaults = LCUtils.appGroupUserDefault
+        let registry = (defaults.dictionary(forKey: "TDLiveGuestPids") as? [String: [String: Any]]) ?? [:]
+        var host = ProcEntry(pid: Int32(getpid()), name: "zContainer（宿主）", rssBytes: 0)
+        var info = rusage_info_v2()
+        if proc_pid_rusage(host.pid, RUSAGE_INFO_V2, &info) == 0 {
+            host = ProcEntry(pid: host.pid, name: host.name, rssBytes: info.ri_phys_footprint)
         }
-        guard rc0 == 0, size > 0 else { return out }
-        var procs = [kinfo_proc](repeating: kinfo_proc(), count: Int(size) / MemoryLayout<kinfo_proc>.stride + 8)
-        let rc = mib.withUnsafeMutableBufferPointer { p in
-            procs.withUnsafeMutableBytes { raw in
-                sysctl(p.baseAddress, 4, raw.baseAddress, &size, nil, 0)
-            }
-        }
-        guard rc == 0 else { return out }
-        let count = Int(size) / MemoryLayout<kinfo_proc>.stride
-
-        var seen = Set<pid_t>()
-        for i in 0..<count {
-            let p = procs[i]
-            let pid = p.kp_proc.p_pid
-            guard pid > 0, seen.insert(pid).inserted else { continue }
-            var path = [CChar](repeating: 0, count: Int(MAXPATHLEN))
-            let n = proc_pidpath(pid, &path, UInt32(MAXPATHLEN))
-            let name: String
-            if n > 0 {
-                name = String(cString: path).split(separator: "/").last.map(String.init) ?? String(cString: path)
-            } else {
-                let comm = withUnsafeBytes(of: p.kp_proc.p_comm) { raw -> String in
-                    let buf = raw.bindMemory(to: CChar.self)
-                    return String(cString: Array(buf.prefix(while: { $0 != 0 })))
-                }
-                name = comm.isEmpty ? "#\(pid)" : comm
-            }
+        var guests: [ProcEntry] = []
+        var seen = Set<Int32>()
+        for (key, meta) in registry {
+            guard let pid = Int32(key), pid > 0, pid != host.pid, seen.insert(pid).inserted else { continue }
+            if kill(pid, 0) != 0 && errno == ESRCH { continue }
             var rss: UInt64 = 0
-            var info = rusage_info_v2()
-            if proc_pid_rusage(pid, RUSAGE_INFO_V2, &info) == 0 {
-                rss = info.ri_phys_footprint // bytes, same source Xcode reports
+            var rinfo = rusage_info_v2()
+            if proc_pid_rusage(pid, RUSAGE_INFO_V2, &rinfo) == 0 {
+                rss = rinfo.ri_phys_footprint
             }
-            let entry = ProcEntry(pid: pid, name: name, rssBytes: rss)
-            let isHost = !isGuestPath(path)
-            if isHost && out.host == nil { out.host = entry } else { out.guests.append(entry) }
+            var name = (meta["bundleId"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "#\(pid)"
+            var path = [CChar](repeating: 0, count: Int(MAXPATHLEN))
+            if proc_pidpath(pid, &path, UInt32(MAXPATHLEN)) > 0 {
+                name = String(cString: path).split(separator: "/").last.map(String.init) ?? name
+            }
+            guests.append(ProcEntry(pid: pid, name: name, rssBytes: rss))
         }
-        out.guests.sort { $0.rssBytes > $1.rssBytes }
+        guests.sort { $0.rssBytes > $1.rssBytes }
+        out.host = host
+        out.guests = guests
         return out
     }
 
-    private static func isGuestPath(_ path: [CChar]) -> Bool {
-        let s = String(cString: path)
-        // Guests run from the LiveProcess extension or a guest bundle under
-        // the container Documents/Applications directory.
-        return s.contains("LiveProcess") || s.contains("/Documents/Applications/")
-    }
 }
