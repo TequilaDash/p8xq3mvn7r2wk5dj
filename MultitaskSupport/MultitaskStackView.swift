@@ -1243,7 +1243,8 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
     func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) { if scrollView === pages { finishScrolling() } }
     func scrollViewDidEndScrollingAnimation(_ scrollView: UIScrollView) { if scrollView === pages { finishScrolling() } }
     private func finishScrolling() { scrolling = false; setNeedsLayout() }
-    func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+    // UIView 自带 gestureRecognizerShouldBegin:, 子类实现必须标 override（CI 类型检查抓出）。
+    override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
         guard !transitioning, !invalidated else { return false }
         if let pan = gestureRecognizer as? UIPanGestureRecognizer {
             let v = pan.velocity(in: self)
