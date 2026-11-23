@@ -1,3 +1,14 @@
+20261125-100000 1.1.110 Update：
+1. 修复 1.1.109 访客全面启动崩溃（"app 已终止"）：六期外包在 updateWindowScene
+   与 window-lifecycle 日志里用 KVC（valueForKey:@"role"）读私有的
+   UISceneSession.role，getter 缺失时抛 NSUndefinedKeyException，
+   访客主程序 initializer 里一碰窗口（setHidden:→挂 scene）即 SIGABRT
+   （LocalDevVPN/Husk 两份 .ips 实锤：dlopen 内 callInitializer，
+   启动后 ~130ms）。改为 respondsToSelector+performSelector 读取，
+   getter 缺失时按 application scene 处理（LiveProcess 内全是 application
+   scene，唯一 scene 兜底逻辑不变，多窗口形态不受影响）。
+   胶囊无数值即此崩溃的下游表现：LiveProcess 反复被杀，没有活访客可读。
+
 20261125-030000 1.1.109 Update：
 1. 合入外包第六期（deepseek harness 交付，已审计合并）：
    - T1 状态栏矩形透传（多任务窗口状态栏偏高）：根因=宿主只给虚拟 scene 写
