@@ -1,6 +1,32 @@
 import Darwin
 import SwiftUI
 
+// libproc bindings not exposed to Swift on iOS SDK; declare locally.
+@_silgen_name("proc_pidpath")
+func proc_pidpath(_ pid: Int32, _ buffer: UnsafeMutablePointer<CChar>?, _ buffersize: UInt32) -> Int32
+
+struct rusage_info_v2 {
+    var ri_uuid: (UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8)
+    var ri_user_time: UInt64
+    var ri_system_time: UInt64
+    var ri_pkg_idle_wkups: UInt64
+    var ri_interrupt_wkups: UInt64
+    var ri_pageins: UInt64
+    var ri_wired_size: UInt64
+    var ri_resident_size: UInt64
+    var ri_phys_footprint: UInt64
+    var ri_user_time64: UInt64
+    var ri_system_time64: UInt64
+    var ri_pkg_idle_wkups64: UInt64
+    var ri_interrupt_wkups64: UInt64
+    var ri_pagesize: Int32
+    var ri_reserved: (UInt32, UInt32)
+}
+@_silgen_name("proc_pid_rusage")
+func proc_pid_rusage(_ pid: Int32, _ flavor: Int32, _ buffer: UnsafeMutablePointer<rusage_info_v2>?) -> Int32
+
+private let RUSAGE_INFO_V2: Int32 = 2
+
 /// iManager > 实验性 > 内存管理.
 /// Lists guest (and host) processes with their resident memory usage, using
 /// sysctl KERN_PROC + proc_pid_rusage. Jailed processes of the same uid are
@@ -37,7 +63,8 @@ struct TDMemoryManagerView: View {
             } footer: {
                 Text("单位同时用于堆叠后台右上角的内存胶囊。")
             }
-            Section("当前运行的程序") {
+            Section {
+
                 if let host = hostEntry {
                     HStack {
                         Image(systemName: "app.fill")
@@ -65,6 +92,8 @@ struct TDMemoryManagerView: View {
                     Text("未发现可读的运行进程。")
                         .foregroundStyle(.secondary)
                 }
+            } header: {
+                Text("当前运行的程序")
             } footer: {
                 Text("内存为物理内存占用（resident）。同 uid 之外的进程内核不暴露，这里只列容器可见进程。")
             }
@@ -115,11 +144,18 @@ struct TDMemoryManagerView: View {
         var size: UInt32 = 0
         // sysctl({CTL_KERN, KERN_PROC, KERN_PROC_ALL, 0}) — same-uid visibility.
         var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_ALL, 0]
-        guard sysctl(&mib, 4, nil, &size, nil, 0) == 0, size > 0 else { return out }
+        guard mib.withUnsafeMutableBufferPointer({ p in
+            sysctl(p.baseAddress, 4, nil, &size, nil, 0)
+        }) == 0, size > 0 else { return out }
         var count = Int(size) / MemoryLayout<kinfo_proc>.stride
         var procs = [kinfo_proc](repeating: kinfo_proc(), count: count + 8)
         size &= ~UInt32(MemoryLayout<kinfo_proc>.size - 1)
-        guard sysctl(&mib, 4, &procs, &size, nil, 0) == 0 else { return out }
+        let rc = mib.withUnsafeMutableBufferPointer { p in
+            procs.withUnsafeMutableBytes { raw in
+                sysctl(p.baseAddress, 4, raw.baseAddress, &size, nil, 0)
+            }
+        }
+        guard rc == 0 else { return out }
         count = Int(size) / MemoryLayout<kinfo_proc>.stride
 
         var seen = Set<pid_t>()
@@ -127,20 +163,22 @@ struct TDMemoryManagerView: View {
             let p = procs[i]
             let pid = p.kp_proc.p_pid
             guard pid > 0, seen.insert(pid).inserted else { continue }
-            // Only processes in our own session (same uid) are measurable.
-            if p.kp_eproc.e_pcred.p_ruid != getuid() { continue }
             var path = [CChar](repeating: 0, count: Int(MAXPATHLEN))
             let n = proc_pidpath(pid, &path, UInt32(MAXPATHLEN))
             let name: String
             if n > 0 {
                 name = String(cString: path).split(separator: "/").last.map(String.init) ?? String(cString: path)
             } else {
-                name = String(cString: p.kp_proc.p_comm)
+                let comm = withUnsafeBytes(of: p.kp_proc.p_comm) { raw -> String in
+                    let buf = raw.bindMemory(to: CChar.self)
+                    return String(cString: Array(buf.prefix(while: { $0 != 0 })))
+                }
+                name = comm.isEmpty ? "#\(pid)" : comm
             }
             var rss: UInt64 = 0
-            var info = rusage_info_t()
+            var info = rusage_info_v2()
             if proc_pid_rusage(pid, RUSAGE_INFO_V2, &info) == 0 {
-                rss = UInt64(info.ri_phys_footprint) // bytes, exactly what Xcode reports
+                rss = info.ri_phys_footprint // bytes, same source Xcode reports
             }
             let entry = ProcEntry(pid: pid, name: name, rssBytes: rss)
             let isHost = !isGuestPath(path)
