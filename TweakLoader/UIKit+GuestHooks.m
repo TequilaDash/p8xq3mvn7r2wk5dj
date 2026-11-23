@@ -92,9 +92,36 @@ static void LCPostWindowTouched(void) {
     notify_post(name);
 }
 
+static IMP gOrigApplicationKeyWindow = NULL;
+
+// 上游 LiveContainer 给每个访客独立 scene，keyWindow 天然是访客窗口；我们跑在宿主 scene 里，
+// keyWindow 可能指向宿主浮层/设置窗，或者干脆没有 —— 快手注入的 llykwai.dylib 调
+// +[MBProgressHUD showHUDAddedTo:animated:] 时拿到的 view 就是 nil，initWithView: 里的
+// NSParameterAssert(view) 直接抛 "View must not be nil" 崩掉。这里把"装着访客画面"的窗口
+// 优先当 keyWindow，没有访客窗口时回退原实现。
+static UIWindow *LCGuestApplicationKeyWindow(UIApplication *self, SEL _cmd) {
+    for (UIScene *scene in self.connectedScenes) {
+        if (![scene isKindOfClass:UIWindowScene.class]) continue;
+        for (UIWindow *window in ((UIWindowScene *)scene).windows.reverseObjectEnumerator) {
+            if (LCWindowHasVisibleGuestContent(window)) return window;
+        }
+    }
+    if (gOrigApplicationKeyWindow) {
+        return ((UIWindow *(*)(id, SEL))gOrigApplicationKeyWindow)(self, _cmd);
+    }
+    return nil;
+}
+
 __attribute__((constructor))
 static void UIKitGuestHooksInit() {
     if(!NSUserDefaults.lcGuestAppId) return;
+    {
+        Method keyWindowMethod = class_getInstanceMethod(UIApplication.class, @selector(keyWindow));
+        if (keyWindowMethod) {
+            gOrigApplicationKeyWindow = method_getImplementation(keyWindowMethod);
+            method_setImplementation(keyWindowMethod, (IMP)LCGuestApplicationKeyWindow);
+        }
+    }
     swizzle(UIApplication.class, @selector(_applicationOpenURLAction:payload:origin:), @selector(hook__applicationOpenURLAction:payload:origin:));
     swizzle(UIApplication.class, @selector(_connectUISceneFromFBSScene:transitionContext:), @selector(hook__connectUISceneFromFBSScene:transitionContext:));
     swizzle(UIApplication.class, @selector(openURL:options:completionHandler:), @selector(hook_openURL:options:completionHandler:));

@@ -1,3 +1,8 @@
+20261124-030000 1.1.96 Update：
+1. 修快手崩溃的根本原因：Ghidra 反编译 llykwai.dylib（LC_ID=/Library/MobileSubstrate/DynamicLibraries/zzztest4.dylib）的 0x46a48 = MBProgressHUD::showHUDAddedTo:animated:，它把拿到的 view 传进 initWithView:，而 initWithView: 里 NSParameterAssert(view) → 抛「View must not be nil」。调用方拿到的 view 是 nil，是因为我们在宿主 scene 里跑访客，keyWindow 不是访客窗口（上游 LiveContainer 给访客独立 scene，所以没事）。
+   现在给访客补上 keyWindow：swizzle UIApplication.keyWindow，优先返回"装着访客画面"的窗口（LCWindowHasVisibleGuestContent），没有访客窗口时回退原实现。
+2. 同进程多访客时，其它访客的镜像不再出现在当前访客的 _dyld 枚举里（tdv_is_hidden_path 只放行当前访客目录），避免被当成"注入的共享库"。
+
 20261124-010000 1.1.95 Update：
 1. 修 Reveil「发现注入的共享库」的**真正原因**：设备日志证明它对镜像调了 realpath，我们把它解析成了真实的 Documents 路径，于是"对外路径 vs realpath"不一致 → 判注入。现在 realpath 遇到对外伪路径就原样返回（文件操作走 open/stat 的反向翻译，不受影响）。
 2. 辅助触控按钮恢复可见：上一版去掉 glass 后几乎看不见，改回显示玻璃底（showsGlass: true），位置仍默认在左侧不压 chevron。

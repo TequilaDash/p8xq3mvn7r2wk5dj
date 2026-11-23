@@ -211,6 +211,16 @@ static bool tdv_is_hidden_path(const char *name) {
     // 注入面: 无条件隐藏.
     if (strstr(name, "/Documents/Tweaks/")) return true;
     if (strstr(name, "/TweakLoader.dylib")) return true;
+    // 同一进程里还挂着别的访客: 它们的镜像对当前访客来说就是"别人的库",
+    // 出现在 _dyld 枚举里会被当成注入的共享库。只放行当前访客自己的目录。
+    if (strstr(name, "/Documents/Applications/")) {
+        NSString *guestId = NSUserDefaults.lcGuestAppId;
+        if (guestId.length > 0) {
+            char mine[256];
+            snprintf(mine, sizeof(mine), "/%s", guestId.UTF8String);
+            if (!strstr(name, mine)) return true;
+        }
+    }
     if (!gTDVHideLCImages) return false;
     if (lcMainBundlePath && lcMainBundlePath[0] &&
         strncmp(name, lcMainBundlePath, strlen(lcMainBundlePath)) == 0) {
