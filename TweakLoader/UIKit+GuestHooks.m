@@ -11,6 +11,8 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <stdlib.h>
+#include <limits.h>
+#include <mach-o/dyld.h>
 #import <os/lock.h>
 
 UIInterfaceOrientation LCOrientationLock = UIInterfaceOrientationUnknown;
@@ -137,7 +139,11 @@ static NSBundle *LCGuestMainBundle(id self, SEL _cmd) {
         return ((NSBundle *(*)(id, SEL))gOrigMainBundle)(self, _cmd);
     }
     NSBundle *bundle = [[NSBundle alloc] initWithPathForMainBundle:realDir];
-    if (bundle) gLCGuestMainBundle = bundle;
+    if (bundle) {
+        gLCGuestMainBundle = bundle;
+        static dispatch_once_t envOnce;
+        dispatch_once(&envOnce, ^{ LCLogEnvView(@"mainBundle-repointed"); });
+    }
     return gLCGuestMainBundle ? gLCGuestMainBundle : ((NSBundle *(*)(id, SEL))gOrigMainBundle)(self, _cmd);
 }
 
@@ -220,6 +226,37 @@ static void LCLogGuestWindows(NSString *event) {
     if (logFn) logFn(@"%@", text); else NSLog(@"%@", text);
 }
 
+
+// [env-view] detector-perspective dump (外包纪律: 先取证再修). Prints every
+// value a detector typically compares: mainBundle identity/path, executable
+// path, dyld image list, csops state. Read-only; no behavior change.
+static void LCLogEnvView(NSString *reason) {
+    NSMutableString *text = [NSMutableString stringWithFormat:@"[env-view] reason=%@ pid=%d", reason, getpid()];
+    NSBundle *main = NSBundle.mainBundle;
+    [text appendFormat:@"\n mainBundle.path=%@", main.bundlePath];
+    [text appendFormat:@"\n mainBundle.id=%@ exec=%@ displayName=%@", main.bundleIdentifier, main.executablePath, [main objectForInfoDictionaryKey:@"CFBundleDisplayName"]];
+    [text appendFormat:@"\n mainBundle.realPath=%@", main.bundlePath.stringByResolvingSymlinksInPath];
+    [text appendFormat:@"\n NSProcessInfo.arguments[0]=%@", NSProcessInfo.processInfo.arguments.firstObject];
+    char execPath[PATH_MAX]; execPath[0] = 0;
+    uint32_t sz = sizeof(execPath);
+    if (_NSGetExecutablePath(execPath, &sz) == 0) [text appendFormat:@"\n _NSGetExecutablePath=%s", execPath];
+    [text appendFormat:@"\n dyld.imageCount=%u", _dyld_image_count()];
+    uint32_t n = _dyld_image_count();
+    if (n > 24) n = 24;
+    for (uint32_t i = 0; i < n; i++) {
+        const char *nm = _dyld_get_image_name(i);
+        if (nm) [text appendFormat:@"\n dyld[%u]=%s", i, nm];
+    }
+    int csflags = 0;
+    extern int csops(pid_t pid, unsigned int ops, void *useraddr, size_t usersize);
+    if (csops(getpid(), 0, &csflags, sizeof(csflags)) == 0) {
+        [text appendFormat:@"\n csops.flags=0x%x CS_GET_VALIDATED=%d CS_PLATFORM_BINARY=%d", csflags,
+            (csflags & 0x00000010) != 0, (csflags & 0x04000000) != 0];
+    }
+    TDConsoleLogFn logFn = LCGuestConsoleLogFn();
+    if (logFn) logFn(@"%@", text); else NSLog(@"%@", text);
+}
+
 static id LCGuestShowHUDAddedTo(id self, SEL _cmd, id view, BOOL animated) {
     if (!view) {
         view = LCGuestApplicationKeyWindow(UIApplication.sharedApplication, @selector(keyWindow));
@@ -271,6 +308,10 @@ static void UIKitGuestHooksInit() {
             NSString *event = note.name;
             dispatch_async(dispatch_get_main_queue(), ^{ LCLogGuestWindows(event); });
         }];
+    }
+    {
+        static dispatch_once_t envOnce;
+        dispatch_once(&envOnce, ^{ LCLogEnvView(@"tweakloader-init"); });
     }
     swizzle(UIApplication.class, @selector(_applicationOpenURLAction:payload:origin:), @selector(hook__applicationOpenURLAction:payload:origin:));
     swizzle(UIApplication.class, @selector(_connectUISceneFromFBSScene:transitionContext:), @selector(hook__connectUISceneFromFBSScene:transitionContext:));

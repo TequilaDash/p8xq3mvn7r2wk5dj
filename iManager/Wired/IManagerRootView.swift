@@ -82,6 +82,11 @@ struct IManagerRootView: View {
                 } label: {
                     Label("状态栏沉浸", systemImage: "rectangle.topthird.inset.filled")
                 }
+                NavigationLink {
+                    TDMemoryManagerView()
+                } label: {
+                    Label("内存管理", systemImage: "memorychip")
+                }
             } header: {
                 Text("实验性")
             } footer: {

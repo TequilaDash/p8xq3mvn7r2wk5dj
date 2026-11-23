@@ -1,3 +1,12 @@
+20261124-210000 1.1.106 Update：
+1. [env-view] 检测器视角诊断（取证优先，不盲改）：访客进程内把检测器可比对的全部基准值
+   （mainBundle 路径/标识/显示名、_NSGetExecutablePath、dyld 镜像前 24 条、csops 标志位）
+   打进 ConsoleLog（[env-view] 行，mainBundle 重指时与 TweakLoader 初始化时各一次）。
+   「发现注入的共享库」还红时，把这份日志对图即知检测器比对差在哪一层。
+2. iManager 新增 实验性 > 内存管理：列出当前运行的容器可见进程（宿主 + 各访客）及物理内存
+   占用（proc_pid_rusage ri_phys_footprint），MB/GB 单位可切换（app group 同步），
+   供堆叠后台内存胶囊共用（胶囊 UI 下期随堆叠后台 BUG 修复一起出）。
+
 20261124-193000 1.1.105 Update：
 1. 合入外包第四期（堆叠后台语义重做 + T3 状态栏修正 + 窗口诊断日志）：
    - MultitaskStackView/Manager：MRU（最近使用优先）排序替代 Dock 登记顺序；回后台/新开/guest 返回
