@@ -1,3 +1,29 @@
+20261125-030000 1.1.109 Update：
+1. 合入外包第六期（deepseek harness 交付，已审计合并）：
+   - T1 状态栏矩形透传（多任务窗口状态栏偏高）：根因=宿主只给虚拟 scene 写
+     statusBarAvoidanceFrame 的"交集"（44pt 控件条下 0~15pt），legacy app 把
+     UIApplication.statusBarFrame 当设备条用 → 拿到 0/15 而非 59。现在宿主把
+     物理条高（statusBarManager，隐藏时退 safeAreaInsets.top）写进 settings.statusBarHeight
+     并经 app-group + Darwin 通知（LCGuestPhysicalStatusBarHeight）跨进程传输；
+     guest 端分级取值：settings-height → transport(按窗口缩放换算) → 同进程 host scene →
+     virtual-none(横屏/条隐藏=0)，reported 统一 {0,0,393,59} 形态；
+     [geometry] 行尾新增 sbSrc=/avoid= 可直接判读落地层。
+   - T2 快手窗口语义（KSDarkModeWindow scene state=0）：updateWindowScene 的
+     screen 对象匹配放宽为"同对象 或 同尺寸+同scale"；唯一 application scene 时兜底归属
+     （多窗口形态不猜）；hook_setHidden 在 LiveProcess 分支允许隐藏窗口挂 scene
+     （快手建窗即 hidden=1 只走 setHidden:）；scene 激活后 0.5/2/6/10s 收养孤儿窗口
+     （只挂 scene，不碰 hidden/bounds/root）；key window 最后跳不再把 nil 交给
+     MBProgressHUD 断言链。日志新增 window-scene-attached/orphan-adopted 事件与
+     role=/sessionState= 字段。
+   - T3 环境取证（禁改行为）：[env-view] 全量 dyld 镜像清单（100/块，masked=real≠name
+     实测、exists=access 实测）+ csops 15 位逐位展开 + SecTask 双键；判定
+     Reveil"注入共享库"红项的检测器视角材料齐了。
+   - 第三方补丁文件为 CRLF，已转 LF 合并；回执"apply --check 通过"以其环境自洽，
+     本仓按 LF blob 重验通过。
+2. 已知边界：T1 的 settings.statusBarHeight 是否随 FrontBoard 序列化到 guest 未真机确认，
+   sbSrc= 探针就是为它留的；T2 不强制 activationState（进程内无合法手段），
+   若快手仍不调 makeKeyAndVisible，日志会把它的窗口形态暴露出来。
+
 20261125-010000 1.1.108 Update：
 1. 修复内存管理页/堆叠后台内存胶囊完全无数据：jailed 进程无法枚举内核进程表
    （sysctl KERN_PROC_ALL 无权限，实测返回空）。改为访客会话登记：TweakLoader

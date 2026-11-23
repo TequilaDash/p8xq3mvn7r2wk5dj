@@ -13,6 +13,7 @@
 #include <stdlib.h>
 #include <limits.h>
 #include <mach-o/dyld.h>
+#include <errno.h>
 #import <os/lock.h>
 
 UIInterfaceOrientation LCOrientationLock = UIInterfaceOrientationUnknown;
@@ -100,6 +101,11 @@ static void LCPostWindowTouched(void) {
 static BOOL LCWindowHasVisibleGuestContent(UIWindow *window);
 
 static void LCLogEnvView(NSString *reason);
+static BOOL LCScreenMatchesWindowScene(UIScreen *screen, UIWindowScene *windowScene);
+static void LCGuestScheduleOrphanAdoption(UIWindowScene *scene);
+static void LCRefreshTransportedStatusBarHeight(void);
+static void LCGuestGeometryNotification(CFNotificationCenterRef center, void *observer,
+                                        CFStringRef name, const void *object, CFDictionaryRef userInfo);
 static IMP gOrigApplicationKeyWindow = NULL;
 static IMP gOrigMainBundle = NULL;
 static NSBundle *gLCGuestMainBundle = nil;
@@ -172,6 +178,15 @@ static UIWindow *LCGuestApplicationKeyWindow(UIApplication *self, SEL _cmd) {
         UIWindow *sceneKey = ((UIWindowScene *)scene).keyWindow;
         if (sceneKey) return sceneKey;
     }
+    // 1.1.107: 窗口建了但没进任何 scene（快手 KSDarkModeWindow）时，上面两层都看不到它。
+    // LiveProcess 进程里只有访客窗口，随便一个窗口也比 nil 强：MBProgressHUD 只要求
+    // view 非 nil，不再触发 initWithView: 的断言。
+    if (NSUserDefaults.isLiveProcess && [self respondsToSelector:@selector(windows)]) {
+        for (UIWindow *window in [(id)self windows]) {
+            if (window.windowLevel >= UIWindowLevelStatusBar) continue;
+            return window;
+        }
+    }
     if (gOrigApplicationKeyWindow) {
         return ((UIWindow *(*)(id, SEL))gOrigApplicationKeyWindow)(self, _cmd);
     }
@@ -214,7 +229,7 @@ static void LCLogGuestWindows(NSString *event) {
         UIWindowScene *scene = (UIWindowScene *)connected;
         id<UIWindowSceneDelegate> delegate = (id)scene.delegate;
         UIWindow *sceneDelegateWindow = [delegate respondsToSelector:@selector(window)] ? delegate.window : nil;
-        [text appendFormat:@"\n scene=%@ state=%ld key=%p delegateWindow=%p windows=%lu", scene.session.persistentIdentifier, (long)scene.activationState, scene.keyWindow, sceneDelegateWindow, (unsigned long)scene.windows.count];
+        [text appendFormat:@"\n scene=%@ state=%ld key=%p delegateWindow=%p windows=%lu role=%@ sessionState=%ld", scene.session.persistentIdentifier, (long)scene.activationState, scene.keyWindow, sceneDelegateWindow, (unsigned long)scene.windows.count, scene.session.role, (long)scene.session.state];
         for (UIWindow *window in scene.windows) if (![windows containsObject:window]) [windows addObject:window];
     }
     if (delegateWindow && ![windows containsObject:delegateWindow]) [windows addObject:delegateWindow];
@@ -227,6 +242,23 @@ static void LCLogGuestWindows(NSString *event) {
     if (logFn) logFn(@"%@", text); else NSLog(@"%@", text);
 }
 
+
+static void LCLogEnvViewFlush(NSString *text) {
+    if (text.length == 0) return;
+    TDConsoleLogFn logFn = LCGuestConsoleLogFn();
+    if (logFn) logFn(@"%@", text); else NSLog(@"%@", text);
+}
+
+// 反向翻译: 伪路径 -> 容器里的真实路径。tdv_real_path_from_virtual 由 Dyld 掩码模块
+// 导出（LiveContainer/Tweaks/Dyld.m:521）。TweakLoader 不链接 LiveContainerShared，
+// 跨 framework 符号只能 dlsym 取；取不到就退化成原名，不臆造路径。
+typedef const char *(*TDVRealPathFromVirtualFn)(const char *);
+static TDVRealPathFromVirtualFn LCGuestRealPathFromVirtual(void) {
+    static TDVRealPathFromVirtualFn fn;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ fn = (TDVRealPathFromVirtualFn)dlsym(RTLD_DEFAULT, "tdv_real_path_from_virtual"); });
+    return fn;
+}
 
 // [env-view] detector-perspective dump (外包纪律: 先取证再修). Prints every
 // value a detector typically compares: mainBundle identity/path, executable
@@ -241,21 +273,100 @@ static void LCLogEnvView(NSString *reason) {
     char execPath[PATH_MAX]; execPath[0] = 0;
     uint32_t sz = sizeof(execPath);
     if (_NSGetExecutablePath(execPath, &sz) == 0) [text appendFormat:@"\n _NSGetExecutablePath=%s", execPath];
-    [text appendFormat:@"\n dyld.imageCount=%u", _dyld_image_count()];
-    uint32_t n = _dyld_image_count();
-    if (n > 24) n = 24;
-    for (uint32_t i = 0; i < n; i++) {
-        const char *nm = _dyld_get_image_name(i);
-        if (nm) [text appendFormat:@"\n dyld[%u]=%s", i, nm];
+    {
+        TDMaskRealPrefixFn maskFn = LCGuestMaskRealPrefixFn();
+        const char *prefix = maskFn ? maskFn() : NULL;
+        [text appendFormat:@"\n mask.realPrefix=%@", prefix ? [NSString stringWithUTF8String:prefix] : @"(none)"];
+        [text appendFormat:@"\n lane.mode=%s liveProcess=%d", getenv("TD_LAUNCH_MODE") ?: "-", NSUserDefaults.isLiveProcess];
     }
+    uint32_t total = _dyld_image_count();
+    [text appendFormat:@"\n dyld.imageCount=%u (full list below, 100 per chunk)", total];
+    LCLogEnvViewFlush(text);
+
+    // 全量镜像清单：检测器枚举到的就是这个集合，"容器镜像（library_stub.framework、
+    // TweakLoader.dylib 等）以什么身份出现"只能由这张表回答。masked=1 表示 dyld 给出
+    // 的名称是合成路径，real= 是容器里的真实路径（tdv_real_path_from_virtual 反查）。
+    // 不做任何隐藏/改名：这里只把已经发生的事情打印出来。
+    TDVRealPathFromVirtualFn realFromVirtual = LCGuestRealPathFromVirtual();
+    NSMutableString *chunk = nil;
+    uint32_t inChunk = 0;
+    for (uint32_t i = 0; i < total; i++) {
+        const char *name = _dyld_get_image_name(i);
+        if (!name) continue;
+        const char *real = realFromVirtual ? realFromVirtual(name) : name;
+        BOOL masked = (real && real[0] && strcmp(real, name) != 0);
+        int exists = (real && real[0]) ? (access(real, F_OK) == 0 ? 1 : 0) : 0;
+        if (!chunk) {
+            chunk = [NSMutableString stringWithFormat:@"[env-view] dyld.chunk pid=%d total=%u", getpid(), total];
+            inChunk = 0;
+        }
+        [chunk appendFormat:@"\n dyld[%u]=%s masked=%d exists=%d real=%s", i, name, masked ? 1 : 0, exists,
+                            (real && real[0]) ? real : "(same)"];
+        inChunk += 1;
+        if (inChunk >= 100) {
+            LCLogEnvViewFlush(chunk);
+            chunk = nil;
+        }
+    }
+    if (chunk) LCLogEnvViewFlush(chunk);
+    NSMutableString *tail = [NSMutableString stringWithFormat:@"[env-view] env-flags pid=%d", getpid()];
     int csflags = 0;
     extern int csops(pid_t pid, unsigned int ops, void *useraddr, size_t usersize);
     if (csops(getpid(), 0, &csflags, sizeof(csflags)) == 0) {
-        [text appendFormat:@"\n csops.flags=0x%x CS_GET_VALIDATED=%d CS_PLATFORM_BINARY=%d", csflags,
-            (csflags & 0x00000010) != 0, (csflags & 0x04000000) != 0];
+        [tail appendFormat:@"\n csops.flags=0x%08x", csflags];
+        static const struct { const char *name; unsigned int bit; } flagNames[] = {
+            {"CS_GET_TASK_ALLOW", 0x00000004},
+            {"CS_INSTALLER", 0x00000008},
+            {"CS_HARD", 0x00000100},
+            {"CS_KILL", 0x00000200},
+            {"CS_CHECK_EXPIRATION", 0x00000400},
+            {"CS_RESTRICT", 0x00000800},
+            {"CS_ENFORCEMENT", 0x00001000},
+            {"CS_REQUIRE_LV", 0x00002000},
+            {"CS_ENTITLEMENTS_VALIDATED", 0x00004000},
+            {"CS_NVRAM_UNRESTRICTED", 0x00008000},
+            {"CS_RUNTIME", 0x00010000},
+            {"CS_LINKER_SIGNED", 0x00020000},
+            {"CS_PLATFORM_PATH", 0x02000000},
+            {"CS_PLATFORM_BINARY", 0x04000000},
+            {"CS_DEBUGGED", 0x10000000},
+        };
+        for (size_t i = 0; i < sizeof(flagNames) / sizeof(flagNames[0]); i++) {
+            [tail appendFormat:@"\n csops.%s=%d", flagNames[i].name, (csflags & flagNames[i].bit) ? 1 : 0];
+        }
+    } else {
+        [tail appendFormat:@"\n csops.error errno=%d", errno];
     }
-    TDConsoleLogFn logFn = LCGuestConsoleLogFn();
-    if (logFn) logFn(@"%@", text); else NSLog(@"%@", text);
+    // 检测器最常比对的 entitlement。符号走 dlsym: TweakLoader 不链接 Security 的私有
+    // 入口, 缺符号时只报 available=0, 不臆造没有的 selector/行为。
+    {
+        typedef void *(*SecTaskCreateFromSelfFn)(CFAllocatorRef allocator);
+        typedef CFTypeRef (*SecTaskCopyValueForEntitlementFn)(void *task, CFStringRef entitlement, CFErrorRef *error);
+        static SecTaskCreateFromSelfFn createTask = NULL;
+        static SecTaskCopyValueForEntitlementFn copyEntitlement = NULL;
+        static dispatch_once_t entOnce;
+        dispatch_once(&entOnce, ^{
+            createTask = (SecTaskCreateFromSelfFn)dlsym(RTLD_DEFAULT, "SecTaskCreateFromSelf");
+            copyEntitlement = (SecTaskCopyValueForEntitlementFn)dlsym(RTLD_DEFAULT, "SecTaskCopyValueForEntitlement");
+        });
+        if (createTask && copyEntitlement) {
+            [tail appendFormat:@"\n sectask.available=1"];
+            CFTypeRef task = (CFTypeRef)createTask(kCFAllocatorDefault);
+            if (task) {
+                for (NSString *key in @[@"platform-application", @"get-task-allow"]) {
+                    CFTypeRef value = copyEntitlement((void *)task, (__bridge CFStringRef)key, NULL);
+                    [tail appendFormat:@"\n entitlement.%@=%@", key, value ? [(__bridge id)value description] : @"(absent)"];
+                    if (value) CFRelease(value);
+                }
+                CFRelease(task);
+            } else {
+                [tail appendFormat:@"\n sectask.task=(null)"];
+            }
+        } else {
+            [tail appendFormat:@"\n sectask.available=0"];
+        }
+    }
+    LCLogEnvViewFlush(tail);
 }
 
 static id LCGuestShowHUDAddedTo(id self, SEL _cmd, id view, BOOL animated) {
@@ -308,6 +419,21 @@ static void UIKitGuestHooksInit() {
         [NSNotificationCenter.defaultCenter addObserverForName:name object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *note) {
             NSString *event = note.name;
             dispatch_async(dispatch_get_main_queue(), ^{ LCLogGuestWindows(event); });
+        }];
+    }
+    {
+        // Host-published physical bar height (LiveProcess cannot read the host
+        // scene or its settings). Read once at start, then on every host change.
+        LCRefreshTransportedStatusBarHeight();
+        CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL,
+                                        LCGuestGeometryNotification,
+                                        CFSTR("com.kdt.livecontainer.guestGeometry"),
+                                        NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
+    }
+    {
+        [NSNotificationCenter.defaultCenter addObserverForName:UISceneDidActivateNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *note) {
+            if (![note.object isKindOfClass:UIWindowScene.class]) return;
+            LCGuestScheduleOrphanAdoption((UIWindowScene *)note.object);
         }];
     }
     {
@@ -845,21 +971,31 @@ static CGRect LCCacheGuestStatusBarFrame(CGRect frame) {
 
 // One line per geometry change, in the same exportable log as the launch
 // records: the two launch modes can then be compared without guessing.
-static void LCLogStatusBarGeometry(UIWindowScene *scene, UIWindow *window, CGRect reported) {
+// sbSrc names the layer that supplied the reported rect, so the next device run
+// says which channel actually landed instead of another unexplained zero.
+// avoid= is the transported occlusion rect, printed as contrast: it is a partial
+// overlap (15pt under a deck window) and must never be the reported value.
+static void LCLogStatusBarGeometry(UIWindowScene *scene, UIWindow *window, CGRect reported, NSString *source, CGRect avoidance) {
     static CGRect lastReported = {{0, 0}, {0, 0}};
     static CGRect lastBounds = {{0, 0}, {0, 0}};
+    static CGRect lastAvoidance = {{0, 0}, {0, 0}};
     static UIEdgeInsets lastInsets;
     static __weak UIWindowScene *lastScene = nil;
     static __weak UIWindow *lastWindow = nil;
+    static NSString *lastSource = nil;
     CGRect bounds = window ? window.bounds : CGRectZero;
     UIEdgeInsets insets = window ? window.safeAreaInsets : UIEdgeInsetsZero;
     if (CGRectEqualToRect(reported, lastReported) && scene == lastScene && window == lastWindow &&
-        CGRectEqualToRect(bounds, lastBounds) && UIEdgeInsetsEqualToEdgeInsets(insets, lastInsets)) return;
+        CGRectEqualToRect(bounds, lastBounds) && UIEdgeInsetsEqualToEdgeInsets(insets, lastInsets) &&
+        CGRectEqualToRect(avoidance, lastAvoidance) &&
+        (source == lastSource || [source isEqualToString:lastSource])) return;
     lastReported = reported;
     lastBounds = bounds;
+    lastAvoidance = avoidance;
     lastInsets = insets;
     lastScene = scene;
     lastWindow = window;
+    lastSource = source;
     const char *dir = getenv("TD_CONSOLE_LOG_DIR");
     NSString *directory = (dir && dir[0] == '/') ? [NSString stringWithUTF8String:dir] : nil;
     if (!directory) {
@@ -873,7 +1009,7 @@ static void LCLogStatusBarGeometry(UIWindowScene *scene, UIWindow *window, CGRec
     if (!directory) return;
     if (![[NSFileManager defaultManager] createDirectoryAtPath:directory withIntermediateDirectories:YES attributes:nil error:nil]) return;
     NSString *line = [NSString stringWithFormat:
-        @"[geometry] mode=%s pid=%d scene=%@ bounds=%@ contentWindow=%@ safeTop=%.1f safeBottom=%.1f statusBar=%@ reported=%@\n",
+        @"[geometry] mode=%s pid=%d scene=%@ bounds=%@ contentWindow=%@ safeTop=%.1f safeBottom=%.1f statusBar=%@ reported=%@ sbSrc=%@ avoid=%@\n",
         getenv("TD_LAUNCH_MODE") ?: "-", getpid(),
         scene.session.persistentIdentifier,
         NSStringFromCGRect(scene.coordinateSpace.bounds),
@@ -881,7 +1017,7 @@ static void LCLogStatusBarGeometry(UIWindowScene *scene, UIWindow *window, CGRec
         window ? insets.top : -1,
         window ? insets.bottom : -1,
         scene.statusBarManager ? NSStringFromCGRect(scene.statusBarManager.statusBarFrame) : @"(none)",
-        NSStringFromCGRect(reported)];
+        NSStringFromCGRect(reported), source ?: @"none", NSStringFromCGRect(avoidance)];
     NSString *path = [directory stringByAppendingPathComponent:
                       [NSString stringWithFormat:@"geometry-%d.log", getpid()]];
     NSData *data = [line dataUsingEncoding:NSUTF8StringEncoding];
@@ -904,6 +1040,9 @@ static BOOL LCWindowHasVisibleGuestContent(UIWindow *window) {
 @interface UIApplicationSceneSettings (LCGuestPhysicalStatusBar)
 - (BOOL)statusBarDisabled;
 - (CGRect)statusBarAvoidanceFrame;
+// Bar thickness as its own settings value (host publishes it separately from
+// the occlusion rect). Guarded by respondsToSelector at every use site.
+- (double)statusBarHeight;
 @end
 
 @protocol LCGuestStatusBarScene <NSObject>
@@ -913,6 +1052,50 @@ static BOOL LCWindowHasVisibleGuestContent(UIWindow *window) {
 @interface UIWindow (LCGuestPhysicalStatusBar)
 - (id<LCGuestStatusBarScene>)_fbsScene;
 @end
+
+// Host -> guest transport for the physical bar height when the guest runs in
+// its own process. Key and notification name are mirrored in
+// MultitaskSupport/UIKitHooks.m (LCApplyGuestSceneStatusBarFrame).
+static NSString *const LCGuestPhysicalStatusBarHeightKey = @"LCGuestPhysicalStatusBarHeight";
+static CGFloat gGuestTransportedStatusBarHeight = 0;
+
+static void LCRefreshTransportedStatusBarHeight(void) {
+    id value = [NSUserDefaults.lcSharedDefaults objectForKey:LCGuestPhysicalStatusBarHeightKey];
+    CGFloat height = [value respondsToSelector:@selector(doubleValue)] ? (CGFloat)[value doubleValue] : 0;
+    gGuestTransportedStatusBarHeight = height > 0 ? height : 0;
+}
+
+static void LCGuestGeometryNotification(CFNotificationCenterRef center, void *observer,
+                                        CFStringRef name, const void *object, CFDictionaryRef userInfo) {
+    LCRefreshTransportedStatusBarHeight();
+    // A rotation or bar-visibility change invalidates the cached frame; the
+    // next query recomputes from the freshly transported height.
+    LCCacheGuestStatusBarFrame(CGRectZero);
+}
+
+static CGFloat LCGuestStatusBarLogicalWidth(UIWindowScene *scene) {
+    CGFloat width = scene ? CGRectGetWidth(scene.coordinateSpace.bounds) : 0;
+    if (width <= 0) width = CGRectGetWidth(UIScreen.mainScreen.bounds);
+    return width;
+}
+
+// The host's own bar, read in-process. Only reachable in fullscreen launches,
+// where the guest shares this UIApplication with the host; LiveProcess runs in
+// a separate extension process and can never see it.
+static CGFloat LCGuestInProcessHostStatusBarHeight(UIWindowScene *contentScene, CGFloat *hostWidth, CGFloat *guestWidth) {
+    for (UIScene *connected in UIApplication.sharedApplication.connectedScenes) {
+        if (connected == contentScene) continue;
+        if (![connected isKindOfClass:UIWindowScene.class]) continue;
+        UIWindowScene *scene = (UIWindowScene *)connected;
+        if (scene.activationState == UISceneActivationStateBackground) continue;
+        CGRect bar = scene.statusBarManager ? scene.statusBarManager.statusBarFrame : CGRectZero;
+        if (CGRectIsNull(bar) || CGRectIsEmpty(bar) || CGRectGetHeight(bar) <= 0) continue;
+        if (hostWidth) *hostWidth = CGRectGetWidth(scene.coordinateSpace.bounds);
+        if (guestWidth) *guestWidth = LCGuestStatusBarLogicalWidth(contentScene);
+        return CGRectGetHeight(bar);
+    }
+    return 0;
+}
 
 static CGRect LCGuestStatusBarFrame(UIApplication *application) {
     // UIKit may re-enter before the current frame is known. Don't return a
@@ -977,16 +1160,68 @@ static CGRect LCGuestStatusBarFrame(UIApplication *application) {
         // separately so legacy/manual-layout apps do not receive a false zero.
         UIStatusBarManager *manager = statusBarScene.statusBarManager;
         CGRect reported = manager ? manager.statusBarFrame : CGRectZero;
+        NSString *source = manager ? @"manager" : @"none";
+        UIApplicationSceneSettings *settings = nil;
+        CGRect avoidance = CGRectZero;
+        BOOL virtualScene = NO;
         if ([contentWindow respondsToSelector:@selector(_fbsScene)]) {
             id<LCGuestStatusBarScene> scene = [contentWindow _fbsScene];
-            UIApplicationSceneSettings *settings = [scene respondsToSelector:@selector(settings)] ? [scene settings] : nil;
-            if ([settings respondsToSelector:@selector(statusBarDisabled)] && [settings statusBarDisabled] &&
-                [settings respondsToSelector:@selector(statusBarAvoidanceFrame)]) {
-                CGRect physical = [settings statusBarAvoidanceFrame];
-                reported = CGRectIsNull(physical) || CGRectIsEmpty(physical) ? CGRectZero : physical;
+            settings = [scene respondsToSelector:@selector(settings)] ? [scene settings] : nil;
+            if ([settings respondsToSelector:@selector(statusBarDisabled)] && [settings statusBarDisabled]) {
+                virtualScene = YES;
+                if ([settings respondsToSelector:@selector(statusBarAvoidanceFrame)]) {
+                    CGRect rect = [settings statusBarAvoidanceFrame];
+                    if (!CGRectIsNull(rect)) avoidance = rect;
+                }
             }
         }
-        LCLogStatusBarGeometry(statusBarScene, contentWindow, reported);
+        // A virtual scene renders no bar of its own, so its manager reads zero
+        // and the transported avoidance rect is only the part of the device bar
+        // that overlaps this viewport -- 15pt under a 44pt deck strip, 0 when
+        // the surface is clear, 59 only when it starts at y=0. A legacy app asks
+        // for the device bar, so the answer is the full band: that partial 15pt
+        // (and the old false zero) is what put 酷我's content off. The occlusion
+        // rect stays in the log as contrast and is never the reported value.
+        if (virtualScene) {
+            CGFloat height = 0;
+            NSString *fallback = nil;
+            if (settings && [settings respondsToSelector:@selector(statusBarHeight)]) {
+                height = (CGFloat)[settings statusBarHeight];
+                if (height > 0) fallback = @"settings-height";
+            }
+            if (height <= 0 && gGuestTransportedStatusBarHeight > 0) {
+                // The host publishes the bar in host points. This guest's logical
+                // interface can be scaled (deck 缩放 0.5-2.0), and its own
+                // logical width is the only place that ratio is visible.
+                CGFloat guestWidth = LCGuestStatusBarLogicalWidth(statusBarScene);
+                CGFloat screenWidth = CGRectGetWidth(UIScreen.mainScreen.bounds);
+                height = (guestWidth > 0 && screenWidth > 0)
+                    ? gGuestTransportedStatusBarHeight * (guestWidth / screenWidth)
+                    : gGuestTransportedStatusBarHeight;
+                fallback = @"transport";
+            }
+            if (height <= 0) {
+                CGFloat hostWidth = 0, guestWidth = 0;
+                CGFloat hostBar = LCGuestInProcessHostStatusBarHeight(statusBarScene, &hostWidth, &guestWidth);
+                if (hostBar > 0) {
+                    // Fullscreen only: same display, so the bar keeps its own
+                    // proportion to the guest's logical interface.
+                    height = (hostWidth > 0 && guestWidth > 0) ? hostBar * (guestWidth / hostWidth) : hostBar;
+                    fallback = @"host-scene";
+                }
+            }
+            if (height > 0) {
+                CGFloat width = LCGuestStatusBarLogicalWidth(statusBarScene);
+                reported = CGRectMake(0, 0, width > 0 ? width : 0, height);
+                source = fallback;
+            } else {
+                // Landscape / hidden bar: zero is correct here, and only the
+                // ladder above may say so.
+                reported = CGRectZero;
+                source = @"virtual-none";
+            }
+        }
+        LCLogStatusBarGeometry(statusBarScene, contentWindow, reported, source, avoidance);
         return LCCacheGuestStatusBarFrame(reported);
     } @finally {
         gHookStatusBarFrameEntered = NO;
@@ -1266,27 +1501,93 @@ static BOOL gLCLegacyAppHooksInstalled = NO;
     [self hook_resignKeyWindow];
 }
 - (void)hook_setHidden:(BOOL)hidden {
-    // Hiding an unattached host/overlay window must not attach it to the
-    // guest scene just to hide it.
-    if (!hidden) [self updateWindowScene];
+    // Hiding an unattached host/overlay window must not attach it to the guest
+    // scene just to hide it (1.1.107 deck work). LiveProcess is the exception:
+    // that process contains guest windows only, and an app may create its
+    // business window already hidden (快手 KSDarkModeWindow: hidden=1,
+    // bounds=0) and only ever reach setHidden:.
+    BOOL guestOnlyProcess = NSUserDefaults.isLiveProcess;
+    if ((!hidden || guestOnlyProcess) && self.windowLevel < UIWindowLevelStatusBar) {
+        [self updateWindowScene];
+    }
     [self hook_setHidden:hidden];
 }
 - (void)updateWindowScene {
     if (self.windowScene) return;
     UIWindowScene *target = nil;
     NSInteger bestPriority = -1;
+    UIWindowScene *soleApplicationScene = nil;
+    NSInteger applicationSceneCount = 0;
     for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
         if (![scene isKindOfClass:UIWindowScene.class]) continue;
         UIWindowScene *windowScene = (UIWindowScene *)scene;
-        if (self.screen != windowScene.screen || ![windowScene.session.role isEqualToString:UIWindowSceneSessionRoleApplication]) continue;
+        if (![windowScene.session.role isEqualToString:UIWindowSceneSessionRoleApplication]) continue;
         UISceneActivationState state = windowScene.activationState;
         if (state == UISceneActivationStateBackground) continue;
+        applicationSceneCount += 1;
+        if (!soleApplicationScene) soleApplicationScene = windowScene;
         NSInteger priority = state == UISceneActivationStateForegroundActive ? 2 : (state == UISceneActivationStateForegroundInactive ? 1 : 0);
-        if (priority > bestPriority) {
+        if (LCScreenMatchesWindowScene(self.screen, windowScene) && priority > bestPriority) {
             target = windowScene;
             bestPriority = priority;
         }
     }
-    if (target) self.windowScene = target;
+    if (!target && applicationSceneCount == 1) {
+        // Unambiguous: the only application scene is this window's scene even
+        // when the screen objects differ or it is still unattached (state 0).
+        // With two or more candidates a mismatch is real and stays unmapped --
+        // that is what keeps Via/酷我 multi-window shapes as they are.
+        target = soleApplicationScene;
+    }
+    if (target) {
+        self.windowScene = target;
+        LCLogGuestWindows(@"window-scene-attached");
+    }
 }
 @end
+
+// A guest window can be built against a temporary/synthetic UIScreen while the
+// scene carries the real host screen. Identity then never matches and the
+// window never joins any scene -- 快手's KSDarkModeWindow reported scene
+// state=0 with exactly this shape. Geometry is the evidence both sides share.
+static BOOL LCScreenMatchesWindowScene(UIScreen *screen, UIWindowScene *windowScene) {
+    UIScreen *sceneScreen = windowScene.screen;
+    if (!screen || !sceneScreen) return NO;
+    if (screen == sceneScreen) return YES;
+    if (!CGSizeEqualToSize(screen.bounds.size, sceneScreen.bounds.size)) return NO;
+    return screen.scale == sceneScreen.scale;
+}
+
+// Windows the app created but never handed to a scene. UIKit still tracks them
+// in UIApplication.windows. Adopt them into the guest's application scene after
+// activation, and leave hidden/root/bounds untouched: the app's own launch path
+// stays the only thing allowed to size a window or give it a root controller
+// (task rule: 不能替 app 造 root). Restricted to LiveProcess, whose process
+// contains guest windows only -- this can never pull a host dock/overlay window
+// into the guest scene.
+static void LCGuestAdoptOrphanWindows(UIWindowScene *scene) {
+    if (!scene || !NSUserDefaults.isLiveProcess) return;
+    UIApplication *application = UIApplication.sharedApplication;
+    if (![application respondsToSelector:@selector(windows)]) return;
+    NSArray<UIWindow *> *windows = [(id)application windows];
+    for (UIWindow *window in windows) {
+        if (window.windowScene) continue;
+        if (window.windowLevel >= UIWindowLevelStatusBar) continue;
+        window.windowScene = scene;
+        LCLogGuestWindows(@"orphan-adopted");
+    }
+}
+
+// 快手在启动约 6 秒后才建窗, 没有统一入口可挂. 只在 scene 激活后做有限次扫描,
+// 不装常驻定时器; 新一代激活会让上一代的补扫自动作废.
+static void LCGuestScheduleOrphanAdoption(UIWindowScene *scene) {
+    if (!scene || !NSUserDefaults.isLiveProcess) return;
+    static NSUInteger generation = 0;
+    NSUInteger gen = ++generation;
+    for (NSNumber *delay in @[@0.5, @2.0, @6.0, @10.0]) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay.doubleValue * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            if (gen != generation) return;
+            LCGuestAdoptOrphanWindows(scene);
+        });
+    }
+}

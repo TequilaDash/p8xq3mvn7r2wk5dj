@@ -8,6 +8,7 @@
 #import "utils.h"
 #import "UIKitPrivate+MultitaskSupport.h"
 #import "AppSceneViewController.h"
+#include <math.h>
 
 
 UIEdgeInsets LCUIEdgeInsetsRotateToOrientation(UIEdgeInsets insets, UIInterfaceOrientation orientation) {
@@ -56,6 +57,63 @@ void LCApplyGuestSceneSafeAreaInsets(UIMutableApplicationSceneSettings *settings
     }
 }
 
+// Occlusion and the device's own bar are two different values and have to be
+// transported as two. A legacy guest asks UIApplication.statusBarFrame for the
+// device bar so it can lay its whole-view content underneath it. In a deck /
+// multitask viewport the surface sits below the host's bar, so the intersection
+// is legitimately empty while the reported rect still has to be the full bar
+// (59pt on Dynamic Island phones). Baseline published only the intersection,
+// so the guest received CGRectZero and started its content at y=0.
+static const CFStringRef LCGuestGeometryChangedNotificationName = CFSTR("com.kdt.livecontainer.guestGeometry");
+static NSString *const LCGuestPhysicalStatusBarHeightKey = @"LCGuestPhysicalStatusBarHeight";
+
+// The device's bar, independent of where this viewport sits. FrontBoard
+// reports a zero frame while the bar is hidden; the island still occupies that
+// band, so the host window's top safe area is the measured fallback.
+static CGFloat LCHostPhysicalStatusBarHeight(UIWindow *window, UIWindowScene *scene) {
+    if (!scene) return 0;
+    CGRect bar = scene.statusBarManager ? scene.statusBarManager.statusBarFrame : CGRectZero;
+    if (!CGRectIsNull(bar) && !CGRectIsEmpty(bar) && CGRectGetHeight(bar) > 0) return CGRectGetHeight(bar);
+    UIEdgeInsets periphery = window ? window.safeAreaInsets : UIEdgeInsetsZero;
+    return periphery.top > 0 ? periphery.top : 0;
+}
+
+// LiveProcess runs the guest in its own extension process: it cannot see this
+// scene's settings object, and this UIApplication is not visible there at all.
+// The app-group defaults are shared by both processes -- the same channel the
+// one-shot orientation override already uses -- and the Darwin notification
+// tells the guest to drop its cached frame and re-read.
+static void LCPublishGuestPhysicalStatusBar(CGFloat height) {
+    if (height < 0) return;
+    static CGFloat lastHeight = -1;
+    if (lastHeight >= 0 && fabs(height - lastHeight) < 0.5) return;
+    lastHeight = height;
+    NSUserDefaults *shared = NSUserDefaults.lcSharedDefaults;
+    if (shared) {
+        [shared setObject:@(height) forKey:LCGuestPhysicalStatusBarHeightKey];
+        [shared synchronize];
+    }
+    CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),
+                                         LCGuestGeometryChangedNotificationName, NULL, NULL, YES);
+}
+
+// Rotation, bar visibility and window swaps change the physical height without
+// a settings update for every hosted scene (a scene with no surface has no
+// viewport to measure).
+static void LCPublishGuestPhysicalStatusBarFromHostScene(void) {
+    for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
+        if (![scene isKindOfClass:UIWindowScene.class]) continue;
+        UIWindowScene *windowScene = (UIWindowScene *)scene;
+        UISceneActivationState state = windowScene.activationState;
+        if (state != UISceneActivationStateForegroundActive && state != UISceneActivationStateForegroundInactive) continue;
+        UIWindow *window = windowScene.keyWindow ?: windowScene.windows.firstObject;
+        // 0 is a real answer (the bar is hidden in landscape). Publishing it
+        // stops a guest from keeping the portrait height after rotation.
+        LCPublishGuestPhysicalStatusBar(LCHostPhysicalStatusBarHeight(window, windowScene));
+        return;
+    }
+}
+
 // A disabled virtual status bar prevents a second renderer; it does not mean
 // the host's real bar cannot cover this viewport. FrontBoard carries that
 // separate occlusion rect to legacy guests without treating a notch inset or
@@ -64,12 +122,13 @@ void LCApplyGuestSceneStatusBarFrame(UIMutableApplicationSceneSettings *settings
     if (![settings statusBarDisabled]) return;
     UIWindow *window = viewport.window;
     CGRect bounds = viewport.bounds;
-    if (!window || CGRectIsEmpty(bounds)) return;
     UIWindowScene *scene = window.windowScene;
     UIStatusBarManager *manager = scene.statusBarManager;
-    if (!manager) return;
+    // Occlusion keeps its baseline semantics: only the part of the physical bar
+    // that actually covers this viewport participates in content clearance.
     CGRect overlap = CGRectZero;
-    if (!window.hidden && window.alpha >= 0.01 && !manager.isStatusBarHidden) {
+    if (window && !CGRectIsEmpty(bounds) && manager &&
+        !window.hidden && window.alpha >= 0.01 && !manager.isStatusBarHidden) {
         CGRect bar = [viewport convertRect:manager.statusBarFrame fromCoordinateSpace:scene.coordinateSpace];
         CGRect intersection = CGRectIntersection(bounds, bar);
         if (!CGRectIsNull(intersection) && !CGRectIsEmpty(intersection)) {
@@ -78,7 +137,18 @@ void LCApplyGuestSceneStatusBarFrame(UIMutableApplicationSceneSettings *settings
         }
     }
     settings.statusBarAvoidanceFrame = overlap;
-    if ([settings respondsToSelector:@selector(setStatusBarHeight:)]) settings.statusBarHeight = CGRectGetHeight(overlap);
+
+    CGFloat barHeight = LCHostPhysicalStatusBarHeight(window, scene);
+    CGFloat guestHeight = (barHeight > 0 && scale > 0) ? barHeight / scale : 0;
+    // UIKit reads this property back as the bar's own thickness. Baseline fed
+    // it the occlusion height, which is zero whenever the surface is clear of
+    // the bar -- exactly the multitask case.
+    if ([settings respondsToSelector:@selector(setStatusBarHeight:)]) settings.statusBarHeight = guestHeight;
+    // The transported copy stays in host points: each guest knows its own
+    // scaleRatio only through its scene/logical width, so publishing a per-guest
+    // scaled value here would make two windows at different 缩放 ratios overwrite
+    // each other.
+    LCPublishGuestPhysicalStatusBar(barHeight);
 }
 
 // Fix _UIPrototypingMenuSlider not continually updating its value on iOS 17+
@@ -134,4 +204,14 @@ void UIKitFixesInit(void) {
         class_addMethod(FBSceneClass, @selector(hook__performUpdateWithoutActivation:), (IMP)hook_FBScene_performUpdateWithoutActivation, "v@:@");
         swizzle(FBSceneClass, @selector(_performUpdateWithoutActivation:), @selector(hook__performUpdateWithoutActivation:));
     }
+    // The transported bar height has to follow rotation, status-bar visibility
+    // and key-window swaps even when no hosted surface is laid out.
+    for (NSNotificationName name in @[UIApplicationDidChangeStatusBarFrameNotification,
+                                      UIDeviceOrientationDidChangeNotification,
+                                      UIWindowDidBecomeKeyNotification]) {
+        [NSNotificationCenter.defaultCenter addObserverForName:name object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *note) {
+            LCPublishGuestPhysicalStatusBarFromHostScene();
+        }];
+    }
+    LCPublishGuestPhysicalStatusBarFromHostScene();
 }
