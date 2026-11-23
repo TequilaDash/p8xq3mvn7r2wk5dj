@@ -109,6 +109,17 @@ static UIWindow *LCGuestApplicationKeyWindow(UIApplication *self, SEL _cmd) {
             if (LCWindowHasVisibleGuestContent(window)) return window;
         }
     }
+    // 1.1.101 实测教训：访客（快手）黑屏时没有任何窗口带"可见访客内容"，上面返回 nil，
+    // HUD 兜底又把 nil 传回 MBProgressHUD → 断言照崩。访客自建的 UIWindow 不带我们的
+    // 标记，但 iOS 的 scene.keyWindow 一定跟踪得到 —— 第二层兜底用它。
+    for (UIScene *scene in self.connectedScenes) {
+        if (![scene isKindOfClass:UIWindowScene.class]) continue;
+        UISceneActivationState state = ((UIWindowScene *)scene).activationState;
+        if (state != UISceneActivationStateForegroundActive &&
+            state != UISceneActivationStateForegroundInactive) continue;
+        UIWindow *sceneKey = ((UIWindowScene *)scene).keyWindow;
+        if (sceneKey) return sceneKey;
+    }
     if (gOrigApplicationKeyWindow) {
         return ((UIWindow *(*)(id, SEL))gOrigApplicationKeyWindow)(self, _cmd);
     }

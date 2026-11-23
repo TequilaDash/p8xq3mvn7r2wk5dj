@@ -1,3 +1,15 @@
+20261124-160000 1.1.102 Update：
+1. 堆叠后台整体按参考工程重做（外包第三期交付，主 harness 审计后合入）：
+   - 真正的连续页几何（contentOffset/stride），负距离 2.25 非线性压叠（参考 :654-659），
+     焦点 scale=1、右侧 1.018（我此前"只放大选中卡"的语义是错的，参考 updateDeck 实际如此）。
+   - 横屏分支 previewHeight*0.78（参考 :553）；centerY=safeTop+可用高*0.52 并按 1.018*(17+h/2) 夹取（:566-572）。
+   - 卡片快照改抓访客内容视图（stackContentPreview），不再把装饰边框/窗口控件画进预览。
+   - 标题/图标可用区按参考 :671-684 计算，标题不足渐隐；25pt 图标/14pt 字体/preview 圆角28/阴影参数照参考。
+   - dock 换成自适应宽度的 UIScrollView，多应用不再溢出。
+2. 快手崩溃最后一环：1.1.101 的 .ips 证明 nil-view 兜底跑了但 LCGuestApplicationKeyWindow 仍返回 nil
+   （黑屏时没有任何窗口带"可见访客内容"标记）。补第二层兜底：退回 iOS 自己维护的 scene.keyWindow，
+   访客自建 UIWindow 也在其中，nil 不再进 MBProgressHUD 断言。
+
 20261124-140000 1.1.101 Update：
 1. 三个 .ips 的共同根因终于找到：我们的 Mach-O 改补丁管线用的是 `mmap PROT_READ|PROT_WRITE MAP_SHARED` **就地改写已签名文件**。
    iOS 27 的 code signing monitor（codeSigningMonitor: 2）会把"已签名文件被就地改写的页"判成非法页 → SIGKILL-CODESIGNING "Invalid Page"：

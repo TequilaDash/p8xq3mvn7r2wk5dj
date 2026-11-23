@@ -280,19 +280,20 @@ public class MultitaskStackManager: NSObject, ObservableObject {
         for controller in controllers {
             guard let uuid = controller.dataUUID else { continue }
             let decorated = decoratedController(for: controller)
-            let source = decorated?.viewIfLoaded ?? controller.viewIfLoaded
-            if let source, !source.isHidden, source.alpha > 0,
+            let source = controller.viewIfLoaded
+            let wrapperVisible = (decorated?.viewIfLoaded).map { !$0.isHidden && $0.alpha > 0 } ?? true
+            if let source, wrapperVisible, !source.isHidden, source.alpha > 0,
                source.window != nil, !source.bounds.isEmpty,
                let snapshot = source.snapshotView(afterScreenUpdates: false) {
                 freshPreviews[uuid] = snapshot
-            } else if let snapshot = decorated?.stackPreview {
+            } else if let snapshot = decorated?.stackContentPreview {
                 freshPreviews[uuid] = snapshot
             }
         }
         let dockApps = MultitaskDockManager.shared.apps
         for app in dockApps where freshPreviews[app.appUUID] == nil {
             if let decorated = app.view?._viewDelegate() as? DecoratedAppSceneViewController,
-               let snapshot = decorated.stackPreview {
+               let snapshot = decorated.stackContentPreview {
                 freshPreviews[app.appUUID] = snapshot
             }
         }
@@ -684,43 +685,17 @@ struct MultitaskStackView: View {
     @AppStorage("TDAppStackBlur", store: LCUtils.appGroupUserDefault)
     private var backgroundBlur = 12.0
     @State private var wallpaperImage: UIImage?
-    @State private var dragOffset: CGSize = .zero
-    @State private var dragAxis: Axis?
-    @State private var draggedUUID: String?
+    @State private var backdropVisible = false
 
     var body: some View {
-        GeometryReader { viewport in
-            ZStack {
-                backgroundLayer
-                VStack(spacing: 0) {
-                    if manager.apps.isEmpty {
-                        Spacer()
-                        Image(systemName: "rectangle.stack").font(.system(size: 46, weight: .light))
-                        Spacer()
-                    } else {
-                        GeometryReader { geometry in
-                            deck(in: geometry.size, viewportHeight: viewport.size.height)
-                        }
-                        if showClearAll {
-                            Button {
-                                manager.closeAll()
-                            } label: {
-                                Image(systemName: "trash")
-                                    .font(.system(size: 19, weight: .semibold))
-                                    .frame(width: 54, height: 54)
-                                    .background(.ultraThinMaterial, in: Circle())
-                            }
-                            .buttonStyle(.plain)
-                            .accessibilityLabel("全部清除")
-                            .padding(.bottom, 6)
-                        }
-                        if !dockManager.apps.isEmpty { dockStrip }
-                    }
-                }
-                .foregroundStyle(.white)
-                .padding(.top, 10)
+        ZStack {
+            backgroundLayer.opacity(backdropVisible ? 1 : 0)
+            StackDeckRepresentable(manager: manager, dockApps: dockManager.apps,
+                                   showClearAll: showClearAll) { visible, duration in
+                withAnimation(.easeOut(duration: duration)) { backdropVisible = visible }
             }
         }
+        .ignoresSafeArea()
         .task {
             guard wallpaperImage == nil else { return }
             let isPad = UIDevice.current.userInterfaceIdiom == .pad
@@ -738,304 +713,737 @@ struct MultitaskStackView: View {
                 .blur(radius: backgroundBlur)
                 .overlay(Color.black.opacity(0.18))
                 .ignoresSafeArea()
-                .onTapGesture { manager.dismiss() }
         } else {
             Rectangle()
                 .fill(.ultraThinMaterial)
                 .overlay(Color.black.opacity(0.12 + backgroundBlur / 60))
                 .ignoresSafeArea()
-                .onTapGesture { manager.dismiss() }
         }
     }
 
-    // 图标渲染抽成函数: 就地写 if let + 链式修饰器会让 Swift 类型检查超时.
-    @ViewBuilder
-    private func appIcon(_ app: DockAppModel, size: CGFloat, corner: CGFloat) -> some View {
-        if let icon = app.appInfo?.iconIsDarkIcon(false) {
-            Image(uiImage: icon)
-                .resizable()
-                .scaledToFill()
-                .frame(width: size, height: size)
-                .clipShape(RoundedRectangle(cornerRadius: corner, style: .continuous))
-        } else {
-            Image(systemName: "app.fill")
-                .resizable()
-                .scaledToFit()
-                .padding(size * 0.16)
-                .frame(width: size, height: size)
-                .clipShape(RoundedRectangle(cornerRadius: corner, style: .continuous))
-        }
-    }
+}
 
-    private func moveSelection(by distance: Int) {
-        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-            manager.focus(index: manager.selectedIndex + distance)
-        }
-    }
+// MARK: - Reference deck (LCOrbitTaskSwitcher.m, actual bundled line numbers)
+// All native types stay in this file, so the existing Xcode target needs no new
+// file membership. Snapshots remain inert; no guest view is moved or resized.
+@available(iOS 16.0, *)
+private struct StackDeckRepresentable: UIViewRepresentable {
+    let manager: MultitaskStackManager
+    let dockApps: [DockAppModel]
+    let showClearAll: Bool
+    let backdrop: (Bool, TimeInterval) -> Void
 
-    // 底部 dock：复用 dock 里的 app 列表，点图标切过去。
-    private var dockStrip: some View {
-        HStack(spacing: 18) {
-            ForEach(dockManager.apps) { app in
-                Button {
-                    manager.selectApp(uuid: app.appUUID)
-                } label: {
-                    appIcon(app, size: 54, corner: 13)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(app.appName)
-            }
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
-        .padding(.horizontal, 18)
-        .padding(.bottom, 10)
+    func makeUIView(context: Context) -> StackDeckViewport { StackDeckViewport() }
+    func updateUIView(_ view: StackDeckViewport, context: Context) {
+        view.configure(manager: manager, dockApps: dockApps, showClearAll: showClearAll, backdrop: backdrop)
     }
+    static func dismantleUIView(_ view: StackDeckViewport, coordinator: ()) { view.invalidate() }
+}
 
-    private func deck(in size: CGSize, viewportHeight: CGFloat) -> some View {
-        // LCOrbitTaskSwitcher.m:552-576: aspect-driven preview + 34pt header.
-        // The inner GeometryReader already excludes the trash/Dock. Do not apply
-        // 0.70 to that reduced height again. Reserve the reference's 60pt gutter,
-        // and fit the complete scaled card (including its header) inside the deck.
-        // LCOrbitTaskSwitcher.m:552 原式：previewHeight = MIN(屏幕高*0.70, 可用高-60)；
-        // 卡片宽由 aspect 驱动，maxCardWidth 只是上限（:553 竖屏 width*0.72）。
-        // 不再用截图里的像素常量——那是我上一版走歪的地方。
-        let maxDeckScale: CGFloat = 1.018
-        let screenHeight = UIScreen.main.bounds.height
-        let previewHeight = max(1, min(screenHeight * 0.70, size.height - 60))
-        let maxCardWidth = max(1, size.width * 0.72)
-        let stride = max(1, maxCardWidth * 0.77)
-        // LCOrbitTaskSwitcher.m:554 原式：deckCenterX = width/2 + (count>1 ? maxCardWidth*0.125 : 0)
-        let deckShift: CGFloat = manager.apps.count > 1 ? maxCardWidth * 0.125 : 0
-        let horizontal = dragAxis == .horizontal ? dragOffset.width : 0
-        return ZStack {
-            ForEach(Array(manager.apps.enumerated()), id: \.element.appUUID) { index, app in
-                let distance = CGFloat(index - manager.selectedIndex)
-                // 宽高按访客自己的画面比例算（旋转成横屏的卡片也不会被裁）。
-                let source = app.view?.bounds.size ?? .zero
-                let aspect = (source.width > 1 && source.height > 1) ? source.width / source.height : (390.0 / 844.0)
-                let cardHeight = min(previewHeight, maxCardWidth / aspect)
-                let cardWidth = min(maxCardWidth, cardHeight * aspect)
-                let vertical = app.appUUID == draggedUUID && dragAxis == .vertical ? min(0, dragOffset.height) : 0
-                let restartController = manager.restartTarget(for: app.appUUID)
-                AppStackCard(app: app, size: CGSize(width: cardWidth, height: cardHeight + 34),
-                             preview: manager.previewSnapshot(for: app.appUUID),
-                             onSelect: { manager.selectApp(uuid: app.appUUID) },
-                             onClose: { manager.closeApp(uuid: app.appUUID) },
-                             onRestart: { manager.restartApp(uuid: app.appUUID, controller: restartController) },
-                             onRotate: { manager.rotateApp(uuid: app.appUUID, direction: $0) },
-                             onAppInfo: { manager.showAppInfo(uuid: app.appUUID) },
-                             onSplit: { manager.openInSplitScreen(uuid: app.appUUID) },
-                             onPictureInPicture: { manager.togglePictureInPicture(uuid: app.appUUID) })
-                    // LCOrbitTaskSwitcher.m:571 原式：maxDeckScale = 1.018，只放大选中卡。
-                    .scaleEffect(distance == 0 ? maxDeckScale : 1)
-                    .offset(x: distance * stride + deckShift + horizontal, y: vertical)
-                    .zIndex(Double(manager.apps.count) - Double(abs(distance)))
-                    .accessibilityHidden(index != manager.selectedIndex)
-            }
+// Pure geometry/threshold functions are also exercised by checks/deck_math_tests.swift.
+private enum StackDeckMath {
+    static func layout(width: CGFloat, height: CGFloat, safeTop: CGFloat, safeBottom: CGFloat,
+                       hasDock: Bool, count: Int, source: CGSize) -> (width: CGFloat, height: CGFloat, centerX: CGFloat, centerY: CGFloat, stride: CGFloat, cardBottom: CGFloat) {
+        let dockTop = max(safeTop + 12, height - safeBottom - 64 - 4)
+        let cardBottom = hasDock ? dockTop - 28 : height - safeBottom - 16
+        let availableHeight = max(35, cardBottom - safeTop)
+        let previewHeight = max(1, min(height * 0.70, availableHeight - 60))
+        let maxCardWidth = max(1, width > height ? previewHeight * 0.78 : width * 0.72)
+        let validSource = source.width.isFinite && source.height.isFinite && source.width > 0 && source.height > 0
+        let aspect = validSource ? source.width / source.height : maxCardWidth / previewHeight
+        let w = min(maxCardWidth, previewHeight * aspect), h = min(previewHeight, maxCardWidth / aspect)
+        let cy = min(safeTop + availableHeight * 0.52, cardBottom - 1.018 * (17 + h * 0.5))
+        return (w, h, width / 2 + (count > 1 ? maxCardWidth * 0.125 : 0), cy, maxCardWidth * 0.77, cardBottom)
+    }
+    static func pose(distance: CGFloat, stride: CGFloat) -> (scale: CGFloat, shift: CGFloat) {
+        let pageX = distance * stride
+        let deckX = distance < 0 ? pageX / (1 - 2.25 * distance) : pageX
+        return (1 + 0.018 * max(-3, min(1, distance)), deckX - pageX)
+    }
+    static func targetPage(current: CGFloat, velocity: CGFloat, start: CGFloat, count: Int) -> CGFloat {
+        guard count > 0, current.isFinite, velocity.isFinite, start.isFinite else { return 0 }
+        var page = current.rounded()
+        if abs(velocity) > 0.25 {
+            let directional = velocity > 0 ? floor(current + 0.05) + 1 : ceil(current - 0.05) - 1
+            page = min(max(directional, min(page, start - 1)), max(page, start + 1))
         }
-        .frame(width: size.width, height: size.height)
-        .contentShape(Rectangle())
-        .onTapGesture { manager.dismiss() }
-        .clipped()
-        .gesture(DragGesture(minimumDistance: 12)
-            .onChanged { value in
-                if dragAxis == nil {
-                    dragAxis = abs(value.translation.width) > abs(value.translation.height) ? .horizontal : .vertical
-                    draggedUUID = manager.apps.indices.contains(manager.selectedIndex) ? manager.apps[manager.selectedIndex].appUUID : nil
-                }
-                dragOffset = value.translation
-            }
-            .onEnded { value in
-                withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-                    if dragAxis == .horizontal, let uuid = draggedUUID,
-                       let index = manager.apps.firstIndex(where: { $0.appUUID == uuid }) {
-                        let travel = value.translation.width
-                        if abs(travel) > 40 || abs(value.predictedEndTranslation.width) > stride * 0.5 {
-                            manager.focus(index: index + (travel < 0 ? 1 : -1))
-                        }
-                    } else if dragAxis == .vertical,
-                              value.translation.height < -100 || (value.translation.height < -30 && value.predictedEndTranslation.height < -180),
-                              let uuid = draggedUUID {
-                        manager.closeApp(uuid: uuid)
-                    }
-                    dragOffset = .zero
-                    dragAxis = nil
-                    draggedUUID = nil
-                }
-            })
-        .animation(.spring(response: 0.35, dampingFraction: 0.85), value: manager.apps.map(\.appUUID))
-        .accessibilityAdjustableAction { direction in
-            switch direction {
-            case .increment: moveSelection(by: 1)
-            case .decrement: moveSelection(by: -1)
-            @unknown default: break
-            }
-        }
+        return min(max(0, page), CGFloat(count - 1))
+    }
+    static func shouldClose(translation: CGPoint, velocityY: CGFloat, startOffset: CGFloat, height: CGFloat) -> Bool {
+        let projected = translation.y + startOffset + 0.12 * max(-2200, min(1400, velocityY))
+        return translation.y < -8 && abs(translation.y) > abs(translation.x) * 1.12 && projected < -height * 0.23
     }
 }
 
 @available(iOS 16.0, *)
-struct AppStackCard: View {
-    let app: DockAppModel
-    let size: CGSize
-    let preview: UIView?
-    var onSelect: () -> Void
-    var onClose: () -> Void
-    var onRestart: () -> Void
-    var onRotate: (Int) -> Void
-    var onAppInfo: () -> Void
-    var onSplit: () -> Void
-    var onPictureInPicture: () -> Void
-    @State private var icon: UIImage?
+private final class StackDeckCard: UIView, UIContextMenuInteractionDelegate {
+    let uuid: String
+    let launch: AppSceneViewController?
+    weak var owner: StackDeckViewport?
+    let preview = UIView()
+    let icon = UIImageView()
+    let centerIcon = UIImageView()
+    let name = UILabel()
+    var snapshot: UIView?
+    var sourceSize = CGSize.zero
+    var resting = CGAffineTransform.identity
+    var index = 0
+    var bundleID = ""
+    var expandedFrame: CGRect?
+    var sourceVisible = false
+    var isPiP = false
 
-    var body: some View {
-        VStack(spacing: 0) {
-            // 卡片自带的头部（参考项目 card bounds 比画面高 34~44pt）：图标 + 名字。
-            HStack(spacing: 8) {
-                Group {
-                    if let icon {
-                        Image(uiImage: icon).resizable().scaledToFit()
-                    } else {
-                        Image(systemName: "app.fill").resizable().scaledToFit()
-                            .foregroundStyle(.white.opacity(0.65))
-                    }
-                }
-                .frame(width: 34, height: 34)
-                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                Text(app.appName)
-                    .font(.system(size: 17, weight: .semibold))
-                    .lineLimit(1)
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, 2)
-            .frame(height: 34)
-
-            Group {
-                if let preview {
-                    ScaledSnapshotView(snapshot: preview)
-                        .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
-                } else {
-                    RoundedRectangle(cornerRadius: 28, style: .continuous)
-                        .fill(Color(white: 0.14))
-                    Text(app.appName).font(.title3.weight(.semibold))
-                        .multilineTextAlignment(.center).lineLimit(2)
-                        .padding(24)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
-        .frame(width: size.width, height: size.height)
-        .background(Color.clear)
-        .overlay(RoundedRectangle(cornerRadius: 28, style: .continuous).stroke(.white.opacity(0.25), lineWidth: 1))
-        .contentShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
-        .onTapGesture(perform: onSelect)
-        .contextMenu {
-            if let bundleId = app.appInfo?.bundleIdentifier(), !bundleId.isEmpty {
-                Button {
-                } label: {
-                    Label(bundleId, systemImage: "shippingbox")
-                }
-                .disabled(true)
-            }
-            Button(action: onAppInfo) {
-                Label("应用信息", systemImage: "info.circle")
-            }
-            Button(action: onSplit) {
-                Label("分屏", systemImage: "rectangle.split.1x2")
-            }
-            Menu {
-                Button { onRotate(0) } label: { Label("默认", systemImage: "arrow.uturn.backward.circle") }
-                Button { onRotate(1) } label: { Label("横屏", systemImage: "arrow.left.and.right") }
-                Button { onRotate(2) } label: { Label("竖屏", systemImage: "arrow.up.and.down") }
-                Button { onRotate(3) } label: { Label("反转", systemImage: "arrow.2.squarepath") }
-            } label: {
-                Label("旋转方向", systemImage: "rotate.left")
-            }
-            Button(action: onPictureInPicture) {
-                Label("画中画模式", systemImage: "pip")
-            }
-            Button(action: onRestart) {
-                Label("重新启动", systemImage: "arrow.clockwise")
-            }
-            Divider()
-            Button(role: .destructive, action: onClose) {
-                Label("清除", systemImage: "xmark")
-            }
-        }
-        .overlay(alignment: .topTrailing) {
-            Button(action: onClose) { Image(systemName: "xmark.circle.fill").font(.title2).padding(16) }
-                .accessibilityLabel("关闭 \(app.appName)")
-        }
-        .shadow(color: .black.opacity(0.4), radius: 12, y: 6)
-        .accessibilityAction(named: Text("打开窗口"), onSelect)
-        .accessibilityAction(named: Text("关闭窗口"), onClose)
-        .accessibilityAction(named: Text("重新启动"), onRestart)
-        .onAppear(perform: loadIcon)
+    init(app: DockAppModel, launch: AppSceneViewController?, owner: StackDeckViewport) {
+        uuid = app.appUUID
+        self.launch = launch
+        self.owner = owner
+        super.init(frame: .zero)
+        accessibilityIdentifier = "stack.card.\(uuid)"
+        isAccessibilityElement = true
+        accessibilityTraits = .button
+        icon.contentMode = .scaleAspectFit
+        icon.layer.cornerRadius = 6
+        icon.clipsToBounds = true
+        icon.tintColor = .white
+        name.font = .systemFont(ofSize: 14, weight: .semibold)
+        name.textColor = .white
+        name.lineBreakMode = .byTruncatingTail
+        preview.layer.cornerRadius = 28
+        preview.layer.cornerCurve = .continuous
+        preview.clipsToBounds = true
+        preview.isUserInteractionEnabled = false
+        centerIcon.contentMode = .scaleAspectFit
+        centerIcon.layer.cornerCurve = .continuous
+        centerIcon.clipsToBounds = true
+        centerIcon.tintColor = .white
+        addSubview(preview)
+        addSubview(icon)
+        addSubview(name)
+        preview.addSubview(centerIcon)
+        // Shadow belongs to the preview, never to a transparent whole-card outline (:403-406).
+        layer.shadowColor = UIColor.black.cgColor
+        layer.shadowOpacity = 0.30
+        layer.shadowRadius = 16
+        layer.shadowOffset = CGSize(width: 0, height: 8)
+        let pan = UIPanGestureRecognizer(target: owner, action: #selector(StackDeckViewport.cardPanned(_:)))
+        pan.delegate = owner
+        let tap = UITapGestureRecognizer(target: owner, action: #selector(StackDeckViewport.cardTapped(_:)))
+        addGestureRecognizer(pan)
+        addGestureRecognizer(tap)
+        tap.require(toFail: pan)
+        owner.pages.panGestureRecognizer.require(toFail: pan)
+        addInteraction(UIContextMenuInteraction(delegate: self))
+        accessibilityCustomActions = [
+            UIAccessibilityCustomAction(name: "关闭窗口", target: self, selector: #selector(closeAccessible)),
+            UIAccessibilityCustomAction(name: "重新启动", target: self, selector: #selector(restartAccessible))
+        ]
+        update(app: app, snapshot: nil)
     }
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
-    private func loadIcon() {
-        // Shared SwiftUI models are main-thread state; only image decoding is
-        // moved off the main queue.
-        let info = app.appInfo ?? AppInfoProvider.shared.findAppInfo(appName: app.appName, dataUUID: app.appUUID)
-        DispatchQueue.global(qos: .userInitiated).async {
-            let image = info?.iconIsDarkIcon(false)
-            DispatchQueue.main.async { icon = image }
+    func update(app: DockAppModel, snapshot: UIView?) {
+        if icon.image == nil || name.text != app.appName {
+            let info = app.appInfo ?? AppInfoProvider.shared.findAppInfo(appName: app.appName, dataUUID: uuid)
+            icon.image = info?.iconIsDarkIcon(false) ?? UIImage(systemName: "app.fill")
         }
-    }
-}
-
-/// Puts the guest window's snapshot in a card at its aspect ratio, scaled to
-/// fit the card. The snapshot is a picture only; touches go to the card.
-@available(iOS 16.0, *)
-private struct ScaledSnapshotView: UIViewRepresentable {
-    let snapshot: UIView
-
-    func makeUIView(context: Context) -> SnapshotContainer {
-        SnapshotContainer(snapshot: snapshot)
-    }
-
-    func updateUIView(_ container: SnapshotContainer, context: Context) {
-        container.updateSnapshot(snapshot)
-    }
-
-    final class SnapshotContainer: UIView {
-        private var snapshot: UIView
-
-        init(snapshot: UIView) {
+        name.text = app.appName
+        accessibilityLabel = app.appName
+        bundleID = app.appInfo?.bundleIdentifier() ?? ""
+        isPiP = launch.map { PiPManager.shared?.isPiP(withVC: $0) == true } ?? false
+        centerIcon.image = isPiP ? UIImage(systemName: "pip.fill") : icon.image
+        let snapshot = isPiP ? nil : snapshot
+        if self.snapshot !== snapshot {
+            self.snapshot?.removeFromSuperview()
             self.snapshot = snapshot
-            super.init(frame: .zero)
-            backgroundColor = .black
-            clipsToBounds = true
-            isUserInteractionEnabled = false
-            addSubview(snapshot)
-        }
-
-        func updateSnapshot(_ snapshot: UIView) {
-            if self.snapshot !== snapshot {
-                self.snapshot.removeFromSuperview()
-                self.snapshot = snapshot
-                addSubview(snapshot)
+            if let snapshot {
+                snapshot.isUserInteractionEnabled = false
+                preview.insertSubview(snapshot, belowSubview: centerIcon)
             }
-            setNeedsLayout()
         }
-
-        @available(*, unavailable)
-        required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
-
-        override func layoutSubviews() {
-            super.layoutSubviews()
-            let source = snapshot.bounds.size == .zero ? snapshot.frame.size : snapshot.bounds.size
-            guard bounds.width > 0, bounds.height > 0, source.width > 0, source.height > 0 else { return }
+        // Never derive preview aspect from the decorated window (:562-564).
+        sourceSize = snapshot?.bounds.size ?? launch?.viewIfLoaded?.bounds.size ?? .zero
+        updateExpandedFrame()
+        centerIcon.isHidden = snapshot != nil
+        preview.backgroundColor = snapshot == nil ? UIColor(white: 0.16, alpha: 1) : .black
+        preview.layer.borderWidth = snapshot == nil ? 0.5 : 0
+        preview.layer.borderColor = UIColor.white.withAlphaComponent(0.20).cgColor
+        accessibilityHint = isPiP ? "此 App 的画面保留在画中画中" : (snapshot == nil ? "静态图标预览，轻点切换到此 App" : "轻点打开，上滑关闭，长按更多操作")
+        setNeedsLayout()
+    }
+    func updateExpandedFrame() {
+        expandedFrame = nil; sourceVisible = false
+        guard let source = launch?.viewIfLoaded, let scene = owner?.window?.windowScene,
+              source.window?.windowScene === scene else { return }
+        expandedFrame = source.convert(source.bounds, to: owner)
+        sourceVisible = true
+        var ancestor: UIView? = source
+        while let view = ancestor {
+            if view.isHidden || view.alpha <= 0 { sourceVisible = false; break }
+            ancestor = view.superview
+        }
+    }
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        preview.frame = CGRect(x: 0, y: 34, width: bounds.width, height: max(1, bounds.height - 34))
+        if let snapshot, sourceSize.width > 0, sourceSize.height > 0 {
             snapshot.transform = .identity
-            snapshot.bounds = CGRect(origin: .zero, size: source)
-            // Aspect fill: the phone picture covers the card, so no black
-            // letterbox shows above and below the guest screenshot.
-            let scale = max(bounds.width / source.width, bounds.height / source.height)
-            snapshot.transform = CGAffineTransform(scaleX: scale, y: scale)
-            snapshot.center = CGPoint(x: bounds.midX, y: bounds.midY)
+            snapshot.bounds = CGRect(origin: .zero, size: sourceSize)
+            snapshot.transform = CGAffineTransform(scaleX: preview.bounds.width / sourceSize.width,
+                                                 y: preview.bounds.height / sourceSize.height)
+            snapshot.center = CGPoint(x: preview.bounds.midX, y: preview.bounds.midY)
         }
+        let side: CGFloat = isPiP ? 54 : min(94, max(44, min(preview.bounds.width, preview.bounds.height) * 0.30))
+        centerIcon.frame = CGRect(x: (preview.bounds.width - side) / 2, y: (preview.bounds.height - side) / 2, width: side, height: side)
+        centerIcon.layer.cornerRadius = side * 0.225
+        layer.shadowPath = UIBezierPath(roundedRect: preview.frame, cornerRadius: 28).cgPath
+    }
+    override func accessibilityActivate() -> Bool { owner?.activate(self); return true }
+    @objc private func closeAccessible() -> Bool { owner?.close(self, velocity: 0); return true }
+    @objc private func restartAccessible() -> Bool { perform { $0.restartApp(uuid: self.uuid, controller: self.launch) }; return true }
+    private func perform(_ action: (MultitaskStackManager) -> Void) {
+        guard let owner, owner.isCurrent(self), let manager = owner.manager else { return }
+        action(manager)
+    }
+    func contextMenuInteraction(_ interaction: UIContextMenuInteraction, configurationForMenuAtLocation location: CGPoint) -> UIContextMenuConfiguration? {
+        guard owner?.isCurrent(self) == true else { return nil }
+        return UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { [weak self] _ in
+            guard let self else { return nil }
+            func item(_ title: String, _ symbol: String, _ action: @escaping (MultitaskStackManager) -> Void) -> UIAction {
+                UIAction(title: title, image: UIImage(systemName: symbol)) { [weak self] _ in self?.perform(action) }
+            }
+            let rotate = UIMenu(title: "旋转方向", image: UIImage(systemName: "rotate.left"), children: [
+                item("默认", "arrow.uturn.backward.circle") { $0.rotateApp(uuid: self.uuid, direction: 0) },
+                item("横屏", "arrow.left.and.right") { $0.rotateApp(uuid: self.uuid, direction: 1) },
+                item("竖屏", "arrow.up.and.down") { $0.rotateApp(uuid: self.uuid, direction: 2) },
+                item("反转", "arrow.2.squarepath") { $0.rotateApp(uuid: self.uuid, direction: 3) }
+            ])
+            let close = UIAction(title: "清除", image: UIImage(systemName: "xmark"), attributes: .destructive) { [weak self] _ in
+                guard let self else { return }; self.owner?.close(self, velocity: 0)
+            }
+            return UIMenu(title: self.bundleID, children: [
+                item("应用信息", "info.circle") { $0.showAppInfo(uuid: self.uuid) },
+                item("分屏", "rectangle.split.1x2") { $0.openInSplitScreen(uuid: self.uuid) }, rotate,
+                item("画中画模式", "pip") { $0.togglePictureInPicture(uuid: self.uuid) },
+                item("重新启动", "arrow.clockwise") { $0.restartApp(uuid: self.uuid, controller: self.launch) }, close
+            ])
+        }
+    }
+}
+
+@available(iOS 16.0, *)
+private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRecognizerDelegate {
+    weak var manager: MultitaskStackManager?
+    let pages = UIScrollView()
+    private let dock = UIVisualEffectView(effect: UIBlurEffect(style: .systemThinMaterialDark))
+    private let dockScroll = UIScrollView()
+    private let clearButton = UIButton(type: .system)
+    private let emptyLabel = UILabel()
+    private let messageLabel = UILabel()
+    private var cards: [StackDeckCard] = []
+    private var dockIDs: [String] = []
+    private var dockButtons: [UIButton] = []
+    private var stride: CGFloat = 1
+    private var selected = 0
+    private var dragStartPage: CGFloat = 0
+    private var scrolling = false
+    private var layingOut = false
+    private var transitioning = false
+    private var invalidated = false
+    private var hasEntered = false
+    private var showClearAll = false
+    private var lastBounds = CGRect.null
+    private var lastSafe = UIEdgeInsets.zero
+    private var entrance: UIViewPropertyAnimator?
+    private var transition: UIViewPropertyAnimator?
+    private var rebound: UIViewPropertyAnimator?
+    private weak var draggingCard: StackDeckCard?
+    private weak var reboundingCard: StackDeckCard?
+    private var dragStartOffset: CGFloat = 0
+    private var focusGeneration = 0
+    private var backdrop: ((Bool, TimeInterval) -> Void)?
+    private let dockIconSize: CGFloat = 48 // reference default :1213, clamp :1254
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        accessibilityViewIsModal = true
+        pages.delegate = self
+        pages.clipsToBounds = true
+        pages.showsHorizontalScrollIndicator = false
+        pages.decelerationRate = .fast
+        pages.isDirectionalLockEnabled = true
+        pages.bounces = false
+        pages.contentInsetAdjustmentBehavior = .never
+        addSubview(pages)
+        dock.layer.cornerRadius = 19
+        dock.layer.cornerCurve = .continuous
+        dock.clipsToBounds = true
+        dock.layer.borderWidth = 0.5
+        dock.layer.borderColor = UIColor.white.withAlphaComponent(0.16).cgColor
+        addSubview(dock)
+        dockScroll.showsHorizontalScrollIndicator = false
+        dockScroll.alwaysBounceHorizontal = true
+        dockScroll.isDirectionalLockEnabled = true
+        dockScroll.contentInsetAdjustmentBehavior = .never
+        // Artwork and glass are siblings, not inside effect.contentView (:373-379).
+        addSubview(dockScroll)
+        clearButton.setImage(UIImage(systemName: "trash"), for: .normal)
+        clearButton.tintColor = .white
+        clearButton.backgroundColor = UIColor.white.withAlphaComponent(0.18)
+        clearButton.layer.cornerRadius = 22
+        clearButton.accessibilityLabel = "全部清除"
+        clearButton.addTarget(self, action: #selector(clearAll), for: .touchUpInside)
+        dockScroll.addSubview(clearButton)
+        emptyLabel.text = "没有正在运行的 App"
+        emptyLabel.textAlignment = .center
+        emptyLabel.font = .systemFont(ofSize: 15, weight: .medium)
+        emptyLabel.textColor = UIColor.white.withAlphaComponent(0.82)
+        emptyLabel.isUserInteractionEnabled = false
+        addSubview(emptyLabel)
+        messageLabel.font = .systemFont(ofSize: 13, weight: .medium)
+        messageLabel.textColor = .white
+        messageLabel.textAlignment = .center
+        messageLabel.numberOfLines = 2
+        messageLabel.isUserInteractionEnabled = false
+        messageLabel.backgroundColor = UIColor.black.withAlphaComponent(0.65)
+        messageLabel.layer.cornerRadius = 10
+        messageLabel.clipsToBounds = true
+        addSubview(messageLabel)
+        dockScroll.layer.cornerRadius = 19
+        dockScroll.layer.cornerCurve = .continuous
+        let tap = UITapGestureRecognizer(target: self, action: #selector(backgroundTapped))
+        tap.delegate = self
+        addGestureRecognizer(tap)
+    }
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    func configure(manager: MultitaskStackManager, dockApps: [DockAppModel], showClearAll: Bool,
+                   backdrop: @escaping (Bool, TimeInterval) -> Void) {
+        guard !invalidated else { return }
+        self.manager = manager
+        self.backdrop = backdrop
+        messageLabel.text = manager.message
+        messageLabel.isHidden = manager.message == nil
+        if self.showClearAll != showClearAll { lastBounds = .null }
+        self.showClearAll = showClearAll
+        var seen = Set<String>()
+        let apps = manager.apps.filter { seen.insert($0.appUUID).inserted }
+        let old = cards
+        let changed = old.map(\.uuid) != apps.map(\.appUUID) || apps.contains { app in
+            old.first(where: { $0.uuid == app.appUUID })?.launch !== manager.restartTarget(for: app.appUUID)
+        }
+        let wasEntered = hasEntered
+        let oldFrames = Dictionary(uniqueKeysWithValues: old.map { ($0.uuid, $0.preview.convert($0.preview.bounds, to: self)) })
+        if changed {
+            focusGeneration += 1
+            finishEntrance(); stopRebound(); draggingCard = nil; scrolling = false
+            pages.setContentOffset(pages.contentOffset, animated: false)
+            if transitioning {
+                transition?.stopAnimation(true); transition = nil
+                transitioning = false; pages.isScrollEnabled = true; isUserInteractionEnabled = true
+                DispatchQueue.main.async { [weak self] in self?.backdrop?(true, 0.15) }
+            }
+            pages.alpha = 1; emptyLabel.alpha = 1
+        }
+        cards = apps.enumerated().map { index, app in
+            let launch = manager.restartTarget(for: app.appUUID)
+            let card = old.first { $0.uuid == app.appUUID && $0.launch === launch } ?? StackDeckCard(app: app, launch: launch, owner: self)
+            if card.superview == nil { pages.addSubview(card) }
+            pages.bringSubviewToFront(card)
+            card.index = index
+            let previousSize = card.sourceSize
+            card.update(app: app, snapshot: manager.previewSnapshot(for: app.appUUID))
+            if previousSize != card.sourceSize { lastBounds = .null }
+            if changed { card.preview.layer.cornerRadius = 28 }
+            return card
+        }
+        for card in old where !cards.contains(where: { $0 === card }) { card.removeFromSuperview() }
+        var dockSeen = Set<String>()
+        let dockApps = dockApps.filter { dockSeen.insert($0.appUUID).inserted }
+        if dockIDs != dockApps.map(\.appUUID) {
+            dockButtons.forEach { $0.removeFromSuperview() }
+            dockIDs = dockApps.map(\.appUUID)
+            dockButtons = dockApps.map { app in
+                let button = UIButton(type: .custom)
+                let image = UIImageView(image: app.appInfo?.iconIsDarkIcon(false) ?? UIImage(systemName: "app.fill"))
+                image.contentMode = .scaleAspectFit
+                image.tintColor = .white
+                image.layer.cornerRadius = dockIconSize * 0.225
+                image.clipsToBounds = true
+                image.frame = CGRect(x: 0, y: 0, width: dockIconSize, height: dockIconSize)
+                image.isUserInteractionEnabled = false
+                button.addSubview(image)
+                button.accessibilityLabel = app.appName
+                let uuid = app.appUUID
+                button.addAction(UIAction { [weak self] _ in self?.activate(uuid: uuid) }, for: .touchUpInside)
+                dockScroll.addSubview(button)
+                return button
+            }
+            lastBounds = .null
+        }
+        let desired = min(max(0, manager.selectedIndex), max(0, cards.count - 1))
+        emptyLabel.isHidden = !cards.isEmpty
+        clearButton.isHidden = !showClearAll || cards.isEmpty
+        let hideDock = dockApps.isEmpty && clearButton.isHidden
+        if dock.isHidden != hideDock { lastBounds = .null }
+        dock.isHidden = hideDock
+        dockScroll.isHidden = hideDock
+        if changed {
+            selected = desired
+            lastBounds = .null
+            setNeedsLayout()
+            layoutIfNeeded()
+            if wasEntered && !transitioning && !UIAccessibility.isReduceMotionEnabled {
+                for card in cards {
+                    if let frame = oldFrames[card.uuid] { align(card, to: frame) }
+                }
+                animateEntrance(duration: 0.28, damping: 0.88)
+            }
+        } else if !scrolling && draggingCard == nil && selected != desired && !transitioning {
+            selected = desired
+            let animated = !UIAccessibility.isReduceMotionEnabled
+            scrolling = animated
+            pages.setContentOffset(CGPoint(x: CGFloat(selected) * stride, y: 0), animated: animated)
+        }
+        setNeedsLayout()
+    }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        if window != nil { lastBounds = .null; setNeedsLayout() }
+    }
+    override func safeAreaInsetsDidChange() { super.safeAreaInsetsDidChange(); setNeedsLayout() }
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        guard !invalidated, !transitioning, draggingCard == nil, !scrolling,
+              !pages.isDragging, !pages.isDecelerating, bounds.width > 0, bounds.height > 0 else { return }
+        guard lastBounds != bounds || lastSafe != safeAreaInsets else { return }
+        finishEntrance(); stopRebound()
+        layingOut = true
+        defer { layingOut = false }
+        lastBounds = bounds; lastSafe = safeAreaInsets
+        let width = bounds.width, height = bounds.height, safe = safeAreaInsets
+        messageLabel.frame = CGRect(x: safe.left + 16, y: safe.top + 4,
+                                    width: max(1, width - safe.left - safe.right - 32), height: 44)
+        // Reference :523-545. One scene-local coordinate system; no UIScreen.main.
+        let dockHeight = max(54, ceil(dockIconSize) + 16)
+        let dockTop = max(safe.top + 12, height - safe.bottom - dockHeight - 4)
+        var x: CGFloat = 14
+        for button in dockButtons {
+            button.frame = CGRect(x: x, y: 8, width: max(44, dockIconSize), height: dockHeight - 16)
+            button.subviews.first?.center = CGPoint(x: button.bounds.midX, y: button.bounds.midY)
+            x += max(44, dockIconSize) + 10
+        }
+        // Host-only control is a trailing Dock item, preserving cardBottom and
+        // every app's reference x/8pt inset. It scrolls rather than covering cards.
+        if !clearButton.isHidden {
+            clearButton.frame = CGRect(x: x + 2, y: 10, width: 44, height: 44)
+            x += max(44, dockIconSize) + 10
+        }
+        let dockWidth = max(1, min(width - safe.left - safe.right - 28, x + 4))
+        dock.bounds = CGRect(x: 0, y: 0, width: dockWidth, height: dockHeight)
+        dock.center = CGPoint(x: width / 2, y: dockTop + dockHeight / 2)
+        let oldDockOffset = dockScroll.contentOffset.x
+        dockScroll.bounds = dock.bounds
+        dockScroll.center = dock.center
+        dockScroll.contentSize = CGSize(width: x + 4, height: dockHeight)
+        dockScroll.contentOffset = CGPoint(x: min(max(0, oldDockOffset), max(0, x + 4 - dockWidth)), y: 0)
+        let cardBottom = dock.isHidden ? height - safe.bottom - 16 : dockTop - 28
+        let availableHeight = max(35, cardBottom - safe.top)
+        emptyLabel.frame = CGRect(x: 0, y: safe.top, width: width, height: availableHeight)
+        stride = StackDeckMath.layout(width: width, height: height, safeTop: safe.top, safeBottom: safe.bottom,
+                                      hasDock: !dock.isHidden, count: cards.count, source: .zero).stride
+        pages.frame = bounds
+        pages.contentSize = CGSize(width: width + stride * CGFloat(max(0, cards.count - 1)), height: height)
+        for card in cards {
+            let geometry = StackDeckMath.layout(width: width, height: height, safeTop: safe.top, safeBottom: safe.bottom,
+                                                hasDock: !dock.isHidden, count: cards.count, source: card.sourceSize)
+            card.transform = .identity
+            card.bounds = CGRect(x: 0, y: 0, width: geometry.width, height: geometry.height + 34)
+            card.center = CGPoint(x: geometry.centerX + CGFloat(card.index) * stride, y: geometry.centerY)
+            card.updateExpandedFrame()
+            card.setNeedsLayout(); card.layoutIfNeeded()
+        }
+        pages.contentOffset = CGPoint(x: CGFloat(selected) * stride, y: 0)
+        updateDeck()
+        if !hasEntered && window != nil {
+            hasEntered = true
+            DispatchQueue.main.async { [weak self] in self?.beginEntrance() }
+        }
+    }
+
+    private func updateDeck() {
+        guard !transitioning, stride > 0 else { return }
+        let page = pages.contentOffset.x / stride
+        // Reference :654-669. Index order, not distance-to-selection order.
+        for card in cards {
+            let pose = StackDeckMath.pose(distance: CGFloat(card.index) - page, stride: stride)
+            card.resting = CGAffineTransform(a: pose.scale, b: 0, c: 0, d: pose.scale, tx: pose.shift, ty: 0)
+            if card !== draggingCard && card !== reboundingCard { card.transform = card.resting }
+            card.layer.zPosition = CGFloat(2 + card.index)
+            card.alpha = 1
+        }
+        // Reference :671-684. Titles use only the exposed interval.
+        let leftEdge = pages.contentOffset.x, rightEdge = leftEdge + pages.bounds.width
+        for card in cards {
+            let left = max(leftEdge + 12, card.frame.minX)
+            var right = min(rightEdge - 12, card.frame.maxX)
+            if card.index + 1 < cards.count { right = min(right, cards[card.index + 1].frame.minX - 5) }
+            let iconX = card.convert(CGPoint(x: left, y: 0), from: pages).x
+            card.icon.alpha = max(0, min(1, (right - left - 16) / 9))
+            card.icon.frame = CGRect(x: iconX, y: 0, width: 25, height: 25)
+            let titleWidth = max(0, (right - left) / card.transform.a - 33)
+            card.name.frame = CGRect(x: iconX + 33, y: 1, width: titleWidth, height: 24)
+            card.name.alpha = max(0, min(1, (titleWidth - 48) / 20)) * card.icon.alpha
+            card.accessibilityElementsHidden = card.frame.maxX < leftEdge || card.frame.minX > rightEdge
+        }
+    }
+    private func publishFocus() {
+        guard cards.indices.contains(selected) else { return }
+        focusGeneration += 1
+        let generation = focusGeneration, uuid = cards[selected].uuid
+        DispatchQueue.main.async { [weak self] in
+            guard let self, !self.invalidated, generation == self.focusGeneration,
+                  let manager = self.manager,
+                  let index = manager.apps.firstIndex(where: { $0.appUUID == uuid }) else { return }
+            if manager.selectedIndex != index { manager.focus(index: index) }
+        }
+    }
+    func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        guard scrollView === pages, !layingOut, !transitioning else { return }
+        if !cards.isEmpty {
+            let next = min(cards.count - 1, max(0, Int((pages.contentOffset.x / stride).rounded())))
+            if selected != next { selected = next; publishFocus() }
+        }
+        UIView.performWithoutAnimation { updateDeck() }
+    }
+    func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
+        guard scrollView === pages else { return }
+        finishEntrance(); stopRebound()
+        dragStartPage = (pages.contentOffset.x / max(1, stride)).rounded()
+        scrolling = true
+    }
+    func scrollViewWillEndDragging(_ scrollView: UIScrollView, withVelocity velocity: CGPoint, targetContentOffset: UnsafeMutablePointer<CGPoint>) {
+        guard scrollView === pages, !cards.isEmpty else { return }
+        let current = pages.contentOffset.x / stride
+        let page = StackDeckMath.targetPage(current: current, velocity: velocity.x, start: scrolling ? dragStartPage : current.rounded(), count: cards.count)
+        targetContentOffset.pointee = CGPoint(x: page * stride, y: 0)
+    }
+    func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
+        guard scrollView === pages, !decelerate else { return }
+        let target = CGFloat(selected) * stride
+        if abs(pages.contentOffset.x - target) >= 0.5 {
+            let animated = !UIAccessibility.isReduceMotionEnabled
+            pages.setContentOffset(CGPoint(x: target, y: 0), animated: animated)
+            if animated { return }
+        }
+        finishScrolling()
+    }
+    func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) { if scrollView === pages { finishScrolling() } }
+    func scrollViewDidEndScrollingAnimation(_ scrollView: UIScrollView) { if scrollView === pages { finishScrolling() } }
+    private func finishScrolling() { scrolling = false; setNeedsLayout() }
+    func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        guard !transitioning, !invalidated else { return false }
+        if let pan = gestureRecognizer as? UIPanGestureRecognizer {
+            let v = pan.velocity(in: self)
+            return abs(v.y) > abs(v.x) * 1.2
+        }
+        return true
+    }
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+        if gestureRecognizer.view === self {
+            if touch.view?.isDescendant(of: dockScroll) == true || touch.view?.isDescendant(of: clearButton) == true { return false }
+            if cards.contains(where: { touch.view?.isDescendant(of: $0) == true }) { return false }
+        }
+        return true
+    }
+    @objc func cardTapped(_ tap: UITapGestureRecognizer) { if let card = tap.view as? StackDeckCard { activate(card) } }
+    @objc private func backgroundTapped() { dismissDeck() }
+    @objc private func clearAll() { manager?.closeAll() }
+    func isCurrent(_ card: StackDeckCard) -> Bool {
+        guard !invalidated, !transitioning, cards.contains(where: { $0 === card }), let manager,
+              manager.apps.contains(where: { $0.appUUID == card.uuid }) else { return false }
+        return manager.restartTarget(for: card.uuid) === card.launch
+    }
+    @objc func cardPanned(_ pan: UIPanGestureRecognizer) {
+        guard let card = pan.view as? StackDeckCard, !transitioning, !invalidated else { return }
+        let translation = pan.translation(in: self), velocity = pan.velocity(in: self)
+        if pan.state == .began {
+            finishEntrance()
+            let visible = reboundingCard === card ? card.layer.presentation()?.affineTransform().ty : nil
+            dragStartOffset = visible.map { $0 - card.resting.ty } ?? 0
+            stopRebound(); draggingCard = card
+        }
+        guard draggingCard === card else { return }
+        if pan.state == .began || pan.state == .changed || pan.state == .ended {
+            var y = translation.y + dragStartOffset
+            if y > 0 { y = 0.25 * y / (1 + y / max(1, card.preview.bounds.height)) }
+            var transform = card.resting; transform.ty += y; card.transform = transform
+        }
+        guard pan.state == .ended || pan.state == .cancelled || pan.state == .failed else { return }
+        draggingCard = nil
+        if pan.state == .ended && StackDeckMath.shouldClose(translation: translation, velocityY: velocity.y, startOffset: dragStartOffset, height: card.preview.bounds.height) {
+            close(card, velocity: velocity.y); return
+        }
+        let offset = card.transform.ty - card.resting.ty
+        if UIAccessibility.isReduceMotionEnabled || abs(offset) < 0.5 { card.transform = card.resting; updateDeck(); return }
+        let v = pan.state == .ended ? max(-4, min(4, velocity.y / -offset)) : 0
+        let animator = UIViewPropertyAnimator(duration: 0.32, timingParameters: UISpringTimingParameters(dampingRatio: 0.84, initialVelocity: CGVector(dx: 0, dy: v)))
+        rebound = animator; reboundingCard = card
+        animator.addAnimations { card.transform = card.resting }
+        animator.addCompletion { [weak self] _ in self?.rebound = nil; self?.reboundingCard = nil; self?.updateDeck(); self?.setNeedsLayout() }
+        animator.startAnimation()
+    }
+    private func stopRebound() {
+        rebound?.stopAnimation(true); rebound = nil
+        reboundingCard?.transform = reboundingCard?.resting ?? .identity
+        reboundingCard = nil
+    }
+    private func finishEntrance() {
+        if let entrance, entrance.state == .active { entrance.stopAnimation(false); entrance.finishAnimation(at: .end) }
+        entrance = nil
+        cards.forEach { $0.layer.removeAnimation(forKey: "stack.stagger.in") }
+        dockButtons.forEach { $0.layer.removeAnimation(forKey: "stack.stagger.in") }
+    }
+    private func align(_ card: StackDeckCard, to frame: CGRect) {
+        guard card.preview.bounds.width > 0, card.preview.bounds.height > 0 else { return }
+        let target = pages.convert(frame, from: self)
+        let sx = target.width / card.preview.bounds.width, sy = target.height / card.preview.bounds.height
+        card.transform = CGAffineTransform(a: sx, b: 0, c: 0, d: sy, tx: target.midX - card.center.x,
+                                           ty: target.midY - card.center.y - sy * (card.preview.frame.midY - card.bounds.midY))
+    }
+    private func beginEntrance() {
+        guard !invalidated, !transitioning else { return }
+        finishEntrance()
+        cards.forEach { $0.updateExpandedFrame() }
+        let duration: TimeInterval = UIAccessibility.isReduceMotionEnabled ? 0 : 0.38
+        backdrop?(true, duration)
+        if let card = cards.first(where: { $0.index == selected }), let frame = card.expandedFrame,
+           card.sourceVisible {
+            for other in cards { other.alpha = other === card ? 1 : 0 }
+            align(card, to: frame)
+        } else {
+            for card in cards { card.alpha = 0; card.transform = card.resting.scaledBy(x: 0.91, y: 0.91); card.transform.ty += 32 }
+        }
+        dock.transform = CGAffineTransform(translationX: 0, y: 32)
+        dockScroll.transform = dock.transform
+        dock.alpha = 0; dockScroll.alpha = 0; clearButton.alpha = 0
+        animateEntrance(duration: duration, damping: 0.91)
+        if !UIAccessibility.isReduceMotionEnabled {
+            var step = 0
+            for card in cards where abs(card.index - selected) <= 1 {
+                fadeIn(card.layer, delay: 0.045 * Double(step)); step += 1
+            }
+            for (index, button) in dockButtons.enumerated() where button.frame.intersects(dockScroll.bounds) {
+                fadeIn(button.layer, delay: 0.03 * Double(index))
+            }
+        }
+    }
+    private func fadeIn(_ layer: CALayer, delay: TimeInterval) {
+        let fade = CABasicAnimation(keyPath: "opacity")
+        fade.fromValue = 0; fade.toValue = 1; fade.duration = 0.26
+        fade.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        fade.beginTime = layer.convertTime(CACurrentMediaTime(), from: nil) + delay
+        fade.fillMode = .backwards
+        layer.add(fade, forKey: "stack.stagger.in")
+    }
+    private func animateEntrance(duration: TimeInterval, damping: CGFloat) {
+        let animations = { [weak self] in
+            guard let self else { return }
+            self.updateDeck(); self.dock.transform = .identity; self.dockScroll.transform = .identity
+            self.dock.alpha = 1; self.dockScroll.alpha = 1; self.clearButton.alpha = 1
+        }
+        if UIAccessibility.isReduceMotionEnabled || duration == 0 { animations(); return }
+        let animator = UIViewPropertyAnimator(duration: duration, dampingRatio: damping, animations: animations)
+        entrance = animator
+        animator.addCompletion { [weak self] _ in self?.entrance = nil }
+        animator.startAnimation()
+    }
+    private func runTransition(duration: TimeInterval, damping: CGFloat, velocity: CGFloat = 0,
+                               animations: @escaping () -> Void, completion: @escaping () -> Void) {
+        finishEntrance(); stopRebound()
+        transitioning = true; pages.isScrollEnabled = false; isUserInteractionEnabled = false
+        let done = { [weak self] in
+            guard let self, !self.invalidated else { return }
+            self.transitioning = false; self.pages.isScrollEnabled = true; self.isUserInteractionEnabled = true
+            completion()
+        }
+        if UIAccessibility.isReduceMotionEnabled { animations(); done(); return }
+        let animator = UIViewPropertyAnimator(duration: duration, timingParameters: UISpringTimingParameters(dampingRatio: damping, initialVelocity: CGVector(dx: 0, dy: velocity)))
+        transition = animator; animator.addAnimations(animations)
+        animator.addCompletion { [weak self] position in
+            self?.transition = nil
+            if position == .end { done() }
+        }
+        animator.startAnimation()
+    }
+    func close(_ card: StackDeckCard, velocity: CGFloat) {
+        guard isCurrent(card) else { return }
+        finishEntrance(); stopRebound()
+        let frame = card.preview.convert(card.preview.bounds, to: self)
+        let travel = max(30, frame.maxY + 60)
+        runTransition(duration: 0.30, damping: 1, velocity: max(0, min(5, -velocity / travel)), animations: {
+            var t = card.transform; t.ty -= travel; card.transform = t; card.alpha = 0
+        }) { [weak self, weak card] in
+            guard let self, let card, self.isCurrent(card) else { return }
+            self.manager?.closeApp(uuid: card.uuid)
+            // Real manager confirmation owns removal. Recover if close is refused.
+            DispatchQueue.main.async { [weak self] in self?.updateDeck(); self?.setNeedsLayout() }
+        }
+    }
+    func activate(uuid: String) {
+        if let card = cards.first(where: { $0.uuid == uuid }) { activate(card) }
+        else { manager?.selectApp(uuid: uuid) }
+    }
+    func activate(_ card: StackDeckCard) {
+        guard isCurrent(card) else { return }
+        finishEntrance(); stopRebound()
+        card.updateExpandedFrame()
+        backdrop?(false, 0.34)
+        runTransition(duration: 0.34, damping: 0.92, animations: { [weak self] in
+            guard let self else { return }
+            self.hideDock()
+            for other in self.cards { other.icon.alpha = 0; other.name.alpha = 0; if other !== card { other.alpha = 0 } }
+            self.align(card, to: card.expandedFrame ?? self.bounds)
+            card.preview.layer.cornerRadius = 0
+        }) { [weak self, weak card] in
+            guard let self, let card, self.isCurrent(card) else { return }
+            self.manager?.selectApp(uuid: card.uuid)
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.manager?.isVisible == true else { return }
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, self.manager?.isVisible == true else { return }
+                    card.preview.layer.cornerRadius = 28; self.updateDeck(); self.backdrop?(true, 0.15)
+                    self.dock.alpha = 1; self.dockScroll.alpha = 1; self.clearButton.alpha = 1
+                    self.dock.transform = .identity; self.dockScroll.transform = .identity
+                    self.emptyLabel.alpha = 1
+                }
+            }
+        }
+    }
+    private func hideDock() {
+        dock.transform = CGAffineTransform(translationX: 0, y: 32); dockScroll.transform = dock.transform
+        dock.alpha = 0; dockScroll.alpha = 0; clearButton.alpha = 0; emptyLabel.alpha = 0
+    }
+    private func dismissDeck() {
+        guard !transitioning else { return }
+        backdrop?(false, 0.28)
+        runTransition(duration: 0.28, damping: 1, animations: { [weak self] in
+            guard let self else { return }
+            self.hideDock(); self.pages.alpha = 0
+            for card in self.cards { card.transform = card.resting.scaledBy(x: 0.86, y: 0.86); card.transform.ty += 46 }
+        }) { [weak self] in self?.manager?.dismiss() }
+        // Host policy is intentionally preserved: dismiss to previous window,
+        // unlike reference :1274-1279, which explicitly invokes showHome.
+    }
+    override func accessibilityPerformEscape() -> Bool { dismissDeck(); return true }
+    func invalidate() {
+        invalidated = true; focusGeneration += 1
+        entrance?.stopAnimation(true); transition?.stopAnimation(true); rebound?.stopAnimation(true)
+        entrance = nil; transition = nil; rebound = nil
+        pages.delegate = nil
+        cards.forEach { $0.owner = nil; $0.removeFromSuperview() }
+        cards.removeAll(); manager = nil; backdrop = nil
     }
 }

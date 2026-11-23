@@ -23,6 +23,8 @@ API_AVAILABLE(ios(16.0))
 /// Last visible guest content, captured before minimization. Independent of
 /// whether the Dock is enabled; its wrapper alone runs the Dock animation.
 @property(nonatomic, strong, readonly) UIView *stackPreview;
+/// Content-only overview snapshot; never share the Dock flyer's UIView.
+@property(nonatomic, strong, readonly) UIView *stackContentPreview;
 - (instancetype)initWindowName:(NSString*)windowName bundleId:(NSString*)bundleId dataUUID:(NSString*)dataUUID rootVC:(UIViewController*)rootVC;
 /// Closes the window, ending its app, as its red dot does.
 - (void)closeWindow;

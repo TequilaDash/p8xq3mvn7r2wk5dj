@@ -500,6 +500,7 @@ static NSNotificationName const LCWindowTouchedNotification = @"LCWindowTouchedN
 /// goes.
 @property(nonatomic, weak) UIView *dockFlyer;
 @property(nonatomic, strong, readwrite) UIView *stackPreview;
+@property(nonatomic, strong, readwrite) UIView *stackContentPreview;
 @end
 
 @implementation DecoratedAppSceneViewController
@@ -817,6 +818,10 @@ static NSNotificationName const LCWindowTouchedNotification = @"LCWindowTouchedN
     UIView *picture = [self.view snapshotViewAfterScreenUpdates:NO];
     if (!picture) return nil;
     self.stackPreview = picture;
+    // The overview supplies its own 34pt header. Capturing self.view here
+    // would duplicate window controls/borders inside the guest preview.
+    UIView *content = self.appSceneVC.viewIfLoaded;
+    self.stackContentPreview = !CGRectIsEmpty(content.bounds) ? [content snapshotViewAfterScreenUpdates:NO] : nil;
     UIView *flyer = [[UIView alloc] initWithFrame:self.view.frame];
     flyer.userInteractionEnabled = NO;
     picture.frame = flyer.bounds;
@@ -845,6 +850,7 @@ static NSNotificationName const LCWindowTouchedNotification = @"LCWindowTouchedN
 
 - (void)restoreFromDock {
     self.stackPreview = nil;
+    self.stackContentPreview = nil;
     // A window brought back before its picture reached the dock comes
     // straight back out.
     [self.dockFlyer removeFromSuperview];
