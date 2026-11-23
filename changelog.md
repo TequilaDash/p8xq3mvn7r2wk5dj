@@ -1,3 +1,15 @@
+20261124-140000 1.1.101 Update：
+1. 三个 .ips 的共同根因终于找到：我们的 Mach-O 改补丁管线用的是 `mmap PROT_READ|PROT_WRITE MAP_SHARED` **就地改写已签名文件**。
+   iOS 27 的 code signing monitor（codeSigningMonitor: 2）会把"已签名文件被就地改写的页"判成非法页 → SIGKILL-CODESIGNING "Invalid Page"：
+   - LiveContainer 宿主：LCRepairTweakDependencies → LCParseMachO(rw) 就地改 tweak 依赖 → 宿主被杀（13:38:13）
+   - LiveProcess 访客：TweakLoader dlopen 被**之前**就地改过的 library_stub → 页哈希对不上 → 访客被杀（13:38:09，Reveil 闪退）
+   - ZSign SIGBUS（13:38:06）：签的是被就地改过的文件，mmap 越界读 → 总线错误
+   快手黑屏也是这条链（进程被 codesign 杀 = 黑屏）。
+2. 修法（根因级）：LCParseMachO / LCPatchMachOFixupARM64eSlice 两个写路径全部改为
+   `MAP_PRIVATE` 私有副本上打补丁 → 整文件写 `<path>.lcpatch-<pid>` 临时文件 → 原子 `rename` 替换。
+   全程不脏化原签名文件的任何页；原 inode 对已运行的映射依然有效；之后由 ZSign 对新文件整体重签。
+   LCMachOUtils.m 里不再有任何 MAP_SHARED 写。
+
 20261124-130000 1.1.100 Update：
 1. 快手黑屏根因（1.1.99 的 LiveProcess .ips 已证）：启动约 7 秒后主队列回调里，快手注入库 llykwai.dylib 调
    +[MBProgressHUD showHUDAddedTo:animated:] 传进 nil view，MBProgressHUD initWithView: 的

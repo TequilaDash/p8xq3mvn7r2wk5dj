@@ -454,6 +454,38 @@ bool LCCreateGuestExecutableReleaseView(const char *execPath) {
     return true;
 }
 
+// iOS 27 的 code signing monitor 会把"已签名文件被就地改写的页"判成非法页,
+// 进程直接 SIGKILL-CODESIGNING (Invalid Page)。所以任何对 Mach-O 的写改一律:
+// MAP_PRIVATE 私有副本上打补丁 → 整文件写临时路径 → 原子 rename 替换,
+// 全程不脏化原签名文件 (原 inode 对已运行的映射仍然有效)。
+static NSString *LCPersistPatchedMachO(const char *path, void *map, size_t size, struct stat s) {
+    char tmpPath[PATH_MAX];
+    snprintf(tmpPath, sizeof(tmpPath), "%s.lcpatch-%d", path, getpid());
+    int out = open(tmpPath, O_WRONLY | O_CREAT | O_TRUNC, (mode_t)(s.st_mode & 0777));
+    if (out < 0) {
+        return [NSString stringWithFormat:@"Failed to create %s: %s", tmpPath, strerror(errno)];
+    }
+    size_t off = 0;
+    while (off < size) {
+        ssize_t n = write(out, (char *)map + off, size - off);
+        if (n <= 0) {
+            close(out);
+            unlink(tmpPath);
+            return [NSString stringWithFormat:@"Failed to write %s: %s", tmpPath, strerror(errno)];
+        }
+        off += (size_t)n;
+    }
+    if (close(out) != 0) {
+        unlink(tmpPath);
+        return [NSString stringWithFormat:@"Failed to close %s: %s", tmpPath, strerror(errno)];
+    }
+    if (rename(tmpPath, path) != 0) {
+        unlink(tmpPath);
+        return [NSString stringWithFormat:@"Failed to replace %s: %s", path, strerror(errno)];
+    }
+    return nil;
+}
+
 NSString *LCParseMachO(const char *path, bool readOnly, LCParseMachOCallback callback) {
     int fd = open(path, readOnly ? O_RDONLY : O_RDWR, (mode_t)readOnly ? 0400 : 0600);
     if (fd < 0) {
@@ -461,7 +493,8 @@ NSString *LCParseMachO(const char *path, bool readOnly, LCParseMachOCallback cal
     }
     struct stat s = {0};
     fstat(fd, &s);
-    void *map = mmap(NULL, s.st_size, readOnly ? PROT_READ : (PROT_READ | PROT_WRITE), readOnly ? MAP_PRIVATE : MAP_SHARED, fd, 0);
+    // 一律 MAP_PRIVATE: 写模式在私有副本上改, 落盘走 LCPersistPatchedMachO, 不再就地脏化签名文件。
+    void *map = mmap(NULL, s.st_size, readOnly ? PROT_READ : (PROT_READ | PROT_WRITE), MAP_PRIVATE, fd, 0);
     if (map == MAP_FAILED) {
         NSString *error = [NSString stringWithFormat:@"Failed to map %s: %s", path, strerror(errno)];
         close(fd);
@@ -488,7 +521,12 @@ NSString *LCParseMachO(const char *path, bool readOnly, LCParseMachOCallback cal
         return @"Not a Mach-O file";
     }
 
-    msync(map, s.st_size, MS_SYNC);
+    if (!readOnly) {
+        NSString *persistError = LCPersistPatchedMachO(path, map, (size_t)s.st_size, s);
+        munmap(map, s.st_size);
+        close(fd);
+        return persistError;
+    }
     munmap(map, s.st_size);
     close(fd);
     return nil;
@@ -501,7 +539,7 @@ NSString *LCPatchMachOFixupARM64eSlice(const char *path) {
     }
     struct stat s = {0};
     fstat(fd, &s);
-    void *map = mmap(NULL, s.st_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    void *map = mmap(NULL, s.st_size, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0);
     if(map == MAP_FAILED) {
         close(fd);
         return [NSString stringWithFormat:@"Failed to map %s: %s", path, strerror(errno)];
@@ -523,10 +561,10 @@ NSString *LCPatchMachOFixupARM64eSlice(const char *path) {
         }
     }
 
-    msync(map, s.st_size, MS_SYNC);
+    NSString *persistError = LCPersistPatchedMachO(path, map, (size_t)s.st_size, s);
     munmap(map, s.st_size);
     close(fd);
-    return nil;
+    return persistError;
 }
 
 void LCPatchAppBundleFixupARM64eSlice(NSURL *bundleURL) {
