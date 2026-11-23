@@ -1,3 +1,7 @@
+20261124-070000 1.1.97 Update：
+1. 几何/底部图层日志并进 iManager 能列出的那份文件：`appendGeometryLine` 原来写 `geometry-<pid>.log`，页面上看不到、也导不出来；现在写 `console-yyyyMMdd-pid<pid>.log`，和 TDConsoleLog 同一个文件。
+   这样下一次导出 ConsoleLog 就能看到 `[geometry]` 与 `[bottom-overlays]` 的实测坐标/alpha，状态栏偏高、底部遮挡才能按数据改，不靠猜。
+
 20261124-050000 1.1.96 补丁：
 1. 修编译错误：给 LCWindowHasVisibleGuestContent 补前向声明（我的 swizzle 用在了定义之前）。
 2. 回到主屏幕的刷新再接一路信号：isCoveredByScreen 由 true→false（访客窗口让开、桌面重新可见）时也 refreshAppsFromSource()，覆盖"首次进入/从其它场景返回桌面图标不刷新"。

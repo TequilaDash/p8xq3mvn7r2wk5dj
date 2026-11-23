@@ -133,7 +133,11 @@ struct AppSceneViewSwiftUI: UIViewControllerRepresentable {
 
         private static func appendGeometryLine(_ line: String) {
             guard let dir = consoleLogDirectory() else { return }
-            let path = dir.appendingPathComponent("geometry-\(getpid()).log")
+            // 与 TDConsoleLog 同一个文件名, iManager 的 ConsoleLog 页面才会列出来、才能导出。
+            let formatter = DateFormatter()
+            formatter.dateFormat = "yyyyMMdd"
+            let name = "console-\(formatter.string(from: Date()))-pid\(getpid()).log"
+            let path = dir.appendingPathComponent(name)
             if let handle = try? FileHandle(forWritingTo: path) {
                 handle.seekToEndOfFile()
                 handle.write(line.data(using: String.Encoding.utf8) ?? Data())
