@@ -1,3 +1,10 @@
+20261124-170000 1.1.103 Update：
+1. 「发现注入的共享库」还红的下一层原因：对外伪路径的 .app 层级用的是**访客 bundle id**（com.reveil.app.app），
+   真机安装不存在"反DNS串+.app"这种安装形态——正常是 <显示名>.app（Reveil.app）。检测器比对目录形状即可判假。
+   现在 mask 层级改为访客 Info.plist 的 CFBundleDisplayName/CFBundleName/CFBundleExecutable（回退 bundle id），
+   前向（dyld 镜像名/bundlePath）与反向（文件 API 翻译）共用同一份合成层级，两方向永远一致。
+   预期对外形状：/private/var/containers/Bundle/Application/<UUIDv5>/Reveil.app/Reveil —— 与真机一致。
+
 20261124-160000 1.1.102 Update：
 1. 堆叠后台整体按参考工程重做（外包第三期交付，主 harness 审计后合入）：
    - 真正的连续页几何（contentOffset/stride），负距离 2.25 非线性压叠（参考 :654-659），

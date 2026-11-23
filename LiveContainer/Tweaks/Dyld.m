@@ -436,6 +436,27 @@ intptr_t hook_dyld_get_image_vmaddr_slide(uint32_t image_index) {
 // 这里改成由访客 id 派生的稳定 UUIDv5 形状, 并记住真实前缀供文件 API 反向翻译。
 static char gTDVMaskedPrefix[160];
 static char gTDVRealPrefix[PATH_MAX];
+// 对外合成的 ".app" 层级。真机安装是 <显示名>.app（如 Reveil.app），而容器访客目录
+// 用的是 bundle id（com.reveil.app.app）——检测器一眼识别"反DNS串+.app"这种不存在的
+// 安装形态，这也是"发现注入的共享库"一直红的直接原因之一。这里从访客 Info.plist
+// 取显示名合成，前向/反向共用同一份，保证两个方向永远一致。
+static char gTDVMaskedAppLevel[192];
+static void tdv_prepare_masked_app_level(void) {
+    if (gTDVMaskedAppLevel[0]) return;
+    NSString *guestId = NSUserDefaults.lcGuestAppId;
+    NSString *name = nil;
+    if (gTDVRealPrefix[0]) {
+        NSString *infoPath = [NSString stringWithFormat:@"%s/Info.plist", gTDVRealPrefix];
+        NSDictionary *info = [NSDictionary dictionaryWithContentsOfFile:infoPath];
+        name = info[@"CFBundleDisplayName"];
+        if (name.length == 0) name = info[@"CFBundleName"];
+        if (name.length == 0) name = info[@"CFBundleExecutable"];
+    }
+    if (name.length == 0 && guestId.length) name = guestId;
+    if (name.length == 0) return;
+    name = [name stringByReplacingOccurrencesOfString:@"/" withString:@"_"];
+    snprintf(gTDVMaskedAppLevel, sizeof(gTDVMaskedAppLevel), "%s.app", name.UTF8String);
+}
 static _Atomic int gTDVMaskedPrefixReady = 0;
 
 static void tdv_prepare_masked_prefix(void) {
@@ -472,11 +493,11 @@ const char *tdv_masked_image_name(const char *realName) {
         memcpy(gTDVRealPrefix, realName, realLen);
         gTDVRealPrefix[realLen] = '\0';
     }
-    // 真机正常安装一定有 <Name>.app 这一级；容器里的访客目录不一定带 .app，
-    // 所以这一级用访客 bundle id 合成，否则对外是 .../<uuid>/<Exec>，检测器一眼看出不合法。
-    NSString *guestId = NSUserDefaults.lcGuestAppId;
-    if (guestId.length == 0) return realName;
-    snprintf(masked, sizeof(masked), "%s/%s.app%s", gTDVMaskedPrefix, guestId.UTF8String, afterFolder);
+    tdv_prepare_masked_app_level();
+    // 真机正常安装一定有 <显示名>.app 这一级；容器里的访客目录没有 .app，
+    // 所以对外合成这一级；名字用访客 Info.plist 的显示名，而不是 bundle id。
+    if (!gTDVMaskedAppLevel[0]) return realName;
+    snprintf(masked, sizeof(masked), "%s/%s%s", gTDVMaskedPrefix, gTDVMaskedAppLevel, afterFolder);
     {
         // 走 iManager 的 ConsoleLog（TDConsoleLog 写文件），NSLog 只会进系统日志，页面上看不到。
         extern void TDConsoleLog(NSString *format, ...) __attribute__((weak_import));
@@ -510,10 +531,9 @@ const char *tdv_real_path_from_virtual(const char *path) {
     }
     // 跳过伪路径里合成出来的 "/<Name>.app"，真实目录里没有这一级。
     const char *rest = path + prefixLen;
-    NSString *guestId = NSUserDefaults.lcGuestAppId;
-    if (guestId.length > 0) {
-        char bundleComponent[PATH_MAX];
-        snprintf(bundleComponent, sizeof(bundleComponent), "/%s.app", guestId.UTF8String);
+    if (gTDVMaskedAppLevel[0]) {
+        char bundleComponent[224];
+        snprintf(bundleComponent, sizeof(bundleComponent), "/%s", gTDVMaskedAppLevel);
         size_t componentLen = strlen(bundleComponent);
         if (strncmp(rest, bundleComponent, componentLen) == 0) rest += componentLen;
     }
