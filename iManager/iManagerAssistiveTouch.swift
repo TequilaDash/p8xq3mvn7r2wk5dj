@@ -81,13 +81,16 @@ enum IManagerAssistiveTouch {
 
 // MARK: - 悬浮按钮
 
-/// 画在悬浮窗里的按钮本身：直接用上游的 HomeButton，只外加拖动、淡化和定位。
-/// 不自己画圆——上游 HomeButton 已有正确的玻璃、双环和按压反馈，自绘会与
-/// 主屏上那个按钮长得不一样。
+/// 画在悬浮窗里的按钮本身。
+/// 结构与旧线 TDGlobalHomeOverlay 完全一致：
+///   · HomeButton 的 action 传**空**，单击由 TapGesture 处理 ——
+///     否则 Button 自己在抬手时就触发，拖动也会回主屏（这是之前一直修不好的根因）。
+///   · TapGesture 在手指移动超过阈值时会自动失败，所以拖动不会触发单击。
+///   · scheduleDim / onChange 挂在外层 GeometryReader 上，与旧线同位置。
 private struct IManagerAssistiveTouchButton: View {
     /// 单击时执行。
     let action: () -> Void
-    /// 双击时执行（旧线是进多任务堆叠；test2 的堆叠后台接进来后在此赋值）。
+    /// 双击时执行（旧线是进多任务堆叠；堆叠后台接进来后在此赋值）。
     let doubleAction: () -> Void
     /// 归一化位置，双向绑定，拖动后写回。
     @Binding var position: CGPoint
@@ -95,16 +98,14 @@ private struct IManagerAssistiveTouchButton: View {
     let idleAlpha: Double
     /// 是否启用空闲淡化。关闭时按钮永远全不透明。
     let idleDim: Bool
+
     @State private var dimmed = false
     @State private var dimGeneration = 0
     @State private var dragStart: CGPoint?
-    /// 这一次触摸是否拖动过。拖动结束不该触发单击（回主屏）。
-    @State private var wasDragged = false
 
     var body: some View {
         GeometryReader { proxy in
             let size = HomeDesign.homeButtonSize
-            // 留出半个按钮的边距，按钮永远不会被裁掉一半。
             let margin = size / 2 + 6
             let usableWidth = max(proxy.size.width - margin * 2, 1)
             let usableHeight = max(proxy.size.height - margin * 2, 1)
@@ -114,82 +115,70 @@ private struct IManagerAssistiveTouchButton: View {
                 y: margin + min(max(position.y, 0), 1) * usableHeight
             )
 
-            HomeButton(action: {
-                undim()
-                action()
-            })
-            // 与旧线完全一致的修饰符顺序（顺序错了界面就点不动）：
-            //   手势 → background 占位视图 → position → opacity → 拖动手势
-            // 手势和 background 必须在 position 之前，否则作用在撑满父容器的
-            // 视图上；拖动放最后但必须是 simultaneousGesture，不能抢占触摸。
-            .highPriorityGesture(
-                TapGesture(count: 2)
-                    .exclusively(before: TapGesture(count: 1))
-                    .onEnded { tap in
-                        switch tap {
-                        case .first(_):
-                            // 双击：进多任务堆叠（旧线 MultitaskStackManager.present）。
-                            undim()
-                            doubleAction()
-                        case .second(_):
-                            // 单击：回主屏。拖动结束也会走到这里，所以拖过就不算单击。
-                            guard !wasDragged else { return }
-                            undim()
-                            action()
+            HomeButton(action: {})
+                .highPriorityGesture(
+                    TapGesture(count: 2)
+                        .exclusively(before: TapGesture(count: 1))
+                        .onEnded { tap in
+                            switch tap {
+                            case .first(_):
+                                // 双击：进多任务堆叠。
+                                doubleAction()
+                                scheduleDim()
+                            case .second(_):
+                                // 单击：回主屏。
+                                action()
+                                scheduleDim()
+                            }
                         }
-                    }
-            )
-            .background(IManagerHitRegion())
-            .position(center)
-            .opacity((dimmed && idleDim) ? max(0.15, min(1, idleAlpha)) : 1)
-            .animation(.easeOut(duration: 0.35), value: dimmed)
-            .simultaneousGesture(
-                DragGesture(minimumDistance: 6)
-                    .onChanged { value in
-                        if dragStart == nil {
-                            dragStart = position
-                            wasDragged = true
-                            undim()
+                )
+                .accessibilityAction {
+                    action()
+                    scheduleDim()
+                }
+                .background(IManagerHitRegion())
+                .position(center)
+                .opacity(dimmed && idleDim ? max(0.15, min(1.0, idleAlpha)) : 1)
+                .simultaneousGesture(
+                    DragGesture(minimumDistance: 4)
+                        .onChanged { value in
+                            if dragStart == nil {
+                                dragStart = position
+                                dimmed = false
+                            }
+                            guard let base = dragStart else { return }
+                            position = CGPoint(
+                                x: min(max(base.x + value.translation.width / usableWidth, 0), 1),
+                                y: min(max(base.y + value.translation.height / usableHeight, 0), 1)
+                            )
                         }
-                        guard let base = dragStart else { return }
-                        let dx = value.translation.width / usableWidth
-                        let dy = value.translation.height / usableHeight
-                        position = CGPoint(
-                            x: min(max(base.x + dx, 0), 1),
-                            y: min(max(base.y + dy, 0), 1)
-                        )
-                    }
-                    .onEnded { _ in
-                        dragStart = nil
-                        scheduleDim()
-                        // 稍后复位，确保同一次触摸的单击判定已经跑过。
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                            wasDragged = false
+                        .onEnded { _ in
+                            dragStart = nil
+                            scheduleDim()
                         }
-                    }
-            )
-            .onAppear(perform: scheduleDim)
-            .onChange(of: idleDim) { _, _ in scheduleDim() }
-            .onChange(of: idleAlpha) { _, _ in scheduleDim() }
+                )
         }
-    }
-
-    private func undim() {
-        dimGeneration += 1
-        dimmed = false
+        // 与旧线同位置：scheduleDim 与三个 onChange 挂在外层。
+        .onAppear(perform: scheduleDim)
+        .onChange(of: idleDim) { _, _ in scheduleDim() }
+        .onChange(of: idleAlpha) { _, _ in scheduleDim() }
     }
 
     private func scheduleDim() {
         dimGeneration += 1
         let generation = dimGeneration
         dimmed = false
-        // 关闭"空闲时淡化"时按钮保持全不透明，不再排淡化任务。
         guard idleDim else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + IManagerAssistiveTouch.idleDelay) {
             guard generation == dimGeneration else { return }
             dimmed = true
         }
     }
+}
+
+extension Notification.Name {
+    /// 辅助触控设置改变（同进程内）。
+    static let iManagerAssistiveTouchSettingsChanged = Notification.Name("iManagerAssistiveTouchSettingsChanged")
 }
 
 // MARK: - 悬浮窗
@@ -277,6 +266,22 @@ final class IManagerAssistiveTouchController {
                 MainActor.assumeIsolated { self?.attach() }
             })
         }
+        // 设置页改完值后发一个本地通知，让悬浮窗重建 rootView，
+        // 否则窗口里的 @AppStorage 可能拿不到最新值（旧线用 CFNotificationCenter 做同一件事）。
+        observers.append(center.addObserver(forName: .iManagerAssistiveTouchSettingsChanged,
+                                            object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.rebuildRootView() }
+        })
+    }
+
+    /// 重建悬浮窗里的 SwiftUI 树，让 @AppStorage 读到最新设置。
+    private func rebuildRootView() {
+        guard let overlay = window else { return }
+        LCUtils.appGroupUserDefault.synchronize()
+        let host = UIHostingController(rootView: AnyView(rootView()))
+        host.view.backgroundColor = .clear
+        host.view.isOpaque = false
+        overlay.rootViewController = host
     }
 
     /// 按当前设置决定显示还是隐藏悬浮窗。可重复调用。
@@ -332,6 +337,8 @@ final class IManagerAssistiveTouchController {
 
     /// 设置页改了开关后调用。
     func settingsChanged() {
+        LCUtils.appGroupUserDefault.synchronize()
+        NotificationCenter.default.post(name: .iManagerAssistiveTouchSettingsChanged, object: nil)
         attach()
     }
 
@@ -460,6 +467,12 @@ struct IManagerAssistiveTouchPage: View {
         .navigationTitle("辅助触控")
         .navigationBarTitleDisplayMode(.inline)
         .onChange(of: mode) { _, _ in
+            IManagerAssistiveTouchController.shared.settingsChanged()
+        }
+        .onChange(of: idleDim) { _, _ in
+            IManagerAssistiveTouchController.shared.settingsChanged()
+        }
+        .onChange(of: idleAlpha) { _, _ in
             IManagerAssistiveTouchController.shared.settingsChanged()
         }
     }
