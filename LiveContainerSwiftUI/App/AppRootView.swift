@@ -46,6 +46,11 @@ struct AppRootView: View {
         // Zeus's pink, for switches too, as Zeus tints its own, in place of
         // iOS's green.
         .tint(AppAccent.color)
+        // Deck blank-tap/selection posts this before revealing Home or a guest.
+        // A notification without a receiver never closed the presented screen.
+        .onReceive(NotificationCenter.default.publisher(for: .lcCloseHostScreens)) { _ in
+            home.showHomeScreen()
+        }
         // iManager: 堆叠后台长按菜单的两个动作。堆叠在自己的窗口里发通知，
         // 真正需要 SwiftUI 环境的操作（打开应用设置、分屏）在这里执行。
         .onReceive(NotificationCenter.default.publisher(for: .lcStackShowAppSettings)) { note in

@@ -78,37 +78,35 @@ static void showDlerrAlert(NSString *error) {
 
  __attribute__((constructor))
 static void TweakLoaderConstructor() {
-    const char *tweakFolderC = getenv("LC_GLOBAL_TWEAKS_FOLDER");
-    NSString *globalTweakFolder = @(tweakFolderC);
-    unsetenv("LC_GLOBAL_TWEAKS_FOLDER");
-    
-    if([NSUserDefaults.guestAppInfo[@"dontInjectTweakLoader"] boolValue]) {
-        // don't load any tweak since tweakloader is loaded after all initializers
-        NSLog(@"Skip loading tweaks");
-        return;
-    }
-    
     // iManager(内存管理): 把本访客进程登记进 app group，供宿主内存页与
-    // 堆叠后台内存胶囊定位 PID。jailed 下 sysctl KERN_PROC_ALL 无权限，
-    // 这是唯一可行的来源（同 uid + kill(pid,0) 探活 + proc_pid_rusage）。
+    // 堆叠后台内存胶囊定位 PID；宿主也会直接收集活跃 controller。
+    // 每个 PID 独立偏好键，避免多个进程 read-modify-write 同一字典丢项。
     // 整块 @try 保护：登记失败绝不能让访客崩（108~111 四版就是栽在这里）。
     @try {
         NSUserDefaults *iManagerShared = NSUserDefaults.lcSharedDefaults;
-        NSMutableDictionary *iManagerRegistry =
-            [[iManagerShared dictionaryForKey:@"TDLiveGuestPids"] mutableCopy] ?: [NSMutableDictionary new];
-        iManagerRegistry[@(getpid())] = @{
+        NSString *iManagerKey = [NSString stringWithFormat:@"TDLiveGuestPid.%d", getpid()];
+        [iManagerShared setObject:@{
             @"bundleId": NSUserDefaults.lcGuestAppId ?: @"",
             @"ts": @([[NSDate date] timeIntervalSince1970]),
-        };
-        [iManagerShared setObject:iManagerRegistry forKey:@"TDLiveGuestPids"];
+        } forKey:iManagerKey];
         [iManagerShared synchronize];
     } @catch (NSException *iManagerExc) {
         NSLog(@"[iManager] guest pid registration failed: %@ - %@", iManagerExc.name, iManagerExc.reason);
     }
+    const char *tweakFolderC = getenv("LC_GLOBAL_TWEAKS_FOLDER");
+    NSString *globalTweakFolder = tweakFolderC ? @(tweakFolderC) : nil;
+    unsetenv("LC_GLOBAL_TWEAKS_FOLDER");
+    if([NSUserDefaults.guestAppInfo[@"dontInjectTweakLoader"] boolValue]) {
+        NSLog(@"Skip loading tweaks");
+        return;
+    }
     NSMutableArray *errors = [NSMutableArray new];
     
-    NSArray<NSURL *> *globalTweaks = [NSFileManager.defaultManager contentsOfDirectoryAtURL:[NSURL fileURLWithPath:globalTweakFolder]
-    includingPropertiesForKeys:@[] options:0 error:nil];
+    // 全局目录为空时不要直接 return：App 自带的 Tweak 目录（LCTweakFolder）还要加载。
+    NSArray<NSURL *> *globalTweaks = globalTweakFolder.length
+        ? [NSFileManager.defaultManager contentsOfDirectoryAtURL:[NSURL fileURLWithPath:globalTweakFolder]
+                                      includingPropertiesForKeys:@[] options:0 error:nil]
+        : @[];
     NSString *tweakFolderName = NSUserDefaults.guestAppInfo[@"LCTweakFolder"];
     
     if([globalTweaks count] <= 1 && tweakFolderName.length == 0) {

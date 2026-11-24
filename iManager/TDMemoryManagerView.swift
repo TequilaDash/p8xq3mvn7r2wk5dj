@@ -1,47 +1,20 @@
 import Darwin
 import SwiftUI
+import UIKit
 
 // libproc bindings not exposed to Swift on iOS SDK; declare locally.
 @_silgen_name("proc_pidpath")
 func proc_pidpath(_ pid: Int32, _ buffer: UnsafeMutablePointer<CChar>?, _ buffersize: UInt32) -> Int32
 
-struct rusage_info_v2 {
-    var ri_uuid: (UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8)
-    var ri_user_time: UInt64
-    var ri_system_time: UInt64
-    var ri_pkg_idle_wkups: UInt64
-    var ri_interrupt_wkups: UInt64
-    var ri_pageins: UInt64
-    var ri_wired_size: UInt64
-    var ri_resident_size: UInt64
-    var ri_phys_footprint: UInt64
-    var ri_user_time64: UInt64
-    var ri_system_time64: UInt64
-    var ri_pkg_idle_wkups64: UInt64
-    var ri_interrupt_wkups64: UInt64
-    var ri_pagesize: Int32
-    var ri_reserved: (UInt32, UInt32)
-    init() {
-        ri_uuid = (0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0)
-        ri_user_time = 0; ri_system_time = 0; ri_pkg_idle_wkups = 0
-        ri_interrupt_wkups = 0; ri_pageins = 0; ri_wired_size = 0
-        ri_resident_size = 0; ri_phys_footprint = 0
-        ri_user_time64 = 0; ri_system_time64 = 0
-        ri_pkg_idle_wkups64 = 0; ri_interrupt_wkups64 = 0
-        ri_pagesize = 0; ri_reserved = (0, 0)
-    }
-}
+// Use Darwin's C layout, not a hand-written Swift struct with missing fields.
+// The libproc entry point writes the SDK-defined RUSAGE_INFO_V2 bytes.
 @_silgen_name("proc_pid_rusage")
-func proc_pid_rusage(_ pid: Int32, _ flavor: Int32, _ buffer: UnsafeMutablePointer<rusage_info_v2>?) -> Int32
-
-private let RUSAGE_INFO_V2: Int32 = 2
+private func tdProcPIDRusage(_ pid: Int32, _ flavor: Int32, _ buffer: UnsafeMutableRawPointer) -> Int32
 
 /// iManager > 实验性 > 内存管理.
-/// Lists guest (and host) processes with their resident memory usage, using
-/// sysctl KERN_PROC + proc_pid_rusage. Jailed processes of the same uid are
-/// visible to proc_listallpids on iOS for same-team processes; anything the
-/// kernel hides simply does not appear. Unit display (MB/GB) is user-settable
-/// and shared with the deck memory capsule via app-group defaults.
+/// Uses live host controllers plus compatible guest registrations, never
+/// pretends that sysctl can enumerate every jailed process. Memory is physical
+/// footprint; unreadable measurements are not reported as a measured zero.
 @available(iOS 15.0, *)
 struct TDMemoryManagerView: View {
     private static let unitKey = "TDMemoryUnit" // "MB" | "GB"
@@ -57,6 +30,7 @@ struct TDMemoryManagerView: View {
         let pid: Int32
         let name: String
         let rssBytes: UInt64
+        var readable: Bool = true
         var id: Int32 { pid }
     }
 
@@ -79,7 +53,7 @@ struct TDMemoryManagerView: View {
                         Image(systemName: "app.fill")
                         Text(host.name)
                         Spacer()
-                        Text(Self.fmt(host.rssBytes, unit: unit))
+                        Text(host.readable ? Self.fmt(host.rssBytes, unit: unit) : "不可读取")
                             .monospacedDigit()
                             .foregroundStyle(.secondary)
                     }
@@ -92,7 +66,7 @@ struct TDMemoryManagerView: View {
                             .frame(width: 64, alignment: .leading)
                         Text(e.name)
                         Spacer()
-                        Text(Self.fmt(e.rssBytes, unit: unit))
+                        Text(e.readable ? Self.fmt(e.rssBytes, unit: unit) : "不可读取")
                             .monospacedDigit()
                             .foregroundStyle(.secondary)
                     }
@@ -104,7 +78,7 @@ struct TDMemoryManagerView: View {
             } header: {
                 Text("当前运行的程序")
             } footer: {
-                Text("内存为物理内存占用（resident）。同 uid 之外的进程内核不暴露，这里只列容器可见进程。")
+                Text("内存为物理内存占用（physical footprint）。列表来自容器中的运行访客；权限不足时显示不可读取。")
             }
         }
         .navigationTitle("内存管理")
@@ -117,14 +91,15 @@ struct TDMemoryManagerView: View {
         .refreshable { refresh() }
     }
 
+    @MainActor
     private func refresh() {
-        let snapshot = Self.snapshot()
+        let snapshot = Self.snapshot(knownGuests: Self.liveGuestProcesses())
         hostEntry = snapshot.host
         entries = snapshot.guests
         if refreshTimer == nil {
             refreshTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { _ in
-                let next = Self.snapshot()
-                DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    let next = Self.snapshot(knownGuests: Self.liveGuestProcesses())
                     hostEntry = next.host
                     entries = next.guests
                 }
@@ -148,37 +123,70 @@ struct TDMemoryManagerView: View {
         var guests: [ProcEntry] = []
     }
 
-    static func snapshot() -> Snapshot {
-        // jailed 下列不出全系统进程表（sysctl KERN_PROC_ALL 无权限，实测为空）。
-        // 进程来源 = 宿主自身 + 访客会话登记表：TweakLoader constructor 启动时把
-        // pid/bundleId 写进 app group "TDLiveGuestPids"；这里 kill(pid,0) 探活过滤死项，
-        // 再逐个 proc_pid_rusage 取 physical footprint（同 uid 进程内核允许）。
+    @MainActor
+    private static func liveGuestProcesses() -> [Int32: String] {
+        guard #available(iOS 16.0, *) else { return [:] }
+        var result: [Int32: String] = [:]
+        var visited = Set<ObjectIdentifier>()
+        @MainActor func visit(_ controller: UIViewController) {
+            guard visited.insert(ObjectIdentifier(controller)).inserted else { return }
+            if let app = controller as? AppSceneViewController, app.pid > 0,
+               !app.isTerminated, !app.isUserTerminating {
+                result[app.pid] = app.bundleId ?? "#\(app.pid)"
+            }
+            for child in controller.children { visit(child) }
+            if let presented = controller.presentedViewController { visit(presented) }
+        }
+        for scene in UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }) {
+            for window in scene.windows {
+                if let root = window.rootViewController { visit(root) }
+            }
+        }
+        for app in MultitaskDockManager.shared.apps {
+            if let decorated = app.view?._viewDelegate() as? DecoratedAppSceneViewController { visit(decorated) }
+        }
+        return result
+    }
+
+    nonisolated static func footprint(pid: Int32) -> UInt64? {
+        guard pid > 0 else { return nil }
+        var info = Darwin.rusage_info_v2()
+        let result = withUnsafeMutablePointer(to: &info) {
+            tdProcPIDRusage(pid, 2, UnsafeMutableRawPointer($0))
+        }
+        guard result == 0 else { return nil }
+        return info.ri_phys_footprint
+    }
+
+    static func snapshot(knownGuests: [Int32: String] = [:]) -> Snapshot {
+        // Host-owned controller metadata wins over stale/failed guest defaults.
         var out = Snapshot()
         let defaults = LCUtils.appGroupUserDefault
         // 访客是另一个进程写这张表，先同步一次再读，否则拿到的是旧缓存。
         defaults.synchronize()
-        let registry = (defaults.dictionary(forKey: "TDLiveGuestPids") as? [String: [String: Any]]) ?? [:]
-        var host = ProcEntry(pid: Int32(getpid()), name: "zContainer（宿主）", rssBytes: 0)
-        var info = rusage_info_v2()
-        if proc_pid_rusage(host.pid, RUSAGE_INFO_V2, &info) == 0 {
-            host = ProcEntry(pid: host.pid, name: host.name, rssBytes: info.ri_phys_footprint)
+        var registry = (defaults.dictionary(forKey: "TDLiveGuestPids") as? [String: [String: Any]]) ?? [:]
+        let prefix = "TDLiveGuestPid."
+        for (key, value) in defaults.dictionaryRepresentation() where key.hasPrefix(prefix) {
+            if let meta = value as? [String: Any] {
+                registry[String(key.dropFirst(prefix.count))] = meta
+            }
         }
+        for (pid, name) in knownGuests { registry[String(pid)] = ["bundleId": name] }
+        let hostPID = Int32(getpid())
+        let hostBytes = footprint(pid: hostPID)
+        let host = ProcEntry(pid: hostPID, name: "zContainer（宿主）", rssBytes: hostBytes ?? 0, readable: hostBytes != nil)
         var guests: [ProcEntry] = []
         var seen = Set<Int32>()
         for (key, meta) in registry {
             guard let pid = Int32(key), pid > 0, pid != host.pid, seen.insert(pid).inserted else { continue }
             if kill(pid, 0) != 0 && errno == ESRCH { continue }
-            var rss: UInt64 = 0
-            var rinfo = rusage_info_v2()
-            if proc_pid_rusage(pid, RUSAGE_INFO_V2, &rinfo) == 0 {
-                rss = rinfo.ri_phys_footprint
-            }
+            let rss = footprint(pid: pid)
             var name = (meta["bundleId"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "#\(pid)"
             var path = [CChar](repeating: 0, count: Int(MAXPATHLEN))
             if proc_pidpath(pid, &path, UInt32(MAXPATHLEN)) > 0 {
                 name = String(cString: path).split(separator: "/").last.map(String.init) ?? name
             }
-            guests.append(ProcEntry(pid: pid, name: name, rssBytes: rss))
+            guests.append(ProcEntry(pid: pid, name: name, rssBytes: rss ?? 0, readable: rss != nil))
         }
         guests.sort { $0.rssBytes > $1.rssBytes }
         out.host = host

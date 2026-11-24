@@ -29,8 +29,10 @@ public class MultitaskStackManager: NSObject, ObservableObject {
     // dismissal. Retaining only host.view does not retain a hosting controller.
     private var hostingController: UIHostingController<AnyView>?
     private var hostingWindow: UIWindow?
-    /// 堆叠显示期间被禁用交互的下层窗口，关闭时恢复。
-    private var suppressedWindows: [UIWindow] = []
+    // Hide the actual hosting windows, not merely UIKit hit testing: remote
+    // scene event-deferring regions can otherwise remain eligible for input.
+    private var suppressedWindows: [(window: UIWindow, hidden: Bool, interactive: Bool)] = []
+    private var changingSuppressedWindows = false
     private weak var previousKeyWindow: UIWindow?
     private var pendingPresentation = false
     private var selectingTargetWindow = false
@@ -75,7 +77,7 @@ public class MultitaskStackManager: NSObject, ObservableObject {
         if let snapshot = decorated?.stackContentPreview {
             picture = snapshot
         } else if !controller.isTerminated, let source = controller.viewIfLoaded,
-                  source.window != nil, !source.bounds.isEmpty, !source.isHidden,
+                  source.window != nil, source.window?.isHidden == false, !source.bounds.isEmpty, !source.isHidden,
                   decorated?.viewIfLoaded?.isHidden != true {
             source.layoutIfNeeded()
             picture = source.snapshotView(afterScreenUpdates: false) ?? picture
@@ -156,7 +158,8 @@ public class MultitaskStackManager: NSObject, ObservableObject {
         dockSubscription = MultitaskDockManager.shared.$apps
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
-                guard let self, self.isVisible || self.pendingPresentation else { return }
+                guard let self, !self.changingSuppressedWindows,
+                      self.isVisible || self.pendingPresentation else { return }
                 self.refreshApps()
             }
         readStoredRequest()
@@ -189,6 +192,7 @@ public class MultitaskStackManager: NSObject, ObservableObject {
 
     func dismissToHome() {
         precondition(Thread.isMainThread)
+        restoreSuppressedWindows()
         MultitaskDockManager.shared.minimizeAllWindows()
         NotificationCenter.default.post(name: .lcCloseHostScreens, object: nil)
         if let home = MainWindow.window {
@@ -247,7 +251,7 @@ public class MultitaskStackManager: NSObject, ObservableObject {
     }
 
     private func presentIfPossible() {
-        guard pendingPresentation else { return }
+        guard !changingSuppressedWindows, pendingPresentation else { return }
         if let window = hostingWindow, !window.isHidden,
            window.windowScene?.activationState == .foregroundActive,
            hostingController?.viewIfLoaded?.window === window {
@@ -270,6 +274,7 @@ public class MultitaskStackManager: NSObject, ObservableObject {
         focusPendingApp()
         let host = UIHostingController(rootView: AnyView(MultitaskStackView().environmentObject(self)))
         host.view.backgroundColor = .clear
+        host.view.isOpaque = false
         let window = UIWindow(windowScene: scene)
         // 1.1.113: 全屏盖住。此前 frame=target.frame（上一个前台访客窗口的区域），
         // deck 覆盖不到的屏幕空白处触摸会直接落到底下的访客窗口——用户实测
@@ -283,21 +288,12 @@ public class MultitaskStackManager: NSObject, ObservableObject {
         hostingController = host
         hostingWindow = window
         window.makeKeyAndVisible()
-        // 堆叠显示期间，把下层所有 normal 窗口的交互关掉。
-        // 否则 deck 空白处的触摸会落到下面那个仍在接收事件的访客窗口上。
-        // 关闭堆叠时在 detachWindow 里恢复。
-        // 只禁用 normal 层的访客窗口。辅助触控窗口层级更高，必须保持可用，
-        // 否则打开最近任务后按钮就点不动了。
-        // 访客可能跑在自己的 UIWindowScene 里，只在宿主 scene 里禁用窗口不够，
-        // 那些窗口仍会收到触摸（空白处一点就误操作访客 App）。这里遍历全部 scene。
-        suppressedWindows = UIApplication.shared.connectedScenes
-            .compactMap { $0 as? UIWindowScene }
-            .flatMap(\.windows)
-            .filter { $0 !== window && $0.windowLevel == .normal && !$0.isHidden }
-        for suppressed in suppressedWindows {
-            suppressed.isUserInteractionEnabled = false
-        }
-        guard !window.isHidden, host.view.window === window,
+        // Capture pictures before hiding. A hidden hosting window removes its
+        // remote surfaces from the input/display tree as well as UIKit hits.
+        // Do not hide AssistiveTouch/alerts, and never move a guest to a new scene.
+        suppressUnderlyingWindows()
+        window.makeKey() // hiding the former key must not leave focus elsewhere
+        guard window.isKeyWindow, !window.isHidden, host.view.window === window,
               scene.activationState == .foregroundActive else {
             detachWindow()
             return
@@ -308,12 +304,37 @@ public class MultitaskStackManager: NSObject, ObservableObject {
         NSLog("[TDHome] app stack attached: scene=%@ cards=%ld", scene.session.persistentIdentifier, apps.count)
     }
 
-    private func detachWindow(restoreKey: Bool = true) {
-        // 恢复被禁用的下层窗口交互（见 attach 里的 suppressedWindows）。
-        for suppressed in suppressedWindows {
-            suppressed.isUserInteractionEnabled = true
+    private func suppressUnderlyingWindows() {
+        guard !changingSuppressedWindows, let deck = hostingWindow else { return }
+        changingSuppressedWindows = true
+        defer { changingSuppressedWindows = false }
+        let windows = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.flatMap(\.windows)
+        for window in windows where window !== deck && window.windowLevel == .normal && !window.isHidden {
+            if !suppressedWindows.contains(where: { $0.window === window }) {
+                suppressedWindows.append((window, window.isHidden, window.isUserInteractionEnabled))
+            }
+            window.isUserInteractionEnabled = false
+            window.isHidden = true
         }
+    }
+
+    private func restoreSuppressedWindows() {
+        let wasChanging = changingSuppressedWindows
+        changingSuppressedWindows = true
+        defer { changingSuppressedWindows = wasChanging }
+        let saved = suppressedWindows
         suppressedWindows.removeAll()
+        for state in saved {
+            state.window.isUserInteractionEnabled = state.interactive
+            state.window.isHidden = state.hidden
+        }
+    }
+
+    private func detachWindow(restoreKey: Bool = true) {
+        let wasChanging = changingSuppressedWindows
+        changingSuppressedWindows = true
+        defer { changingSuppressedWindows = wasChanging }
+        restoreSuppressedWindows()
         let previous = previousKeyWindow
         hostingWindow?.isHidden = true
         hostingWindow?.rootViewController = nil
@@ -345,6 +366,7 @@ public class MultitaskStackManager: NSObject, ObservableObject {
     }
 
     @objc private func applicationDidActivate() {
+        guard !changingSuppressedWindows else { return }
         readStoredRequest()
         presentIfPossible()
     }
@@ -358,7 +380,7 @@ public class MultitaskStackManager: NSObject, ObservableObject {
     }
 
     @objc private func recencyDidChange(_ notification: Notification) {
-        if isVisible { refreshApps() }
+        if isVisible && !changingSuppressedWindows { refreshApps() }
     }
 
     private func focusPendingApp() {
@@ -368,7 +390,8 @@ public class MultitaskStackManager: NSObject, ObservableObject {
     }
 
     @objc private func sceneWillDeactivate(_ notification: Notification) {
-        guard let scene = notification.object as? UIWindowScene, hostingWindow?.windowScene === scene else { return }
+        guard !changingSuppressedWindows,
+              let scene = notification.object as? UIWindowScene, hostingWindow?.windowScene === scene else { return }
         if selectingTargetWindow {
             pendingPresentation = false
             detachWindow(restoreKey: false)
@@ -385,8 +408,13 @@ public class MultitaskStackManager: NSObject, ObservableObject {
 
     @objc private func windowsDidChange(_ notification: Notification) {
         // makeKeyAndVisible posts synchronously while presentation is mounting.
+        if changingSuppressedWindows { return }
         if let window = notification.object as? UIWindow, window === hostingWindow { return }
-        if isVisible { refreshApps() }
+        if isVisible {
+            refreshApps() // capture a newly visible guest before suppressing it
+            suppressUnderlyingWindows()
+            hostingWindow?.makeKey()
+        }
         presentIfPossible()
     }
 
@@ -463,21 +491,14 @@ public class MultitaskStackManager: NSObject, ObservableObject {
         // A retained termination card is still a recent task, not evidence of
         // resident memory. Preserve its restart target and last-use order.
         let controllers = appControllers().filter { $0.pid > 0 }
-        // 宿主自己也知道这些访客的 pid，直接写进同一张登记表。
-        // 这样即使访客侧 TweakLoader 没注入或登记失败，内存页与胶囊也能定位进程。
-        if !controllers.isEmpty {
-            let defaults = LCUtils.appGroupUserDefault
-            var registry = (defaults.dictionary(forKey: "TDLiveGuestPids") as? [String: [String: Any]]) ?? [:]
-            let now = Date().timeIntervalSince1970
-            for controller in controllers where controller.pid > 0 {
-                registry[String(controller.pid)] = [
-                    "bundleId": controller.bundleId ?? "",
-                    "ts": now,
-                ]
-            }
-            defaults.set(registry, forKey: "TDLiveGuestPids")
-            defaults.synchronize()
+        // Independent keys avoid read-modify-write races with other guests.
+        let defaults = LCUtils.appGroupUserDefault
+        let now = Date().timeIntervalSince1970
+        for controller in controllers where !controller.isTerminated && !controller.isUserTerminating {
+            defaults.set(["bundleId": controller.bundleId ?? "", "ts": now],
+                         forKey: "TDLiveGuestPid.\(controller.pid)")
         }
+        defaults.synchronize()
         let byUUID = Dictionary(uniqueKeysWithValues: controllers.compactMap { controller -> (String, AppSceneViewController)? in
             guard let uuid = controller.dataUUID else { return nil }
             return (uuid, controller)
@@ -508,7 +529,7 @@ public class MultitaskStackManager: NSObject, ObservableObject {
             let source = controller.viewIfLoaded
             let wrapperVisible = (decorated?.viewIfLoaded).map { !$0.isHidden && $0.alpha > 0 } ?? true
             if let source, wrapperVisible, !source.isHidden, source.alpha > 0,
-               source.window != nil, !source.bounds.isEmpty,
+               source.window != nil, source.window?.isHidden == false, !source.bounds.isEmpty,
                let snapshot = source.snapshotView(afterScreenUpdates: false) {
                 freshPreviews[uuid] = snapshot
             } else if let snapshot = decorated?.stackContentPreview {
@@ -586,6 +607,7 @@ public class MultitaskStackManager: NSObject, ObservableObject {
                     self.message = "窗口暂时无法恢复"
                     return
                 }
+                self.restoreSuppressedWindows()
                 if target.isStashed { target.unstash(animated: false) }
                 for other in controllers {
                     if let decorated = self.decoratedController(for: other), decorated !== target { decorated.minimizeWindow() }
@@ -600,17 +622,19 @@ public class MultitaskStackManager: NSObject, ObservableObject {
                 }
                 MultitaskManager.recordUse(container: uuid)
                 self.finishAppSelection()
+                view.window?.makeKey()
             } else if let targetWindow = controller.viewIfLoaded?.window,
                       let scene = targetWindow.windowScene {
                 self.selectingTargetWindow = true
+                self.restoreSuppressedWindows()
                 UIApplication.shared.requestSceneSessionActivation(scene.session, userActivity: nil, options: nil) { error in
                     NSLog("[TDHome] app stack activation failed: %@", error.localizedDescription)
                     self.present()
                 }
                 // Native app window, not the saved Home window, owns focus.
-                targetWindow.makeKey()
                 MultitaskManager.recordUse(container: uuid)
                 self.finishAppSelection()
+                targetWindow.makeKey()
             } else {
                 self.message = "窗口暂时无法恢复"
             }
@@ -786,16 +810,18 @@ public class MultitaskStackManager: NSObject, ObservableObject {
                             container.bringSubviewToFront(view)
                             window.revealWindowControls()
                             self.finishAppSelection()
+                            view.window?.makeKey()
                         } else if let targetWindow = replacement.viewIfLoaded?.window,
                                   let scene = targetWindow.windowScene {
                             self.selectingTargetWindow = true
+                            self.restoreSuppressedWindows()
                             UIApplication.shared.requestSceneSessionActivation(scene.session, userActivity: nil, options: nil) { error in
                                 DispatchQueue.main.async {
                                     self.showRestartMessage("应用已重新启动，但窗口打开失败：\(error.localizedDescription)")
                                 }
                             }
-                            targetWindow.makeKey()
                             self.finishAppSelection()
+                            targetWindow.makeKey()
                         } else {
                             self.showRestartMessage("应用已重新启动，但暂时没有可显示的窗口")
                         }
@@ -1040,6 +1066,8 @@ private final class StackDeckCard: UIView, UIContextMenuInteractionDelegate {
     /// 模糊预览：盖在快照之上、图标之下。只在对应 App 的开关打开时显示。
     let blurView = UIVisualEffectView(effect: UIBlurEffect(style: .regular))
     let icon = UIImageView()
+    private let protectionMark = UIImageView()
+    private var appIcon: UIImage?
     let centerIcon = UIImageView()
     let unavailableLabel = UILabel()
     let name = UILabel()
@@ -1081,6 +1109,12 @@ private final class StackDeckCard: UIView, UIContextMenuInteractionDelegate {
         blurView.isUserInteractionEnabled = false
         blurView.isHidden = true
         preview.addSubview(blurView)
+        protectionMark.contentMode = .scaleAspectFit
+        protectionMark.tintColor = UIColor(white: 0.88, alpha: 1)
+        protectionMark.clipsToBounds = true
+        protectionMark.isUserInteractionEnabled = false
+        protectionMark.isHidden = true
+        preview.addSubview(protectionMark)
         addSubview(icon)
         addSubview(name)
         preview.addSubview(centerIcon)
@@ -1115,7 +1149,8 @@ private final class StackDeckCard: UIView, UIContextMenuInteractionDelegate {
     func update(app: DockAppModel, snapshot: UIView?) {
         if icon.image == nil || name.text != app.appName {
             let info = app.appInfo ?? AppInfoProvider.shared.findAppInfo(appName: app.appName, dataUUID: uuid)
-            icon.image = info?.iconIsDarkIcon(false) ?? UIImage(systemName: "app.fill")
+            appIcon = info?.iconIsDarkIcon(false)
+            icon.image = appIcon ?? UIImage(systemName: "app.fill")
         }
         name.text = app.appName
         accessibilityLabel = app.appName
@@ -1128,7 +1163,7 @@ private final class StackDeckCard: UIView, UIContextMenuInteractionDelegate {
             self.snapshot = snapshot
             if let snapshot {
                 snapshot.isUserInteractionEnabled = false
-                preview.insertSubview(snapshot, belowSubview: centerIcon)
+                preview.insertSubview(snapshot, at: 0)
             }
         }
         // Never derive preview aspect from the decorated window (:562-564).
@@ -1140,7 +1175,10 @@ private final class StackDeckCard: UIView, UIContextMenuInteractionDelegate {
         unavailableLabel.isHidden = snapshot != nil || isPiP
         // 模糊预览：只模糊画面内容，图标与名称保持清晰（参考系统多任务）。
         let blurMap = (LCUtils.appGroupUserDefault.dictionary(forKey: "iManagerRecentTasksBlurPerApp") as? [String: Bool]) ?? [:]
-        blurView.isHidden = !(blurMap[uuid] ?? false) || snapshot == nil
+        let protected = (blurMap[uuid] ?? false) && snapshot != nil
+        blurView.isHidden = !protected
+        protectionMark.isHidden = !protected
+        protectionMark.image = protected ? (appIcon ?? Self.protectionFallback) : nil
         preview.backgroundColor = snapshot == nil ? UIColor(white: 0.16, alpha: 1) : .black
         preview.layer.borderWidth = snapshot == nil ? 0.5 : 0
         preview.layer.borderColor = UIColor.white.withAlphaComponent(0.20).cgColor
@@ -1170,8 +1208,15 @@ private final class StackDeckCard: UIView, UIContextMenuInteractionDelegate {
             snapshot.center = CGPoint(x: preview.bounds.midX, y: preview.bounds.midY)
         }
         blurView.frame = preview.bounds
+        // Bottom to top: snapshot -> blur -> clear protection mark -> PiP
+        // centerIcon -> unavailableLabel. Header icon/name are outside preview.
         preview.bringSubviewToFront(blurView)
+        preview.bringSubviewToFront(protectionMark)
         preview.bringSubviewToFront(centerIcon)
+        let markSide = min(64, min(preview.bounds.width, preview.bounds.height) * 0.22)
+        protectionMark.bounds = CGRect(x: 0, y: 0, width: markSide, height: markSide)
+        protectionMark.center = CGPoint(x: preview.bounds.midX, y: preview.bounds.height * 0.54)
+        protectionMark.layer.cornerRadius = appIcon == nil ? 0 : markSide * 0.225
         preview.bringSubviewToFront(unavailableLabel)
         let side: CGFloat = isPiP ? 54 : min(94, max(44, min(preview.bounds.width, preview.bounds.height) * 0.30))
         centerIcon.frame = CGRect(x: (preview.bounds.width - side) / 2, y: (preview.bounds.height - side) / 2, width: side, height: side)
@@ -1179,6 +1224,34 @@ private final class StackDeckCard: UIView, UIContextMenuInteractionDelegate {
         unavailableLabel.frame = preview.bounds.insetBy(dx: 12, dy: 12)
         layer.shadowPath = UIBezierPath(roundedRect: preview.frame, cornerRadius: 28).cgPath
     }
+    // Reference fallback: split hexagon, a narrow seam and a four-point star.
+    private static let protectionFallback: UIImage = {
+        UIGraphicsImageRenderer(size: CGSize(width: 64, height: 64)).image { _ in
+            UIColor(white: 0.88, alpha: 1).setFill()
+            for mirrored in [false, true] {
+                let points: [CGPoint] = [(0.46, 0.04), (0.10, 0.25), (0.10, 0.75),
+                                        (0.46, 0.96), (0.46, 0.62), (0.33, 0.50),
+                                        (0.46, 0.38)].map { x, y in
+                    CGPoint(x: CGFloat(mirrored ? 1 - x : x) * 64, y: CGFloat(y) * 64)
+                }
+                let half = UIBezierPath()
+                half.move(to: points[0])
+                for point in points.dropFirst() { half.addLine(to: point) }
+                half.close(); half.fill()
+            }
+            let star = UIBezierPath()
+            star.move(to: CGPoint(x: 32, y: 27))
+            star.addLine(to: CGPoint(x: 34, y: 30))
+            star.addLine(to: CGPoint(x: 37, y: 32))
+            star.addLine(to: CGPoint(x: 34, y: 34))
+            star.addLine(to: CGPoint(x: 32, y: 37))
+            star.addLine(to: CGPoint(x: 30, y: 34))
+            star.addLine(to: CGPoint(x: 27, y: 32))
+            star.addLine(to: CGPoint(x: 30, y: 30))
+            star.close(); star.fill()
+        }
+    }()
+
     static func previewPath(bounds: CGRect, radius: CGFloat) -> UIBezierPath {
         UIBezierPath(roundedRect: bounds, cornerRadius: min(max(0, radius), min(bounds.width, bounds.height) / 2))
     }
@@ -1259,6 +1332,7 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
     private var cards: [StackDeckCard] = []
     private let blankPan = UIPanGestureRecognizer()
     private var blankStartX: CGFloat = 0
+    private var blankStartY: CGFloat = 0
     private let memoryCapsule = UIVisualEffectView(effect: UIBlurEffect(style: .systemUltraThinMaterial))
     private let memoryLabel = UILabel()
     private var memoryTimer: Timer?
@@ -1280,6 +1354,7 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
     private var showClearAll = false
     private var lastBounds = CGRect.null
     private var lastSafe = UIEdgeInsets.zero
+    private var appliedColumnLayout: Bool?
     private var entrance: UIViewPropertyAnimator?
     private var transition: UIViewPropertyAnimator?
     private var rebound: UIViewPropertyAnimator?
@@ -1416,7 +1491,9 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
         pages.setContentOffset(pages.contentOffset, animated: false)
         scrolling = false
         selected = card.index
-        pages.setContentOffset(CGPoint(x: CGFloat(selected) * stride, y: 0), animated: false)
+        if !isColumnLayout {
+            pages.setContentOffset(CGPoint(x: CGFloat(selected) * stride, y: 0), animated: false)
+        }
         layingOut = false
         updateDeck()
         manager.focus(index: logical) // focus only; does NOT record MRU or launch
@@ -1426,6 +1503,24 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
 
     @objc private func blankPanned(_ pan: UIPanGestureRecognizer) {
         guard !transitioning, !invalidated else { return }
+        if isColumnLayout {
+            let limit = max(0, pages.contentSize.height - pages.bounds.height)
+            switch pan.state {
+            case .began:
+                finishEntrance(); stopRebound()
+                pages.setContentOffset(pages.contentOffset, animated: false)
+                blankStartY = pages.contentOffset.y
+                scrolling = true
+            case .changed:
+                let y = min(max(0, blankStartY - pan.translation(in: self).y), limit)
+                pages.setContentOffset(CGPoint(x: 0, y: y), animated: false)
+            case .ended, .cancelled, .failed:
+                pages.setContentOffset(CGPoint(x: 0, y: min(max(0, pages.contentOffset.y), limit)), animated: false)
+                finishScrolling()
+            default: break
+            }
+            return
+        }
         switch pan.state {
         case .began:
             finishEntrance(); stopRebound()
@@ -1462,7 +1557,8 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
         // LCOrbit :654-668 (negative compression, increasing z), not its FIFO.
         let apps = Array(manager.apps.filter { seen.insert($0.appUUID).inserted }.reversed())
         let old = cards
-        let changed = old.map(\.uuid) != apps.map(\.appUUID) || apps.contains { app in
+        let modeChanged = appliedColumnLayout != nil && appliedColumnLayout != isColumnLayout
+        let changed = modeChanged || old.map(\.uuid) != apps.map(\.appUUID) || apps.contains { app in
             old.first(where: { $0.uuid == app.appUUID })?.launch !== manager.restartTarget(for: app.appUUID)
         }
         let wasEntered = hasEntered
@@ -1526,7 +1622,7 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
             lastBounds = .null
             setNeedsLayout()
             layoutIfNeeded()
-            if wasEntered && !transitioning && !UIAccessibility.isReduceMotionEnabled {
+            if wasEntered && !modeChanged && !transitioning && !UIAccessibility.isReduceMotionEnabled {
                 for card in cards {
                     if let frame = oldFrames[card.uuid] { align(card, to: frame) }
                 }
@@ -1534,9 +1630,12 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
             }
         } else if !scrolling && draggingCard == nil && selected != desired && !transitioning {
             selected = desired
-            let animated = !UIAccessibility.isReduceMotionEnabled
-            scrolling = animated
-            pages.setContentOffset(CGPoint(x: CGFloat(selected) * stride, y: 0), animated: animated)
+            if !isColumnLayout {
+                let animated = !UIAccessibility.isReduceMotionEnabled
+                scrolling = animated
+                pages.setContentOffset(CGPoint(x: CGFloat(selected) * stride, y: 0), animated: animated)
+            }
+            updateDeck()
         }
         updateMemoryTarget()
         setNeedsLayout()
@@ -1601,11 +1700,12 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
         let pid = controller.pid
         let identity = ObjectIdentifier(controller)
         memoryReadPending = true
-        // sysctl/proc enumeration is not a display-link task. One utility
-        // sample at a time; only UInt64? comes back to UIKit on the main queue.
+        // One libproc sample at a time off the main queue; only UInt64? comes
+        // back to UIKit, with launch identity checked before displaying it.
         memoryQueue.async { [weak self] in
-            let sample = TDMemoryManagerView.snapshot()
-            let bytes = sample.guests.first(where: { $0.pid == pid && $0.rssBytes > 0 })?.rssBytes
+            // The controller already owns the PID; a missing preferences entry
+            // must not suppress a readable memory measurement.
+            let bytes = TDMemoryManagerView.footprint(pid: pid)
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
                 self.memoryReadPending = false
@@ -1643,10 +1743,12 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
         layoutHeader()
         guard !invalidated, !transitioning, draggingCard == nil, !scrolling,
               !pages.isDragging, !pages.isDecelerating, bounds.width > 0, bounds.height > 0 else { return }
-        guard lastBounds != bounds || lastSafe != safeAreaInsets else { return }
+        guard lastBounds != bounds || lastSafe != safeAreaInsets || appliedColumnLayout != isColumnLayout else { return }
         finishEntrance(); stopRebound()
         layingOut = true
         defer { layingOut = false }
+        let oldColumnY = appliedColumnLayout == true ? pages.contentOffset.y : 0
+        appliedColumnLayout = isColumnLayout
         lastBounds = bounds; lastSafe = safeAreaInsets
         let width = bounds.width, height = bounds.height, safe = safeAreaInsets
         // Reference :523-545. One scene-local coordinate system; no UIScreen.main.
@@ -1676,30 +1778,39 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
         let availableHeight = max(35, cardBottom - safe.top)
         emptyLabel.frame = CGRect(x: 0, y: safe.top, width: width, height: availableHeight)
         if isColumnLayout {
-            // 纵向排布：两列网格，页面纵向滚动。
+            // Card height includes its 34pt title; pages clips above the Dock.
             let side: CGFloat = 14
             let gap: CGFloat = 12
-            let cardWidth = (width - side * 2 - gap) / 2
-            let cardHeight = min(cardWidth * 1.45, availableHeight * 0.92)
+            // Reserve the header band so the memory capsule cannot cover titles.
+            let gridTop = safe.top + 54
+            let gridHeight = max(1, cardBottom - gridTop)
+            let cardWidth = max(1, (width - side * 2 - gap) / 2)
+            let previewHeight = min(cardWidth * 1.45, max(1, gridHeight - 34))
+            let cardHeight = previewHeight + 34
             let rowPitch = cardHeight + gap
-            let rows = max(1, (cards.count + 1) / 2)
-            let contentHeight = max(height, CGFloat(rows) * rowPitch + safe.top + 12 + 40)
+            let rows = (cards.count + 1) / 2
+            let usedHeight = CGFloat(rows) * cardHeight + CGFloat(max(0, rows - 1)) * gap
             stride = width
-            pages.frame = bounds
-            pages.contentSize = CGSize(width: width, height: contentHeight)
+            pages.alwaysBounceHorizontal = false
+            pages.alwaysBounceVertical = true
+            pages.frame = CGRect(x: 0, y: gridTop, width: width, height: gridHeight)
+            pages.contentSize = CGSize(width: width, height: max(gridHeight, usedHeight + 12))
             for card in cards {
                 let column = card.index % 2
                 let row = card.index / 2
                 card.transform = .identity
-                card.bounds = CGRect(x: 0, y: 0, width: cardWidth, height: cardHeight + 34)
+                card.bounds = CGRect(x: 0, y: 0, width: cardWidth, height: cardHeight)
                 card.center = CGPoint(
                     x: side + cardWidth / 2 + CGFloat(column) * (cardWidth + gap),
-                    y: safe.top + 12 + CGFloat(row) * rowPitch + (cardHeight + 34) / 2
+                    y: CGFloat(row) * rowPitch + cardHeight / 2
                 )
                 card.updateExpandedFrame()
                 card.setNeedsLayout(); card.layoutIfNeeded()
             }
+            pages.contentOffset = CGPoint(x: 0, y: min(max(0, oldColumnY), max(0, pages.contentSize.height - gridHeight)))
         } else {
+            pages.alwaysBounceHorizontal = true
+            pages.alwaysBounceVertical = false
             stride = StackDeckMath.layout(width: width, height: height, safeTop: safe.top, safeBottom: safe.bottom,
                                           hasDock: !dock.isHidden, count: cards.count, source: .zero).stride
             pages.frame = bounds
@@ -1713,8 +1824,8 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
                 card.updateExpandedFrame()
                 card.setNeedsLayout(); card.layoutIfNeeded()
             }
+            pages.contentOffset = CGPoint(x: CGFloat(selected) * stride, y: 0)
         }
-        pages.contentOffset = CGPoint(x: CGFloat(selected) * stride, y: 0)
         updateDeck()
         if !hasEntered && window != nil {
             hasEntered = true
@@ -1731,10 +1842,15 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
         if isColumnLayout {
             // 网格模式不做形变，卡片按行排好即可。
             for card in cards {
-                card.transform = .identity
+                if card !== draggingCard && card !== reboundingCard { card.transform = .identity }
                 card.resting = .identity
                 card.layer.zPosition = CGFloat(2 + card.index)
                 card.alpha = 1
+                card.icon.frame = CGRect(x: 0, y: 0, width: 25, height: 25)
+                card.name.frame = CGRect(x: 33, y: 1, width: max(0, card.bounds.width - 33), height: 24)
+                card.icon.alpha = 1
+                card.name.alpha = 1
+                card.accessibilityElementsHidden = !card.frame.intersects(pages.bounds)
             }
             return
         }
@@ -1789,13 +1905,14 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
         scrolling = true
     }
     func scrollViewWillEndDragging(_ scrollView: UIScrollView, withVelocity velocity: CGPoint, targetContentOffset: UnsafeMutablePointer<CGPoint>) {
-        guard scrollView === pages, !cards.isEmpty else { return }
+        guard scrollView === pages, !cards.isEmpty, !isColumnLayout else { return }
         let current = pages.contentOffset.x / stride
         let page = StackDeckMath.targetPage(current: current, velocity: velocity.x, start: scrolling ? dragStartPage : current.rounded(), count: cards.count)
         targetContentOffset.pointee = CGPoint(x: page * stride, y: 0)
     }
     func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
         guard scrollView === pages, !decelerate else { return }
+        if isColumnLayout { finishScrolling(); return }
         let target = CGFloat(selected) * stride
         if abs(pages.contentOffset.x - target) >= 0.5 {
             let animated = !UIAccessibility.isReduceMotionEnabled
@@ -1812,7 +1929,9 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
         guard !transitioning, !invalidated else { return false }
         if let pan = gestureRecognizer as? UIPanGestureRecognizer {
             let v = pan.velocity(in: self)
-            if pan === blankPan { return abs(v.x) > abs(v.y) * 1.2 }
+            if pan === blankPan {
+                return isColumnLayout ? abs(v.y) > abs(v.x) * 1.2 : abs(v.x) > abs(v.y) * 1.2
+            }
             return abs(v.y) > abs(v.x) * 1.2
         }
         return true
