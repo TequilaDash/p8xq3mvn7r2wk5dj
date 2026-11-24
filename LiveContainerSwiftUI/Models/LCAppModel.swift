@@ -233,7 +233,7 @@ class LCAppModel: ObservableObject, Hashable {
     /// 不必捕获非 Sendable 的 delegate（Swift 6 并发检查要求）。
     @MainActor
     private static func performJITLaunch(delegate: (any LCAppModelDelegate)?,
-                                         pid: Int32,
+                                         pid: Int,
                                          script: String?,
                                          appName: String) async {
         if let script, !script.isEmpty {
