@@ -6,8 +6,8 @@
 #import "LCAppInfo.h"
 #import "LCUtils.h"
 #import "../../LiveContainer/LCSharedUtils.h"
-// iManager 源码块: 补丁版本门控（升级补丁逻辑后 +1，已装 app 才会重打补丁）
-#import "../../iManager/PatchRevision.h"
+// iManager 源码块: 按事实判断是否需要重打补丁（脏 load command 名 = 旧版写坏的）
+#import "../../iManager/DirtyLoadCommandRepatch.h"
 
 
 @implementation LCAppInfo
@@ -432,10 +432,19 @@ static UIImage* LCDrawHomeScreenIcon(NSString* bundlePath, BOOL isDarkIcon) {
     NSString *execPath = [NSString stringWithFormat:@"%@/%@", appPath, _infoPlist[@"CFBundleExecutable"]];
     
     // Update patch
-    // iManager(PatchRevision): 版本号在 iManager/PatchRevision.h 里，改补丁逻辑时
-    // 只加那里的数；否则已装 app 的 LCPatchRevision 已达旧值，补丁不会再执行。
-    int currentPatchRev = iManagerCurrentPatchRevision();
+    // iManager(DirtyLoadCommandRepatch): 上游门控只看 LCPatchRevision 版本号，
+    // 已装 app 的号已达旧值 → 补丁不执行，旧版写坏的脏 load command 永远留着。
+    // 这里不改上游的版本号，改为按事实判断：二进制里名字字段没有 NUL 结尾
+    // 就是旧版补丁写坏的，必须重打一次。正常 app 一次都不多打。
+    int currentPatchRev = 7;
     bool needPatch = [info[@"LCPatchRevision"] intValue] < currentPatchRev;
+    if (!needPatch && [fm fileExistsAtPath:execPath]) {
+        LCParseMachO(execPath.UTF8String, true, ^(const char *path, struct mach_header_64 *header, int fd, void* filePtr) {
+            if (header->cputype == CPU_TYPE_ARM64 && iManagerHasDirtyLoadCommandName(header)) {
+                needPatch = true;
+            }
+        });
+    }
     if (needPatch || forceSign) {
         // copy-delete-move to avoid EXC_BAD_ACCESS (SIGKILL - CODESIGNING)
         NSString *backupPath = [NSString stringWithFormat:@"%@/%@_LiveContainerPatchBackUp", appPath, _infoPlist[@"CFBundleExecutable"]];
