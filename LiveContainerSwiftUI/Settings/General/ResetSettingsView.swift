@@ -38,6 +38,7 @@ struct ResetSettingsView: View {
                 Text("zc.settings.reset.notificationsFooter".loc)
             }
         }
+        .listStyle(.insetGrouped)
         .navigationTitle("lc.common.reset".loc)
         .navigationBarTitleDisplayMode(.inline)
         .sensoryFeedback(.success, trigger: resetCount)

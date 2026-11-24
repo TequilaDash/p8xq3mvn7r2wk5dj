@@ -50,6 +50,7 @@ struct DeveloperSettingsView: View {
                     .disabled(!DeveloperTools.isFLEXAvailable)
             }
         }
+        .listStyle(.insetGrouped)
         .navigationTitle("zc.settings.developer".loc)
         .navigationBarTitleDisplayMode(.inline)
         .alert(

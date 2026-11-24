@@ -51,13 +51,19 @@ import UIKit
 
 /// 辅助触控的偏好键。全部存在 app group，宿主与访客都能读。
 enum IManagerAssistiveTouch {
-    /// 是否启用全局悬浮键。
-    static let enabledKey = "iManagerAssistiveTouchEnabled"
+    /// 显示模式，与旧线 TDAssistiveTouchMode 同义：
+    ///   "default" = 保持现状（沿用上游 LCShowHomeButtonInApps 与每 App 开关）
+    ///   "always"  = 始终显示（任何界面都显示同一个可拖动按钮）
+    static let modeKey = "iManagerAssistiveTouchMode"
+    static let modeDefault = "default"
+    static let modeAlways = "always"
     /// 按钮中心的归一化位置（0...1，相对屏幕宽高）。
     static let positionXKey = "iManagerAssistiveTouchX"
     static let positionYKey = "iManagerAssistiveTouchY"
     /// 空闲淡化后的不透明度。
     static let idleAlphaKey = "iManagerAssistiveTouchIdleAlpha"
+    /// 是否启用空闲淡化。
+    static let idleDimKey = "iManagerAssistiveTouchIdleDim"
     /// 默认值：右下偏上，与 iOS 辅助触控的初始位置接近。
     static let defaultX = 0.88
     static let defaultY = 0.62
@@ -67,9 +73,9 @@ enum IManagerAssistiveTouch {
     /// 空闲多久开始淡化。
     static let idleDelay: TimeInterval = 3
 
-    /// 当前是否启用，供别的页面显示状态。
-    static var isEnabled: Bool {
-        LCUtils.appGroupUserDefault.bool(forKey: enabledKey)
+    /// 当前是否处于"始终显示"模式，供别的页面显示状态。
+    static var isAlwaysOn: Bool {
+        (LCUtils.appGroupUserDefault.string(forKey: modeKey) ?? modeDefault) == modeAlways
     }
 }
 
@@ -87,9 +93,13 @@ private struct IManagerAssistiveTouchButton: View {
     @Binding var position: CGPoint
     /// 空闲淡化后的不透明度。
     let idleAlpha: Double
+    /// 是否启用空闲淡化。关闭时按钮永远全不透明。
+    let idleDim: Bool
     @State private var dimmed = false
     @State private var dimGeneration = 0
     @State private var dragStart: CGPoint?
+    /// 这一次触摸是否拖动过。拖动结束不该触发单击（回主屏）。
+    @State private var wasDragged = false
 
     var body: some View {
         GeometryReader { proxy in
@@ -122,7 +132,8 @@ private struct IManagerAssistiveTouchButton: View {
                             undim()
                             doubleAction()
                         case .second(_):
-                            // 单击：回主屏（旧线 action()）。
+                            // 单击：回主屏。拖动结束也会走到这里，所以拖过就不算单击。
+                            guard !wasDragged else { return }
                             undim()
                             action()
                         }
@@ -130,13 +141,14 @@ private struct IManagerAssistiveTouchButton: View {
             )
             .background(IManagerHitRegion())
             .position(center)
-            .opacity(dimmed ? max(0.15, min(1, idleAlpha)) : 1)
+            .opacity((dimmed && idleDim) ? max(0.15, min(1, idleAlpha)) : 1)
             .animation(.easeOut(duration: 0.35), value: dimmed)
             .simultaneousGesture(
                 DragGesture(minimumDistance: 6)
                     .onChanged { value in
                         if dragStart == nil {
                             dragStart = position
+                            wasDragged = true
                             undim()
                         }
                         guard let base = dragStart else { return }
@@ -150,9 +162,15 @@ private struct IManagerAssistiveTouchButton: View {
                     .onEnded { _ in
                         dragStart = nil
                         scheduleDim()
+                        // 稍后复位，确保同一次触摸的单击判定已经跑过。
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                            wasDragged = false
+                        }
                     }
             )
             .onAppear(perform: scheduleDim)
+            .onChange(of: idleDim) { _, _ in scheduleDim() }
+            .onChange(of: idleAlpha) { _, _ in scheduleDim() }
         }
     }
 
@@ -165,6 +183,8 @@ private struct IManagerAssistiveTouchButton: View {
         dimGeneration += 1
         let generation = dimGeneration
         dimmed = false
+        // 关闭"空闲时淡化"时按钮保持全不透明，不再排淡化任务。
+        guard idleDim else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + IManagerAssistiveTouch.idleDelay) {
             guard generation == dimGeneration else { return }
             dimmed = true
@@ -262,7 +282,9 @@ final class IManagerAssistiveTouchController {
     /// 按当前设置决定显示还是隐藏悬浮窗。可重复调用。
     func attach() {
         let defaults = LCUtils.appGroupUserDefault
-        guard defaults.bool(forKey: IManagerAssistiveTouch.enabledKey) else {
+        let mode = defaults.string(forKey: IManagerAssistiveTouch.modeKey) ?? IManagerAssistiveTouch.modeDefault
+        // 只有"始终显示"才挂全局悬浮窗；"保持现状"沿用上游各处自己的按钮。
+        guard mode == IManagerAssistiveTouch.modeAlways else {
             window?.isHidden = true
             return
         }
@@ -346,6 +368,8 @@ private struct IManagerAssistiveTouchRoot: View {
     private var savedY = IManagerAssistiveTouch.defaultY
     @AppStorage(IManagerAssistiveTouch.idleAlphaKey, store: LCUtils.appGroupUserDefault)
     private var idleAlpha = IManagerAssistiveTouch.defaultIdleAlpha
+    @AppStorage(IManagerAssistiveTouch.idleDimKey, store: LCUtils.appGroupUserDefault)
+    private var idleDim = true
 
     var body: some View {
         IManagerAssistiveTouchButton(
@@ -358,7 +382,8 @@ private struct IManagerAssistiveTouchRoot: View {
                     savedY = newValue.y
                 }
             ),
-            idleAlpha: idleAlpha
+            idleAlpha: idleAlpha,
+            idleDim: idleDim
         )
         .background(Color.clear)
     }
@@ -366,12 +391,15 @@ private struct IManagerAssistiveTouchRoot: View {
 
 // MARK: - 设置界面
 
-/// 「辅助触控」设置页。
+/// 「辅助触控」设置页。照旧线 TDAssistiveTouchSettingsView 的功能做：
+/// 模式选择（保持现状 / 始终显示）、空闲淡化开关与程度、复位位置。
 struct IManagerAssistiveTouchPage: View {
-    @AppStorage(IManagerAssistiveTouch.enabledKey, store: LCUtils.appGroupUserDefault)
-    private var isEnabled = false
+    @AppStorage(IManagerAssistiveTouch.modeKey, store: LCUtils.appGroupUserDefault)
+    private var mode = IManagerAssistiveTouch.modeDefault
     @AppStorage(IManagerAssistiveTouch.idleAlphaKey, store: LCUtils.appGroupUserDefault)
     private var idleAlpha = IManagerAssistiveTouch.defaultIdleAlpha
+    @AppStorage(IManagerAssistiveTouch.idleDimKey, store: LCUtils.appGroupUserDefault)
+    private var idleDim = true
     @AppStorage(IManagerAssistiveTouch.positionXKey, store: LCUtils.appGroupUserDefault)
     private var savedX = IManagerAssistiveTouch.defaultX
     @AppStorage(IManagerAssistiveTouch.positionYKey, store: LCUtils.appGroupUserDefault)
@@ -380,29 +408,40 @@ struct IManagerAssistiveTouchPage: View {
     var body: some View {
         List {
             Section {
-                Toggle("启用辅助触控", isOn: $isEnabled)
-                    .onChange(of: isEnabled) { _, _ in
-                        IManagerAssistiveTouchController.shared.settingsChanged()
-                    }
+                previewCard
+                    .listRowInsets(EdgeInsets())
+                    .listRowBackground(Color.clear)
+            }
+
+            Section {
+                Picker("显示方式", selection: $mode) {
+                    Text("保持现状").tag(IManagerAssistiveTouch.modeDefault)
+                    Text("始终显示").tag(IManagerAssistiveTouch.modeAlways)
+                }
+                .pickerStyle(.inline)
+                .labelsHidden()
             } footer: {
-                Text("在主屏、设置和访客应用里始终显示一个可拖动的圆形按钮，单击回到 zContainer 主界面。")
+                Text("保持现状：沿用「外观 → 应用内显示主屏按键」和每个 App 自己的开关，行为与加入本页前一致。始终显示：任何界面、包括桌面都显示同一个可拖动的辅助触控按钮，单击返回 zContainer 主界面。")
                     .font(.footnote)
             }
 
-            if isEnabled {
+            if mode == IManagerAssistiveTouch.modeAlways {
                 Section {
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack {
-                            Text("空闲淡化")
-                            Spacer()
-                            Text("\(Int((idleAlpha * 100).rounded()))%")
-                                .foregroundStyle(.secondary)
-                                .monospacedDigit()
+                    Toggle("空闲时淡化", isOn: $idleDim)
+                    if idleDim {
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack {
+                                Text("淡化程度")
+                                Spacer()
+                                Text("\(Int((idleAlpha * 100).rounded()))%")
+                                    .foregroundStyle(.secondary)
+                                    .monospacedDigit()
+                            }
+                            Slider(value: $idleAlpha, in: 0.15...1.0, step: 0.05)
                         }
-                        Slider(value: $idleAlpha, in: 0.15...1.0, step: 0.05)
                     }
                 } footer: {
-                    Text("空闲 \(Int(IManagerAssistiveTouch.idleDelay)) 秒后按钮会变淡；这里是变淡后的不透明度。")
+                    Text("空闲 \(Int(IManagerAssistiveTouch.idleDelay)) 秒后按钮会变淡；这里的百分比是变淡后的不透明度。关闭后按钮始终保持全不透明。")
                         .font(.footnote)
                 }
 
@@ -417,7 +456,36 @@ struct IManagerAssistiveTouchPage: View {
                 }
             }
         }
+        .listStyle(.insetGrouped)
         .navigationTitle("辅助触控")
         .navigationBarTitleDisplayMode(.inline)
+        .onChange(of: mode) { _, _ in
+            IManagerAssistiveTouchController.shared.settingsChanged()
+        }
+    }
+
+    /// 按当前设置画一个示意按钮，让选项的效果立刻看得见。
+    private var previewCard: some View {
+        VStack(spacing: 10) {
+            ZStack {
+                Circle()
+                    .fill(.ultraThinMaterial)
+                    .overlay { Circle().fill(Color.black.opacity(0.38)) }
+                    .overlay { Circle().strokeBorder(Color.white.opacity(0.28), lineWidth: 1) }
+                    .overlay {
+                        Circle()
+                            .strokeBorder(Color.white.opacity(0.88), lineWidth: HomeDesign.homeButtonSize * 0.045)
+                            .frame(width: HomeDesign.homeButtonSize * 0.54, height: HomeDesign.homeButtonSize * 0.54)
+                    }
+                    .frame(width: HomeDesign.homeButtonSize, height: HomeDesign.homeButtonSize)
+            }
+            .frame(height: HomeDesign.homeButtonSize + 12)
+
+            Text("示意：实际按钮画在屏幕上，外观与主屏 Home 键一致")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 8)
     }
 }

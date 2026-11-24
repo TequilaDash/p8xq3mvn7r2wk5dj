@@ -107,6 +107,7 @@ struct IManagerPatchesPage: View {
                 }
             }
         }
+        .listStyle(.insetGrouped)
         .navigationTitle("补丁管理")
         .navigationBarTitleDisplayMode(.inline)
     }
@@ -156,6 +157,7 @@ private struct IManagerPatchDetailPage: View {
                     .foregroundStyle(.secondary)
             }
         }
+        .listStyle(.insetGrouped)
         .navigationTitle(patch.title)
         .navigationBarTitleDisplayMode(.inline)
     }

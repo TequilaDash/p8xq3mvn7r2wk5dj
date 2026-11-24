@@ -38,6 +38,7 @@ struct HiddenAppsSettingsView: View {
                 Text("zc.settings.apps.strictHidingFooter".loc)
             }
         }
+        .listStyle(.insetGrouped)
         .navigationTitle("lc.appList.hiddenApps".loc)
         .navigationBarTitleDisplayMode(.inline)
     }

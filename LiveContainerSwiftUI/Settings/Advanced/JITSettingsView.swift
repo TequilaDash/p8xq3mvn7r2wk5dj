@@ -52,6 +52,7 @@ struct JITSettingsView: View {
                 }
             }
         }
+        .listStyle(.insetGrouped)
         .navigationTitle("zc.settings.advanced.jit".loc)
         .navigationBarTitleDisplayMode(.inline)
     }

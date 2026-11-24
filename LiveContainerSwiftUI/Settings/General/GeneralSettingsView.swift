@@ -61,6 +61,7 @@ struct GeneralSettingsView: View {
                 }
             }
         }
+        .listStyle(.insetGrouped)
         .navigationTitle("zc.settings.general".loc)
         .navigationBarTitleDisplayMode(.inline)
     }

@@ -59,6 +59,7 @@ struct AppsSettingsView: View {
                 ContentUnavailableView.search
             }
         }
+        .listStyle(.insetGrouped)
         .navigationTitle("lc.tabView.apps".loc)
         .navigationBarTitleDisplayMode(.inline)
         .searchable(text: $searchText, prompt: "zc.settings.apps.search".loc)
