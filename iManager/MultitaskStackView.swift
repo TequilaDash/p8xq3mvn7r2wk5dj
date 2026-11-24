@@ -282,7 +282,8 @@ public class MultitaskStackManager: NSObject, ObservableObject {
         previousKeyWindow = scene.windows.first(where: \.isKeyWindow) ?? target
         hostingController = host
         hostingWindow = window
-        window.makeKeyAndVisible(){nl}        // 堆叠显示期间，把下层所有 normal 窗口的交互关掉。
+        window.makeKeyAndVisible()
+        // 堆叠显示期间，把下层所有 normal 窗口的交互关掉。
         // 否则 deck 空白处的触摸会落到下面那个仍在接收事件的访客窗口上。
         // 关闭堆叠时在 detachWindow 里恢复。
         // 只禁用 normal 层的访客窗口。辅助触控窗口层级更高，必须保持可用，
