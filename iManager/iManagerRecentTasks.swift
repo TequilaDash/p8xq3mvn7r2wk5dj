@@ -68,8 +68,8 @@ struct IManagerRecentTasksPage: View {
             if isEnabled {
                 Section {
                     HStack(alignment: .top, spacing: 16) {
-                        layoutOption(.stack, title: "纵向排布")
-                        layoutOption(.row, title: "横向排布")
+                        layoutOption(IManagerRecentTasks.layoutStack, title: "纵向排布")
+                        layoutOption(IManagerRecentTasks.layoutRow, title: "横向排布")
                     }
                     .padding(.vertical, 4)
                     .listRowInsets(EdgeInsets(top: 12, leading: 16, bottom: 12, trailing: 16))
