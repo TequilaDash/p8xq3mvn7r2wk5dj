@@ -6,6 +6,8 @@
 #include "dyld_cache_format.h"
 // iManager 源码块: dylibc 脏路径修复（strncpy 无 NUL → dyld 读到残留字节拼进路径）
 #import "../iManager/MachONameFix.h"
+// iManager 源码块: load command 扫描步长护栏（脏 cmdsize 不再乱跳）
+#import "../iManager/LoadCommandScanGuard.h"
 
 static uint32_t rnd32(uint32_t v, uint32_t r) {
     r--;
@@ -144,6 +146,14 @@ int LCPatchExecSlice(const char *path, struct mach_header_64 *header, bool doInj
     bool codeSignatureCommandFound = false;
     uint32_t loadCommandSegCount = 0;
     for(int i = 0; i < header->ncmds; i++) {
+        // iManager(LoadCommandScanGuard): 上游完全信任每条命令自报的 cmdsize。
+        // 被旧版补丁 strcpy 越界压过的邻居，cmdsize 可能是脏值，跳过去就读到
+        // 任意内存。这里先验一步，不可信就停止扫描，改走插入路径。
+        if (!iManagerLoadCommandStepIsSane(command->cmdsize,
+                                           (size_t)((uint8_t *)command - imageHeaderPtr),
+                                           header->sizeofcmds)) {
+            break;
+        }
         if(command->cmd == LC_ID_DYLIB) {
             hasDylibCommand = YES;
         } else if(command->cmd == LC_LOAD_DYLIB) {

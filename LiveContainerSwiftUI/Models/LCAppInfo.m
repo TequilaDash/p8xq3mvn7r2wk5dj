@@ -6,6 +6,8 @@
 #import "LCAppInfo.h"
 #import "LCUtils.h"
 #import "../../LiveContainer/LCSharedUtils.h"
+// iManager 源码块: 补丁版本门控（升级补丁逻辑后 +1，已装 app 才会重打补丁）
+#import "../../iManager/PatchRevision.h"
 
 
 @implementation LCAppInfo
@@ -430,7 +432,9 @@ static UIImage* LCDrawHomeScreenIcon(NSString* bundlePath, BOOL isDarkIcon) {
     NSString *execPath = [NSString stringWithFormat:@"%@/%@", appPath, _infoPlist[@"CFBundleExecutable"]];
     
     // Update patch
-    int currentPatchRev = 7;
+    // iManager(PatchRevision): 版本号在 iManager/PatchRevision.h 里，改补丁逻辑时
+    // 只加那里的数；否则已装 app 的 LCPatchRevision 已达旧值，补丁不会再执行。
+    int currentPatchRev = iManagerCurrentPatchRevision();
     bool needPatch = [info[@"LCPatchRevision"] intValue] < currentPatchRev;
     if (needPatch || forceSign) {
         // copy-delete-move to avoid EXC_BAD_ACCESS (SIGKILL - CODESIGNING)
