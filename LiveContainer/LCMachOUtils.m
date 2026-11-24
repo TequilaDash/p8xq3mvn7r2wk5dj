@@ -75,16 +75,10 @@ static void insertDylibCommand(uint32_t cmd, const char *path, struct mach_heade
     dylib->dylib.compatibility_version = 0x10000;
     dylib->dylib.current_version = 0x10000;
     dylib->dylib.timestamp = 2;
-    // iManager(MachONameFix): 新命令落在 __TEXT 头部空洞，这块内存不是零页。
-    // 原代码 strncpy(name, strlen(name)) 不写 NUL，dyld 按 C 字符串读到空洞里的
-    // 残留字节，拼出 "TweakLoader.dylibC" 这种脏依赖名。这里只清名字字段
-    // （不整条命令），再强制 NUL 结尾，范围可证明不越过本命令的 cmdsize。
-    {
-        void *iManagerNameField = (void *)dylib + dylib->dylib.name.offset;
-        size_t iManagerNameCapacity = dylib->cmdsize - dylib->dylib.name.offset;
-        iManagerZeroNameField(iManagerNameField, iManagerNameCapacity);
-        iManagerStrncpyZ(iManagerNameField, name, iManagerNameCapacity);
-    }
+    // iManager(MachONameFix): 新命令落在 __TEXT 头部空洞，内存不是零页；原
+    // strncpy(name, strlen(name)) 不写 NUL → dyld 把残留字节读进依赖名
+    // （TweakLoader.dylibC）。名字字段的清理与有界拷贝都在源码块里。
+    iManagerWriteLoadCommandName(dylib, dylib->cmdsize, dylib->dylib.name.offset, name);
     header->ncmds++;
     header->sizeofcmds += dylib->cmdsize;
 }
@@ -110,14 +104,8 @@ static void insertRPathCommand(const char *path, struct mach_header_64 *header) 
     rpath->cmd = LC_RPATH;
     rpath->cmdsize = sizeof(struct rpath_command) + rnd32((uint32_t)strlen(path) + 1, 8);
     rpath->path.offset = sizeof(struct rpath_command);
-    // iManager(MachONameFix): 同 insertDylibCommand —— rpath 也落在同一个空洞，
-    // 原 strncpy 不写 NUL，会吸残留字节。只清名字字段 + 强制 NUL。
-    {
-        void *iManagerNameField = (void *)rpath + rpath->path.offset;
-        size_t iManagerNameCapacity = rpath->cmdsize - rpath->path.offset;
-        iManagerZeroNameField(iManagerNameField, iManagerNameCapacity);
-        iManagerStrncpyZ(iManagerNameField, path, iManagerNameCapacity);
-    }
+    // iManager(MachONameFix): rpath 落在同一个空洞，原 strncpy 不写 NUL 会吸残留字节。
+    iManagerWriteLoadCommandName(rpath, rpath->cmdsize, rpath->path.offset, path);
     header->ncmds++;
     header->sizeofcmds += rpath->cmdsize;
 }
@@ -208,24 +196,16 @@ int LCPatchExecSlice(const char *path, struct mach_header_64 *header, bool doInj
         }
     }
 
-    // iManager(MachONameFix): 原代码在这里无条件 strcpy。这条既有命令可能是按
-    // 更短的 "/usr/lib/libc++.1.dylib"（21 字符，名字字段 24 字节）分配的，
-    // 改写成 43 字符的 tweakLoaderPath 会越界约 20 字节，压坏紧邻的下一条
-    // load command 头 —— dyld 读被压坏的邻居就得到 "TweakLoader.dylibC" 这类脏名。
-    // 现在：装得下才原地改写；装不下就把旧命令降级成上游已在用的无效号，
-    // 由下面的插入路径补一条空间足够的新命令。
+    // iManager(MachONameFix): 原代码在这里无条件 strcpy —— 既有命令可能按更短的
+    // "/usr/lib/libc++.1.dylib"（名字字段 24 字节）分配，改写 43 字符的 tweakLoaderPath
+    // 会越界压坏下一条 load command 头，dyld 读邻居得到 "TweakLoader.dylibC"。
+    // 判断与写入都在源码块里：装得下才原地改写，装不下降级成无效号后补插新命令。
     bool tweakLoaderCommandSettled = false;
-    if (dylibLoaderCommand) {
-        struct dylib_command *iManagerExisting = dylibLoaderCommand;
-        const char *iManagerWantedPath = doInject ? tweakLoaderPath : libCppPath;
-        if (iManagerRewriteDylibCommandName(iManagerExisting, iManagerExisting->cmdsize,
-                                            iManagerExisting->dylib.name.offset, iManagerWantedPath)) {
-            iManagerExisting->cmd = doInject ? LC_LOAD_DYLIB : 0x114514;
-            tweakLoaderCommandSettled = true;
-        } else {
-            iManagerExisting->cmd = IMANAGER_CMD_INVALID_DUP;
-            NSLog(@"[iManager] MachONameFix: existing command name field too small for %s, inserting a fresh one", iManagerWantedPath);
-        }
+    if (dylibLoaderCommand &&
+        iManagerSettleLoaderDylibCommand(dylibLoaderCommand,
+                                         doInject ? LC_LOAD_DYLIB : 0x114514,
+                                         doInject ? tweakLoaderPath : libCppPath)) {
+        tweakLoaderCommandSettled = true;
     }
     if (!tweakLoaderCommandSettled) {
         if (freeLoadCommandCountLeft >= tweakLoaderLoadDylibCmdSize) {
