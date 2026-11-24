@@ -44,7 +44,7 @@ struct IManagerSettingsPage: View {
                         icon: "hand.tap.fill",
                         color: .blue,
                         title: "辅助触控",
-                        detail: IManagerAssistiveTouch.isEnabled ? "已启用" : "未启用"
+                        detail: IManagerAssistiveTouch.isAlwaysOn ? "始终显示" : "保持现状"
                     )
                 }
             } footer: {
