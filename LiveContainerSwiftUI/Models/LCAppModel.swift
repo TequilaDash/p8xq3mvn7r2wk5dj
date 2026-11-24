@@ -402,7 +402,7 @@ class LCAppModel: ObservableObject, Hashable {
                 try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
                     // 闭包外先取出需要的值：completion 是 @Sendable，捕获 self
                     // 会被 Swift 6 拒绝（LCAppModel 非 Sendable）。
-                    let iManagerDisplayName = appInfo.displayName()
+                    let iManagerDisplayName = appInfo.displayName() ?? ""
                     let iManagerScriptData = jitLaunchScriptJs
                     let iManagerDelegate = delegate
                     LCUtils.launchMultitaskGuestApp(appInfo.displayName(), bundleId: selectedBundleId, dataUUID: currentDataFolder, nativeWindow: nativeWindow) { pidNumber, error in
