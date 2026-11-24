@@ -6,10 +6,10 @@
 //    · 补丁管理   iManagerPatches.swift       （修补类改动 + 撤销编号）
 //    · 辅助触控   iManagerAssistiveTouch.swift（全局悬浮 Home 键 + 设置）
 //
-//  【UI 统一】上游设置页的 List 是 inset grouped（SettingsPageMargins 用
-//  UITableView(style: .insetGrouped) 量边距，SwiftUI 侧靠页面自身的
-//  listStyle 对齐）。本页与二级页都必须显式 .listStyle(.insetGrouped)，
-//  否则卡片会贴到屏幕边缘、与上游页面明显不一致 —— 这个错以前犯过。
+//  【UI 统一】上游设置页**不写** listStyle：靠 List 默认样式 + 引用点的
+//  .settingsPageMargins() 得到与 Settings 一致的卡片边距。本页照做 ——
+//  显式加 .listStyle(.insetGrouped) 反而会破坏 SettingsPageMargins 的测量，
+//  卡片贴边（犯过两次，别再犯）。
 //
 //  【引入方式（极致最小化）】上游 Settings 只加这几处：
 //    1. SettingsPage 枚举加 case iManager
@@ -52,7 +52,6 @@ struct IManagerSettingsPage: View {
                     .font(.footnote)
             }
         }
-        .listStyle(.insetGrouped)
         .navigationTitle("iManager")
         .navigationBarTitleDisplayMode(.inline)
     }

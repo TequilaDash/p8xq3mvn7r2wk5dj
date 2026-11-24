@@ -35,6 +35,8 @@ struct AppRootView: View {
         // iManager: the always-on Home button (iManager/iManagerAssistiveTouch.swift).
         .onAppear {
             IManagerAssistiveTouchController.shared.onPress = { home.goHome() }
+            // Double tap goes to the multitask stack once it is ported; the hook is
+            // already in place, so only this line will change.
             IManagerAssistiveTouchController.shared.attach()
         }
         // Where the Home button goes, on the Home Screen and every screen

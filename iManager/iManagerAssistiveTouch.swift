@@ -9,15 +9,19 @@
 //  （LCShowHomeButtonInApps）只决定"应用内显示"，开了也没有全局可拖按钮，
 //  所以用户开了"没有用"。
 //
-//  【与旧线 TDAssistiveTouch 的关系：重写，不搬】
-//  旧线（Zcontainer 分支 46f4b5aa 的 AppRootView.swift）有一版实现，我逐行看过，
-//  它依赖四个 test2 不存在的东西，直接搬会编译不过或行为错乱：
-//    1. HomeButton(action:showsGlass:) —— test2 的 HomeButton 只有 action 参数
-//    2. MultitaskStackManager.shared.present() —— test2 没有这个类
-//    3. MultitaskDockManager.minimizeAllWindows() —— 只有 MultitaskDockView 上的
-//       @objc 方法，没有这个门面
-//    4. Notification.Name.lcHostHomePressed / lcCloseHostScreens —— test2 没有
-//  另外旧线那套有两个自身缺陷，本块不再重复：
+//  【与旧线 TDAssistiveTouch 的关系：按旧线行为移植，适配 test2 的 API】
+//  旧线（Zcontainer 分支 46f4b5aa 的 AppRootView.swift）里那套行为：
+//    单击回主屏、双击进多任务、拖动改位置、空闲淡化、只盖按钮区域。
+//  移植到 test2 时逐项核对过依赖，只有两处需要适配：
+//    1. 旧线 HomeButton(action:showsGlass:) —— test2 的 HomeButton 只有 action 参数，
+//       玻璃效果由 homeButtonGlass() 内部固定，不需要参数。
+//    2. 旧线 MultitaskStackManager.shared.present() —— test2 还没有堆叠后台
+//       这个类（后面要接过来）。双击**保留**，走 onDoublePress 回调，
+//       接堆叠后台时只需在引用点赋值，本文件不用改。
+//  其余依赖 test2 都有：MultitaskDockManager.shared.minimizeAllWindows(except:)、
+//  HomeDesign.homeButtonSize、HomeScreenModel.goHome()。
+//
+//  旧线两个自身缺陷，本块不重复：
 //    a. 它监听 UIWindow.didBecomeVisibleNotification 来重挂窗口，而它自己显示
 //       窗口又会发同一个通知 —— 靠 `if note.object is TDHostHomeOverlayWindow`
 //       挡递归，但窗口重建期间这个判断不成立，仍可能自我触发。
@@ -28,8 +32,9 @@
 //    · 只监听真正需要的三个通知：scene 激活、scene 断开、进后台；
 //      显示窗口时不发这些通知，天然没有递归。
 //    · 位置存**归一化比例**（0...1），换机型、转屏都不跑偏，也不需要兼容分支。
-//    · 单击 = 回主屏（注入的闭包，由引用点传 HomeScreenModel.goHome）。
-//    · 长按后拖动可改位置；空闲 3 秒淡化，点一下恢复。
+//    · 按钮用上游 HomeButton，外观与主屏上那个完全一致（不自己画圆）。
+//    · 单击 = 回主屏并最小化多任务窗口（同旧线 lcHostHomePressed 的效果）。
+//    · 拖动可改位置；空闲 3 秒淡化，点一下恢复。
 //    · 窗口 hitTest 只让按钮区域接收触摸，其余全部穿透，所以能盖在 alert 之上
 //      而不挡它。
 //
@@ -70,10 +75,14 @@ enum IManagerAssistiveTouch {
 
 // MARK: - 悬浮按钮
 
-/// 画在悬浮窗里的按钮本身。
+/// 画在悬浮窗里的按钮本身：直接用上游的 HomeButton，只外加拖动、淡化和定位。
+/// 不自己画圆——上游 HomeButton 已有正确的玻璃、双环和按压反馈，自绘会与
+/// 主屏上那个按钮长得不一样。
 private struct IManagerAssistiveTouchButton: View {
     /// 单击时执行。
     let action: () -> Void
+    /// 双击时执行（旧线是进多任务堆叠；test2 的堆叠后台接进来后在此赋值）。
+    let doubleAction: () -> Void
     /// 归一化位置，双向绑定，拖动后写回。
     @Binding var position: CGPoint
     /// 空闲淡化后的不透明度。
@@ -85,7 +94,7 @@ private struct IManagerAssistiveTouchButton: View {
 
     var body: some View {
         GeometryReader { proxy in
-            let size = IManagerAssistiveTouch.buttonSize
+            let size = HomeDesign.homeButtonSize
             // 留出半个按钮的边距，按钮永远不会被裁掉一半。
             let margin = size / 2 + 6
             let usableWidth = max(proxy.size.width - margin * 2, 1)
@@ -96,32 +105,20 @@ private struct IManagerAssistiveTouchButton: View {
                 y: margin + min(max(position.y, 0), 1) * usableHeight
             )
 
-            ZStack {
-                Circle()
-                    .fill(.ultraThinMaterial)
-                    .overlay {
-                        Circle().fill(Color.black.opacity(0.38))
-                    }
-                    .overlay {
-                        Circle().strokeBorder(Color.white.opacity(0.28), lineWidth: 1)
-                    }
-                    .overlay {
-                        Circle()
-                            .strokeBorder(Color.white.opacity(0.88), lineWidth: size * 0.045)
-                            .frame(width: size * 0.54, height: size * 0.54)
-                    }
-                    .frame(width: size, height: size)
-                    .shadow(color: .black.opacity(0.25), radius: 10, y: 3)
-                    .contentShape(.circle)
-            }
-            .frame(width: size, height: size)
+            HomeButton(action: {
+                undim()
+                action()
+            })
+            .simultaneousGesture(
+                // 双击进多任务。HomeButton 自己的单击照常触发，这里只补双击。
+                TapGesture(count: 2).onEnded {
+                    undim()
+                    doubleAction()
+                }
+            )
             .opacity(dimmed ? max(0.15, min(1, idleAlpha)) : 1)
             .animation(.easeOut(duration: 0.35), value: dimmed)
             .position(center)
-            .onTapGesture {
-                undim()
-                action()
-            }
             .highPriorityGesture(
                 DragGesture(minimumDistance: 6)
                     .onChanged { value in
@@ -142,8 +139,6 @@ private struct IManagerAssistiveTouchButton: View {
                         scheduleDim()
                     }
             )
-            .accessibilityAddTraits(.isButton)
-            .accessibilityLabel("主屏按键")
             .onAppear(perform: scheduleDim)
         }
     }
@@ -209,6 +204,9 @@ final class IManagerAssistiveTouchController {
     private var observers: [NSObjectProtocol] = []
     /// 单击按钮要做什么，由引用点设置（通常是回主屏）。
     var onPress: (() -> Void)?
+    /// 双击按钮要做什么。旧线是进多任务堆叠；test2 的堆叠后台接进来后
+    /// 在引用点赋 MultitaskStackManager.shared.present 即可，本文件不用改。
+    var onDoublePress: (() -> Void)?
 
     private init() {
         let center = NotificationCenter.default
@@ -283,7 +281,13 @@ final class IManagerAssistiveTouchController {
 
     private func rootView(window: IManagerAssistiveTouchWindow) -> some View {
         IManagerAssistiveTouchRoot(window: window, onPress: { [weak self] in
+            // 同旧线 lcHostHomePressed：先把多任务窗口收起来，再回主屏。
+            if #available(iOS 16.0, *) {
+                MultitaskDockManager.shared.minimizeAllWindows()
+            }
             self?.onPress?()
+        }, onDoublePress: { [weak self] in
+            self?.onDoublePress?()
         })
     }
 }
@@ -292,6 +296,7 @@ final class IManagerAssistiveTouchController {
 private struct IManagerAssistiveTouchRoot: View {
     let window: IManagerAssistiveTouchWindow
     let onPress: () -> Void
+    let onDoublePress: () -> Void
 
     @AppStorage(IManagerAssistiveTouch.positionXKey, store: LCUtils.appGroupUserDefault)
     private var savedX = IManagerAssistiveTouch.defaultX
@@ -303,6 +308,7 @@ private struct IManagerAssistiveTouchRoot: View {
     var body: some View {
         IManagerAssistiveTouchButton(
             action: onPress,
+            doubleAction: onDoublePress,
             position: Binding(
                 get: { CGPoint(x: savedX, y: savedY) },
                 set: { newValue in
@@ -370,7 +376,6 @@ struct IManagerAssistiveTouchPage: View {
                 }
             }
         }
-        .listStyle(.insetGrouped)
         .navigationTitle("辅助触控")
         .navigationBarTitleDisplayMode(.inline)
     }
