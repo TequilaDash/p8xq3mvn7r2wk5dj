@@ -22,10 +22,14 @@ enum IManagerRecentTasks {
     static let layoutKey = "iManagerRecentTasksLayout"
     static let layoutStack = "stack"
     static let layoutRow = "row"
-    /// 卡片上是否显示内存占用。
-    static let showMemoryKey = "iManagerRecentTasksShowMemory"
-    /// 卡片预览是否模糊（保护隐私）。
-    static let blurPreviewKey = "iManagerRecentTasksBlurPreview"
+    /// 卡片上是否显示内存占用。**沿用堆叠实际读取的键**。
+    static let showMemoryKey = "TDAppStackShowMemory"
+    /// 卡片预览是否模糊（保护隐私）。**沿用堆叠实际读取的键**。
+    static let blurPreviewKey = "TDAppStackBlur"
+    /// Dock 栏样式：clear（透明/玻璃）/ frosted（磨砂，默认）。
+    static let dockStyleKey = "TDAppStackDockStyle"
+    static let dockStyleClear = "clear"
+    static let dockStyleFrosted = "frosted"
     /// 是否启用堆叠后台。**沿用旧线的键 TDAppStackEnabled**，
     /// 因为 MultitaskStackView.swift（从旧线移植）读的就是这个键。
     static let enabledKey = "TDAppStackEnabled"
@@ -38,6 +42,9 @@ enum IManagerRecentTasks {
     }
     static var blursPreview: Bool {
         LCUtils.appGroupUserDefault.bool(forKey: blurPreviewKey)
+    }
+    static var dockStyle: String {
+        LCUtils.appGroupUserDefault.string(forKey: dockStyleKey) ?? dockStyleFrosted
     }
     static var layout: String {
         LCUtils.appGroupUserDefault.string(forKey: layoutKey) ?? layoutStack
@@ -55,6 +62,8 @@ struct IManagerRecentTasksPage: View {
     private var showsMemory = true
     @AppStorage(IManagerRecentTasks.blurPreviewKey, store: LCUtils.appGroupUserDefault)
     private var blursPreview = false
+    @AppStorage(IManagerRecentTasks.dockStyleKey, store: LCUtils.appGroupUserDefault)
+    private var dockStyle = IManagerRecentTasks.dockStyleFrosted
 
     var body: some View {
         List {
@@ -83,7 +92,21 @@ struct IManagerRecentTasksPage: View {
                 Section {
                     Toggle("显示内存信息", isOn: $showsMemory)
                 } footer: {
-                    Text("在最近任务的卡片上显示该 App 占用的内存。")
+                    Text("在最近任务右上角显示选中 App 的内存占用。")
+                        .font(.footnote)
+                }
+
+                Section {
+                    Picker("Dock 栏样式", selection: $dockStyle) {
+                        Text("透明（玻璃）").tag(IManagerRecentTasks.dockStyleClear)
+                        Text("磨砂").tag(IManagerRecentTasks.dockStyleFrosted)
+                    }
+                    .pickerStyle(.inline)
+                    .labelsHidden()
+                } header: {
+                    Text("Dock 栏样式")
+                } footer: {
+                    Text("透明：玻璃质感，能看见背后的壁纸或应用。磨砂：默认的模糊底，与系统多任务栏一致。")
                         .font(.footnote)
                 }
 

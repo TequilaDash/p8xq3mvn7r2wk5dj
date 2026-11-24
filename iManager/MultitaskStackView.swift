@@ -29,6 +29,8 @@ public class MultitaskStackManager: NSObject, ObservableObject {
     // dismissal. Retaining only host.view does not retain a hosting controller.
     private var hostingController: UIHostingController<AnyView>?
     private var hostingWindow: UIWindow?
+    /// 堆叠显示期间被禁用交互的下层窗口，关闭时恢复。
+    private var suppressedWindows: [UIWindow] = []
     private weak var previousKeyWindow: UIWindow?
     private var pendingPresentation = false
     private var selectingTargetWindow = false
@@ -280,7 +282,17 @@ public class MultitaskStackManager: NSObject, ObservableObject {
         previousKeyWindow = scene.windows.first(where: \.isKeyWindow) ?? target
         hostingController = host
         hostingWindow = window
-        window.makeKeyAndVisible()
+        window.makeKeyAndVisible(){nl}        // 堆叠显示期间，把下层所有 normal 窗口的交互关掉。
+        // 否则 deck 空白处的触摸会落到下面那个仍在接收事件的访客窗口上。
+        // 关闭堆叠时在 detachWindow 里恢复。
+        // 只禁用 normal 层的访客窗口。辅助触控窗口层级更高，必须保持可用，
+        // 否则打开最近任务后按钮就点不动了。
+        suppressedWindows = scene.windows.filter {
+            $0 !== window && $0.windowLevel == .normal && !$0.isHidden
+        }
+        for suppressed in suppressedWindows {
+            suppressed.isUserInteractionEnabled = false
+        }
         guard !window.isHidden, host.view.window === window,
               scene.activationState == .foregroundActive else {
             detachWindow()
@@ -293,6 +305,11 @@ public class MultitaskStackManager: NSObject, ObservableObject {
     }
 
     private func detachWindow(restoreKey: Bool = true) {
+        // 恢复被禁用的下层窗口交互（见 attach 里的 suppressedWindows）。
+        for suppressed in suppressedWindows {
+            suppressed.isUserInteractionEnabled = true
+        }
+        suppressedWindows.removeAll()
         let previous = previousKeyWindow
         hostingWindow?.isHidden = true
         hostingWindow?.rootViewController = nil
@@ -1192,6 +1209,18 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
     weak var manager: MultitaskStackManager?
     let pages = UIScrollView()
     private let dock = UIVisualEffectView(effect: UIBlurEffect(style: .systemThinMaterialDark))
+    /// Dock 栏样式：clear = 透明玻璃，frosted = 磨砂（默认）。键 TDAppStackDockStyle。
+    private func applyDockStyle() {
+        let style = LCUtils.appGroupUserDefault.string(forKey: "TDAppStackDockStyle") ?? "frosted"
+        if style == "clear" {
+            // 透明：去掉模糊，只留一层极淡的底与描边，能看见背后内容。
+            dock.effect = nil
+            dock.contentView.backgroundColor = UIColor.white.withAlphaComponent(0.06)
+        } else {
+            dock.effect = UIBlurEffect(style: .systemThinMaterialDark)
+            dock.contentView.backgroundColor = .clear
+        }
+    }
     private let dockScroll = UIScrollView()
     private let clearButton = UIButton(type: .system)
     private let emptyLabel = UILabel()
@@ -1247,6 +1276,7 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
         dock.clipsToBounds = true
         dock.layer.borderWidth = 0.5
         dock.layer.borderColor = UIColor.white.withAlphaComponent(0.16).cgColor
+        applyDockStyle()
         addSubview(dock)
         dockScroll.showsHorizontalScrollIndicator = false
         dockScroll.alwaysBounceHorizontal = true
@@ -1520,7 +1550,9 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
 
     private func renderMemory() {
         let unit = LCUtils.appGroupUserDefault.string(forKey: "TDMemoryUnit") == "GB" ? "GB" : "MB"
-        if memoryPID != nil, let bytes = memoryBytes, bytes > 0 {
+        // 「显示内存信息」开关：键 TDAppStackShowMemory，未写入时缺省开。
+        let showsMemory = LCUtils.appGroupUserDefault.object(forKey: "TDAppStackShowMemory") as? Bool ?? true
+        if showsMemory, memoryPID != nil, let bytes = memoryBytes, bytes > 0 {
             memoryLabel.text = TDMemoryManagerView.fmt(bytes, unit: unit)
             memoryCapsule.isHidden = false
             memoryCapsule.accessibilityLabel = "选中访客内存 " + (memoryLabel.text ?? "")

@@ -38,6 +38,18 @@ struct IManagerSettingsPage: View {
                 }
 
                 NavigationLink {
+                    TDMemoryManagerView()
+                        .settingsPageMargins()
+                } label: {
+                    IManagerRow(
+                        icon: "memorychip.fill",
+                        color: .green,
+                        title: "内存管理",
+                        detail: "查看各进程内存"
+                    )
+                }
+
+                NavigationLink {
                     IManagerRecentTasksPage()
                 } label: {
                     IManagerRow(

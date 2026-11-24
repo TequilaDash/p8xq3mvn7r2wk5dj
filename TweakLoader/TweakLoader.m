@@ -88,6 +88,23 @@ static void TweakLoaderConstructor() {
         return;
     }
     
+    // iManager(内存管理): 把本访客进程登记进 app group，供宿主内存页与
+    // 堆叠后台内存胶囊定位 PID。jailed 下 sysctl KERN_PROC_ALL 无权限，
+    // 这是唯一可行的来源（同 uid + kill(pid,0) 探活 + proc_pid_rusage）。
+    // 整块 @try 保护：登记失败绝不能让访客崩（108~111 四版就是栽在这里）。
+    @try {
+        NSUserDefaults *iManagerShared = NSUserDefaults.lcSharedDefaults;
+        NSMutableDictionary *iManagerRegistry =
+            [[iManagerShared dictionaryForKey:@"TDLiveGuestPids"] mutableCopy] ?: [NSMutableDictionary new];
+        iManagerRegistry[@(getpid())] = @{
+            @"bundleId": NSUserDefaults.lcGuestAppId ?: @"",
+            @"ts": @([[NSDate date] timeIntervalSince1970]),
+        };
+        [iManagerShared setObject:iManagerRegistry forKey:@"TDLiveGuestPids"];
+        [iManagerShared synchronize];
+    } @catch (NSException *iManagerExc) {
+        NSLog(@"[iManager] guest pid registration failed: %@ - %@", iManagerExc.name, iManagerExc.reason);
+    }
     NSMutableArray *errors = [NSMutableArray new];
     
     NSArray<NSURL *> *globalTweaks = [NSFileManager.defaultManager contentsOfDirectoryAtURL:[NSURL fileURLWithPath:globalTweakFolder]

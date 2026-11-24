@@ -46,6 +46,21 @@ struct AppRootView: View {
         // Zeus's pink, for switches too, as Zeus tints its own, in place of
         // iOS's green.
         .tint(AppAccent.color)
+        // iManager: 堆叠后台长按菜单的两个动作。堆叠在自己的窗口里发通知，
+        // 真正需要 SwiftUI 环境的操作（打开应用设置、分屏）在这里执行。
+        .onReceive(NotificationCenter.default.publisher(for: .lcStackShowAppSettings)) { note in
+            guard let uuid = note.userInfo?["uuid"] as? String,
+                  let app = home.apps.values.first(where: { ($0.appInfo.dataUUID as String?) == uuid }) else { return }
+            home.showSettings(for: app)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .lcStackSplitApp)) { note in
+            guard let uuid = note.userInfo?["uuid"] as? String,
+                  let app = home.apps.values.first(where: { ($0.appInfo.dataUUID as String?) == uuid }) else { return }
+            home.showHomeScreen()
+            if home.canOpenInSplitScreen(app) {
+                home.openInSplitScreen(app)
+            }
+        }
     }
 
     /// Closes what's open over the Home Screen, like Settings, when
