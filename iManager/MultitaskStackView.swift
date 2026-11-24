@@ -288,9 +288,12 @@ public class MultitaskStackManager: NSObject, ObservableObject {
         // 关闭堆叠时在 detachWindow 里恢复。
         // 只禁用 normal 层的访客窗口。辅助触控窗口层级更高，必须保持可用，
         // 否则打开最近任务后按钮就点不动了。
-        suppressedWindows = scene.windows.filter {
-            $0 !== window && $0.windowLevel == .normal && !$0.isHidden
-        }
+        // 访客可能跑在自己的 UIWindowScene 里，只在宿主 scene 里禁用窗口不够，
+        // 那些窗口仍会收到触摸（空白处一点就误操作访客 App）。这里遍历全部 scene。
+        suppressedWindows = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap(\.windows)
+            .filter { $0 !== window && $0.windowLevel == .normal && !$0.isHidden }
         for suppressed in suppressedWindows {
             suppressed.isUserInteractionEnabled = false
         }
@@ -460,6 +463,21 @@ public class MultitaskStackManager: NSObject, ObservableObject {
         // A retained termination card is still a recent task, not evidence of
         // resident memory. Preserve its restart target and last-use order.
         let controllers = appControllers().filter { $0.pid > 0 }
+        // 宿主自己也知道这些访客的 pid，直接写进同一张登记表。
+        // 这样即使访客侧 TweakLoader 没注入或登记失败，内存页与胶囊也能定位进程。
+        if !controllers.isEmpty {
+            let defaults = LCUtils.appGroupUserDefault
+            var registry = (defaults.dictionary(forKey: "TDLiveGuestPids") as? [String: [String: Any]]) ?? [:]
+            let now = Date().timeIntervalSince1970
+            for controller in controllers where controller.pid > 0 {
+                registry[String(controller.pid)] = [
+                    "bundleId": controller.bundleId ?? "",
+                    "ts": now,
+                ]
+            }
+            defaults.set(registry, forKey: "TDLiveGuestPids")
+            defaults.synchronize()
+        }
         let byUUID = Dictionary(uniqueKeysWithValues: controllers.compactMap { controller -> (String, AppSceneViewController)? in
             guard let uuid = controller.dataUUID else { return nil }
             return (uuid, controller)
@@ -1019,6 +1037,8 @@ private final class StackDeckCard: UIView, UIContextMenuInteractionDelegate {
     let launch: AppSceneViewController?
     weak var owner: StackDeckViewport?
     let preview = UIView()
+    /// 模糊预览：盖在快照之上、图标之下。只在对应 App 的开关打开时显示。
+    let blurView = UIVisualEffectView(effect: UIBlurEffect(style: .regular))
     let icon = UIImageView()
     let centerIcon = UIImageView()
     let unavailableLabel = UILabel()
@@ -1058,6 +1078,9 @@ private final class StackDeckCard: UIView, UIContextMenuInteractionDelegate {
         centerIcon.clipsToBounds = true
         centerIcon.tintColor = .white
         addSubview(preview)
+        blurView.isUserInteractionEnabled = false
+        blurView.isHidden = true
+        preview.addSubview(blurView)
         addSubview(icon)
         addSubview(name)
         preview.addSubview(centerIcon)
@@ -1115,6 +1138,9 @@ private final class StackDeckCard: UIView, UIContextMenuInteractionDelegate {
         // icon is the last screen when a normal task snapshot was unavailable.
         centerIcon.isHidden = !isPiP
         unavailableLabel.isHidden = snapshot != nil || isPiP
+        // 模糊预览：只模糊画面内容，图标与名称保持清晰（参考系统多任务）。
+        let blurMap = (LCUtils.appGroupUserDefault.dictionary(forKey: "iManagerRecentTasksBlurPerApp") as? [String: Bool]) ?? [:]
+        blurView.isHidden = !(blurMap[uuid] ?? false) || snapshot == nil
         preview.backgroundColor = snapshot == nil ? UIColor(white: 0.16, alpha: 1) : .black
         preview.layer.borderWidth = snapshot == nil ? 0.5 : 0
         preview.layer.borderColor = UIColor.white.withAlphaComponent(0.20).cgColor
@@ -1143,6 +1169,10 @@ private final class StackDeckCard: UIView, UIContextMenuInteractionDelegate {
                                                  y: preview.bounds.height / sourceSize.height)
             snapshot.center = CGPoint(x: preview.bounds.midX, y: preview.bounds.midY)
         }
+        blurView.frame = preview.bounds
+        preview.bringSubviewToFront(blurView)
+        preview.bringSubviewToFront(centerIcon)
+        preview.bringSubviewToFront(unavailableLabel)
         let side: CGFloat = isPiP ? 54 : min(94, max(44, min(preview.bounds.width, preview.bounds.height) * 0.30))
         centerIcon.frame = CGRect(x: (preview.bounds.width - side) / 2, y: (preview.bounds.height - side) / 2, width: side, height: side)
         centerIcon.layer.cornerRadius = side * 0.225
@@ -1645,18 +1675,44 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
         let cardBottom = dock.isHidden ? height - safe.bottom - 16 : dockTop - 28
         let availableHeight = max(35, cardBottom - safe.top)
         emptyLabel.frame = CGRect(x: 0, y: safe.top, width: width, height: availableHeight)
-        stride = StackDeckMath.layout(width: width, height: height, safeTop: safe.top, safeBottom: safe.bottom,
-                                      hasDock: !dock.isHidden, count: cards.count, source: .zero).stride
-        pages.frame = bounds
-        pages.contentSize = CGSize(width: width + stride * CGFloat(max(0, cards.count - 1)), height: height)
-        for card in cards {
-            let geometry = StackDeckMath.layout(width: width, height: height, safeTop: safe.top, safeBottom: safe.bottom,
-                                                hasDock: !dock.isHidden, count: cards.count, source: card.sourceSize)
-            card.transform = .identity
-            card.bounds = CGRect(x: 0, y: 0, width: geometry.width, height: geometry.height + 34)
-            card.center = CGPoint(x: geometry.centerX + CGFloat(card.index) * stride, y: geometry.centerY)
-            card.updateExpandedFrame()
-            card.setNeedsLayout(); card.layoutIfNeeded()
+        if isColumnLayout {
+            // 纵向排布：两列网格，页面纵向滚动。
+            let side: CGFloat = 14
+            let gap: CGFloat = 12
+            let cardWidth = (width - side * 2 - gap) / 2
+            let cardHeight = min(cardWidth * 1.45, availableHeight * 0.92)
+            let rowPitch = cardHeight + gap
+            let rows = max(1, (cards.count + 1) / 2)
+            let contentHeight = max(height, CGFloat(rows) * rowPitch + safe.top + 12 + 40)
+            stride = width
+            pages.frame = bounds
+            pages.contentSize = CGSize(width: width, height: contentHeight)
+            for card in cards {
+                let column = card.index % 2
+                let row = card.index / 2
+                card.transform = .identity
+                card.bounds = CGRect(x: 0, y: 0, width: cardWidth, height: cardHeight + 34)
+                card.center = CGPoint(
+                    x: side + cardWidth / 2 + CGFloat(column) * (cardWidth + gap),
+                    y: safe.top + 12 + CGFloat(row) * rowPitch + (cardHeight + 34) / 2
+                )
+                card.updateExpandedFrame()
+                card.setNeedsLayout(); card.layoutIfNeeded()
+            }
+        } else {
+            stride = StackDeckMath.layout(width: width, height: height, safeTop: safe.top, safeBottom: safe.bottom,
+                                          hasDock: !dock.isHidden, count: cards.count, source: .zero).stride
+            pages.frame = bounds
+            pages.contentSize = CGSize(width: width + stride * CGFloat(max(0, cards.count - 1)), height: height)
+            for card in cards {
+                let geometry = StackDeckMath.layout(width: width, height: height, safeTop: safe.top, safeBottom: safe.bottom,
+                                                    hasDock: !dock.isHidden, count: cards.count, source: card.sourceSize)
+                card.transform = .identity
+                card.bounds = CGRect(x: 0, y: 0, width: geometry.width, height: geometry.height + 34)
+                card.center = CGPoint(x: geometry.centerX + CGFloat(card.index) * stride, y: geometry.centerY)
+                card.updateExpandedFrame()
+                card.setNeedsLayout(); card.layoutIfNeeded()
+            }
         }
         pages.contentOffset = CGPoint(x: CGFloat(selected) * stride, y: 0)
         updateDeck()
@@ -1666,7 +1722,22 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
         }
     }
 
+    /// 「纵向排布」：两列网格，卡片不再左右滑动。设置键 iManagerRecentTasksLayout。
+    private var isColumnLayout: Bool {
+        (LCUtils.appGroupUserDefault.string(forKey: "iManagerRecentTasksLayout") ?? "stack") == "column"
+    }
+
     private func updateDeck() {
+        if isColumnLayout {
+            // 网格模式不做形变，卡片按行排好即可。
+            for card in cards {
+                card.transform = .identity
+                card.resting = .identity
+                card.layer.zPosition = CGFloat(2 + card.index)
+                card.alpha = 1
+            }
+            return
+        }
         guard !transitioning, stride > 0 else { return }
         let page = pages.contentOffset.x / stride
         // Reference :654-669. Index order, not distance-to-selection order.
@@ -1705,7 +1776,7 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
     }
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
         guard scrollView === pages, !layingOut, !transitioning else { return }
-        if !cards.isEmpty {
+        if !cards.isEmpty, !isColumnLayout {
             let next = min(cards.count - 1, max(0, Int((pages.contentOffset.x / stride).rounded())))
             if selected != next { selected = next; publishFocus(); updateMemoryTarget() }
         }

@@ -155,6 +155,8 @@ struct TDMemoryManagerView: View {
         // 再逐个 proc_pid_rusage 取 physical footprint（同 uid 进程内核允许）。
         var out = Snapshot()
         let defaults = LCUtils.appGroupUserDefault
+        // 访客是另一个进程写这张表，先同步一次再读，否则拿到的是旧缓存。
+        defaults.synchronize()
         let registry = (defaults.dictionary(forKey: "TDLiveGuestPids") as? [String: [String: Any]]) ?? [:]
         var host = ProcEntry(pid: Int32(getpid()), name: "zContainer（宿主）", rssBytes: 0)
         var info = rusage_info_v2()

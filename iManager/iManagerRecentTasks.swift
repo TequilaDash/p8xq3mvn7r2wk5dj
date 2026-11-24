@@ -221,11 +221,22 @@ private struct LayoutPreview: View {
 struct IManagerBlurPreviewPage: View {
     @EnvironmentObject private var sharedModel: SharedModel
     @State private var map: [String: Bool] = [:]
+    /// 搜索框内容：按 App 名字过滤。
+    @State private var query = ""
+
+    /// 过滤后的 App 列表。
+    private var filteredApps: [LCAppModel] {
+        let text = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return sharedModel.apps }
+        return sharedModel.apps.filter {
+            ($0.appInfo.displayName()).localizedStandardContains(text)
+        }
+    }
 
     var body: some View {
         List {
             Section {
-                ForEach(sharedModel.apps, id: \.self) { app in
+                ForEach(filteredApps, id: \.self) { app in
                     if let uuid = app.appInfo.dataUUID as String? {
                         Toggle(app.appInfo.displayName(), isOn: Binding(
                             get: { map[uuid] ?? false },
@@ -242,6 +253,7 @@ struct IManagerBlurPreviewPage: View {
             }
         }
         .listStyle(.insetGrouped)
+        .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "搜索应用")
         .navigationTitle("模糊预览图")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
