@@ -27,7 +27,20 @@ jobs:
           fi
           xcodebuild -version
       - name: Archive
-        run: xcodebuild archive -archivePath "$archive_path" -scheme "$scheme" -project LiveContainer.xcodeproj -sdk iphoneos -arch arm64 -configuration Release CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO | xcpretty && exit ${PIPESTATUS[0]}
+        # 不再用 xcpretty：它会把 error: 行吞掉，导致失败时日志里看不到原因。
+        # 原始输出保留完整错误，且不影响构建本身。
+        run: |
+          set -o pipefail
+          xcodebuild archive -archivePath "$archive_path" -scheme "$scheme" \
+            -project LiveContainer.xcodeproj -sdk iphoneos -arch arm64 \
+            -configuration Release CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
+            2>&1 | tee build.log
+          status=${PIPESTATUS[0]}
+          if [ $status -ne 0 ]; then
+            echo "=== build errors ==="
+            grep -nE "error:|错误:" build.log | head -40
+          fi
+          exit $status
       - name: Create IPA (unsigned, upstream packaging)
         run: sh .github/build_github.sh
       - name: Upload IPA artifact
