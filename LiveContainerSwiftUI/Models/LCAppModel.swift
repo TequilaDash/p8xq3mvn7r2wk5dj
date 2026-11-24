@@ -333,7 +333,7 @@ class LCAppModel: ObservableObject, Hashable {
                     URLQueryItem(name: "url", value: Data(urlStr.utf8).base64EncodedString())
                 ]
             }
-            if await UIApplication.shared.canOpenURL(openURLComp.url!) {
+            if UIApplication.shared.canOpenURL(openURLComp.url!) {
                 await UIApplication.shared.open(openURLComp.url!)
                 return
             }
