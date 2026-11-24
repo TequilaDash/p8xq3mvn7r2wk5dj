@@ -3,7 +3,6 @@ name: Build zcontainer-test2
 on:
   workflow_dispatch:
   push:
-    branches: ['zcontainer-test2']
     tags: ['v2*']
 
 permissions:
