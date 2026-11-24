@@ -311,7 +311,6 @@ private struct IManagerAssistiveTouchRoot: View {
         IManagerAssistiveTouchButton(
             action: onPress,
             doubleAction: onDoublePress,
-            window: window,
             position: Binding(
                 get: { CGPoint(x: savedX, y: savedY) },
                 set: { newValue in
@@ -319,7 +318,8 @@ private struct IManagerAssistiveTouchRoot: View {
                     savedY = newValue.y
                 }
             ),
-            idleAlpha: idleAlpha
+            idleAlpha: idleAlpha,
+            window: window
         )
         .background(Color.clear)
     }
