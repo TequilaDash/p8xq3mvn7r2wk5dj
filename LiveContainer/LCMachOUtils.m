@@ -5,7 +5,7 @@
 #import "LCUtils.h"
 #include "dyld_cache_format.h"
 // iManager 源码块: dylibc 脏路径修复（strncpy 无 NUL → dyld 读到残留字节拼进路径）
-#import "../iManager/MachONameFix/MachONameFix.h"
+#import "../iManager/MachONameFix.h"
 
 static uint32_t rnd32(uint32_t v, uint32_t r) {
     r--;
