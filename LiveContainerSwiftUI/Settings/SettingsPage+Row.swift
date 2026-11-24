@@ -49,7 +49,8 @@ extension SettingsPage {
             // Developer's, where the Settings app keeps its own advanced settings.
             ("hammer.fill", .gray, "com.apple.graphic-icon.developer-tools")
         case .iManager:
-            ("wrench.and.screwdriver.fill", .orange, "com.apple.graphic-icon.developer-tools")
+            // iManager draws its own mark (iManager/iManagerSettingsRow.swift).
+            nil
         }
     }
 }

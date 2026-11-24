@@ -32,6 +32,11 @@ struct AppRootView: View {
             }
         }
         .onChange(of: onboarding.isPresented, onboardingChanged)
+        // iManager: the always-on Home button (iManager/iManagerAssistiveTouch.swift).
+        .onAppear {
+            IManagerAssistiveTouchController.shared.onPress = { home.goHome() }
+            IManagerAssistiveTouchController.shared.attach()
+        }
         // Where the Home button goes, on the Home Screen and every screen
         // over it: beside an iPad's Home button, as the iPad is turned.
         .environment(\.homeButtonEdge, HomeButtonEdge(sceneDelegate.interfaceOrientation))

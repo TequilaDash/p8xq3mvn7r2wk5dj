@@ -4,17 +4,19 @@
 //
 //  iManager 在 zContainer 设置里的**唯一入口**，下面是它的二级界面：
 //    · 补丁管理   iManagerPatches.swift       （修补类改动 + 撤销编号）
-//    · 辅助触控   iManagerAssistiveTouch.swift（上游 Home 键的设置界面）
+//    · 辅助触控   iManagerAssistiveTouch.swift（全局悬浮 Home 键 + 设置）
 //
-//  【引入方式（极致最小化）】上游 Settings 只加两处：
-//    1. SettingsPage 枚举加一个 case iManager
+//  【UI 统一】上游设置页的 List 是 inset grouped（SettingsPageMargins 用
+//  UITableView(style: .insetGrouped) 量边距，SwiftUI 侧靠页面自身的
+//  listStyle 对齐）。本页与二级页都必须显式 .listStyle(.insetGrouped)，
+//  否则卡片会贴到屏幕边缘、与上游页面明显不一致 —— 这个错以前犯过。
+//
+//  【引入方式（极致最小化）】上游 Settings 只加这几处：
+//    1. SettingsPage 枚举加 case iManager
 //    2. SettingsRootSections 加一行 SettingsPageLink(page: .iManager)
-//    3. SettingsPageView 的 switch 加一个 case → IManagerSettingsPage()
-//  以及 SettingsPage+Row 的 title / rowIcon 各一个 case。
-//  其余全部在本文件与两个二级界面文件里。
-//
-//  【纪律】iManager 只放「我们自己的代码」。上游文件永远只有
-//  import + 少量调用点，方便跟随上游同步。
+//    3. SettingsPageView 的 switch 加 case → IManagerSettingsPage()
+//    4. SettingsPage+Row 的 title 给个名字（图标由本块自绘，见 iManagerSettingsRow.swift）
+//    5. SettingsSearch 的 pages 列表加 .iManager，settings(on:) 加空分支
 //
 
 import SwiftUI
@@ -28,10 +30,10 @@ struct IManagerSettingsPage: View {
                     IManagerPatchesPage()
                 } label: {
                     IManagerRow(
-                        icon: "bandage",
+                        icon: "bandage.fill",
                         color: .orange,
                         title: "补丁管理",
-                        detail: "\(IManagerPatchRegistry.all.filter { !$0.isRetired }.count) 项修补"
+                        detail: "\(IManagerPatchRegistry.active.count) 项修补"
                     )
                 }
 
@@ -39,10 +41,10 @@ struct IManagerSettingsPage: View {
                     IManagerAssistiveTouchPage()
                 } label: {
                     IManagerRow(
-                        icon: "hand.tap",
+                        icon: "hand.tap.fill",
                         color: .blue,
                         title: "辅助触控",
-                        detail: "主屏按键的显示与大小"
+                        detail: IManagerAssistiveTouch.isEnabled ? "已启用" : "未启用"
                     )
                 }
             } footer: {
@@ -50,6 +52,7 @@ struct IManagerSettingsPage: View {
                     .font(.footnote)
             }
         }
+        .listStyle(.insetGrouped)
         .navigationTitle("iManager")
         .navigationBarTitleDisplayMode(.inline)
     }
@@ -63,21 +66,16 @@ private struct IManagerRow: View {
     let detail: String
 
     var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: icon)
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(.white)
-                .frame(width: 28, height: 28)
-                .background(color, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
-
-            Text(title)
-
-            Spacer(minLength: 8)
-
+        LabeledContent {
             Text(detail)
                 .font(.footnote)
                 .foregroundStyle(.secondary)
+        } label: {
+            Label {
+                Text(title)
+            } icon: {
+                SettingsIcon(systemImage: icon, color: color)
+            }
         }
-        .padding(.vertical, 2)
     }
 }

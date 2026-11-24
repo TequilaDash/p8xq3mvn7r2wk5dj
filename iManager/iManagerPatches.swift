@@ -43,6 +43,9 @@ struct IManagerPatch: Identifiable {
 
 /// iManager 目前合入的全部修补。**新增修补只在这里加一条**，界面自动列出。
 enum IManagerPatchRegistry {
+    /// 仍在生效的修补。
+    static var active: [IManagerPatch] { all.filter { !$0.isRetired } }
+
     static let all: [IManagerPatch] = [
         IManagerPatch(
             id: "ZC-PATCH-001",
@@ -76,7 +79,7 @@ enum IManagerPatchRegistry {
 
 /// 「补丁管理」页面：列出 iManager 合入的修补，点进去看它改了哪些文件。
 struct IManagerPatchesPage: View {
-    private var active: [IManagerPatch] { IManagerPatchRegistry.all.filter { !$0.isRetired } }
+    private var active: [IManagerPatch] { IManagerPatchRegistry.active }
     private var retired: [IManagerPatch] { IManagerPatchRegistry.all.filter { $0.isRetired } }
 
     var body: some View {
@@ -104,6 +107,7 @@ struct IManagerPatchesPage: View {
                 }
             }
         }
+        .listStyle(.insetGrouped)
         .navigationTitle("补丁管理")
         .navigationBarTitleDisplayMode(.inline)
     }
@@ -153,6 +157,7 @@ private struct IManagerPatchDetailPage: View {
                     .foregroundStyle(.secondary)
             }
         }
+        .listStyle(.insetGrouped)
         .navigationTitle(patch.title)
         .navigationBarTitleDisplayMode(.inline)
     }
