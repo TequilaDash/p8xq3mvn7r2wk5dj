@@ -108,17 +108,31 @@ private struct IManagerAssistiveTouchButton: View {
                 undim()
                 action()
             })
-            .simultaneousGesture(
-                // 双击进多任务。HomeButton 自己的单击照常触发，这里只补双击。
-                TapGesture(count: 2).onEnded {
-                    undim()
-                    doubleAction()
-                }
+            // 与旧线完全一致的修饰符顺序（顺序错了界面就点不动）：
+            //   手势 → background 占位视图 → position → opacity → 拖动手势
+            // 手势和 background 必须在 position 之前，否则作用在撑满父容器的
+            // 视图上；拖动放最后但必须是 simultaneousGesture，不能抢占触摸。
+            .highPriorityGesture(
+                TapGesture(count: 2)
+                    .exclusively(before: TapGesture(count: 1))
+                    .onEnded { tap in
+                        switch tap {
+                        case .first(_):
+                            // 双击：进多任务堆叠（旧线 MultitaskStackManager.present）。
+                            undim()
+                            doubleAction()
+                        case .second(_):
+                            // 单击：回主屏（旧线 action()）。
+                            undim()
+                            action()
+                        }
+                    }
             )
+            .background(IManagerHitRegion())
+            .position(center)
             .opacity(dimmed ? max(0.15, min(1, idleAlpha)) : 1)
             .animation(.easeOut(duration: 0.35), value: dimmed)
-            .position(center)
-            .highPriorityGesture(
+            .simultaneousGesture(
                 DragGesture(minimumDistance: 6)
                     .onChanged { value in
                         if dragStart == nil {
@@ -139,9 +153,6 @@ private struct IManagerAssistiveTouchButton: View {
                     }
             )
             .onAppear(perform: scheduleDim)
-            // 命中区域用旧线的做法：一个不接收触摸的 UIView 占位，按钮布局到哪
-            // 它就跟着到哪，由 UIKit 的布局系统驱动，不手算坐标。
-            .background(IManagerHitRegion())
         }
     }
 
