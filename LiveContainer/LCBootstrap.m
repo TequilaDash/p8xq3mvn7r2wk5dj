@@ -19,6 +19,21 @@
 #import "Tweaks/Tweaks.h"
 #include <mach-o/ldsyms.h>
 
+
+// iManager(MultitaskStack): 宿主 Documents 路径，供堆叠后台读访客快照/日志用。
+// 与旧线同实现：构造期抓 HOME（那时还没有访客改过它），拼 /Documents。
+static char tdHostDocumentsBuf[PATH_MAX];
+__attribute__((constructor)) static void tdCaptureHostHome(void) {
+    const char *h = getenv("HOME");
+    if (h && h[0] == '/') {
+        strlcpy(tdHostDocumentsBuf, h, sizeof(tdHostDocumentsBuf));
+        strlcat(tdHostDocumentsBuf, "/Documents", sizeof(tdHostDocumentsBuf));
+    }
+}
+const char *TDHostHomeDocumentsPath(void) {
+    if (tdHostDocumentsBuf[0] == 0) tdCaptureHostHome();
+    return tdHostDocumentsBuf[0] ? tdHostDocumentsBuf : NULL;
+}
 extern char **environ;
 static int (*appMain)(int, char**, char**);
 NSUserDefaults *lcUserDefaults;

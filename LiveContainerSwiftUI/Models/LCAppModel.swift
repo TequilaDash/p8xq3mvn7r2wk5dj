@@ -229,9 +229,24 @@ class LCAppModel: ObservableObject, Hashable {
     
     // You should let LCAppModel.runApp to decide whether to run in multitask mode, but you may override the multitask parameter if necessary.
     // `willLaunch` runs just before zContainer turns into the app the classic way, after signing, so the Home Screen can zoom into it.
-    func runApp(multitask: Bool? = nil, containerFolderName : String? = nil, bundleIdOverride : String? = nil, urlStr : String? = nil, forceJIT: Bool? = nil, willLaunch: (@MainActor () async -> Void)? = nil) async throws{
+    @MainActor
+    func runApp(multitask: Bool? = nil, containerFolderName : String? = nil, bundleIdOverride : String? = nil, urlStr : String? = nil, forceJIT: Bool? = nil, multitaskWindowMode: MultitaskMode? = nil, willLaunch: (@MainActor () async -> Void)? = nil) async throws{
         if isAppRunning {
+            if multitaskWindowMode != nil { throw "应用正在启动，请稍后再重新启动" }
             return
+        }
+        // Reserve before the first suspension so a restart cannot overlap
+        // another launch of this app or lose its selected container.
+        isAppRunning = true
+        defer { isAppRunning = false }
+        if multitaskWindowMode != nil {
+            guard multitask != false, appInfo.defaultClassicMode == 0 else {
+                throw "此应用当前不能在多任务窗口中启动"
+            }
+            guard let containerFolderName,
+                  uiContainers.contains(where: { $0.folderName == containerFolderName }) else {
+                throw "原来的应用容器已不存在，未重新启动"
+            }
         }
         
         await MainActor.run {
@@ -254,16 +269,27 @@ class LCAppModel: ObservableObject, Hashable {
         let currentDataFolder = containerFolderName ?? uiSelectedContainer?.folderName
         
         let classicMode = appInfo.defaultClassicMode
-        let multitask = classicMode == 0 ? (multitask ?? shouldLaunchInMultitaskMode) : false
+        let multitask = classicMode == 0 && (multitaskWindowMode != nil || (multitask ?? shouldLaunchInMultitaskMode))
+        let nativeWindow: Bool
+        if let multitaskWindowMode {
+            nativeWindow = multitaskWindowMode == .nativeWindow
+        } else if #available(iOS 16.1, *) {
+            nativeWindow = UIApplication.shared.supportsMultipleScenes && LCUtils.appGroupUserDefault.integer(forKey: "LCMultitaskMode") == MultitaskMode.nativeWindow.rawValue
+        } else {
+            nativeWindow = false
+        }
 
         // MultitaskManager is changed only on the main thread, so read it there
         let isMultitasking = await MainActor.run { MultitaskManager.isMultitasking() }
         if isMultitasking || multitask,
            let currentDataFolder {
-            if await bringExistingMultitaskWindowIfNeeded(dataUUID: currentDataFolder, urlScheme: urlStr) {
+            if multitaskWindowMode != nil {
+                guard !MultitaskManager.isUsing(container: currentDataFolder) else {
+                    throw "该容器已在其他窗口运行，未重复启动"
+                }
+            } else if await bringExistingMultitaskWindowIfNeeded(dataUUID: currentDataFolder, urlScheme: urlStr) {
                 return
             }
-            
         }
 
         if await MainActor.run(body: { delegate?.isInstalling ?? false }) {
@@ -277,9 +303,12 @@ class LCAppModel: ObservableObject, Hashable {
         
         // if the selected container is in use (either other lc or multitask), open the host lc associated with it
         if
-            let fn = uiSelectedContainer?.folderName,
+            let fn = currentDataFolder,
             var runningLC = LCSharedUtils.getContainerUsingLCScheme(withFolderName: fn)
         {
+            if multitaskWindowMode != nil {
+                throw "该容器仍由其他进程使用，未重新启动"
+            }
             runningLC = (runningLC as NSString).deletingPathExtension
             
             var openURLComp = URLComponents()
@@ -343,25 +372,23 @@ class LCAppModel: ObservableObject, Hashable {
             }
         }
         
-        await MainActor.run {
-            isAppRunning = true
-        }
-        defer {
-            Task { await MainActor.run {
-                isAppRunning = false
-            }}
-        }
         try await signApp(force: false)
         
-        if let bundleIdOverride {
-            UserDefaults.standard.set(bundleIdOverride, forKey: "selected")
-        } else {
-            UserDefaults.standard.set(self.appInfo.relativeBundlePath, forKey: "selected")
+        guard let selectedBundleId = bundleIdOverride ?? (appInfo.relativeBundlePath as String?),
+              let currentDataFolder else {
+            throw "应用或容器标识缺失，无法启动"
+        }
+        if multitaskWindowMode != nil {
+            guard appInfo.defaultClassicMode == 0,
+                  appInfo.relativeBundlePath == selectedBundleId,
+                  uiContainers.contains(where: { $0.folderName == currentDataFolder }),
+                  !MultitaskManager.isUsing(container: currentDataFolder) else {
+                throw "应用或容器状态已更改，未重新启动"
+            }
         }
         if let urlStr {
             UserDefaults.standard.setValue(urlStr, forKey: "launchAppUrlScheme")
         }
-        UserDefaults.standard.set(uiSelectedContainer?.folderName, forKey: "selectedContainer")
         
         var jitNeeded = appInfo.isJITNeeded || appInfo.is32bit
         if let forceJIT {
@@ -373,7 +400,7 @@ class LCAppModel: ObservableObject, Hashable {
         if jitNeeded {
             if multitask, #available(iOS 17.4, *) {
                 try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-                    LCUtils.launchMultitaskGuestApp(appInfo.displayName()) { pidNumber, error in
+                    LCUtils.launchMultitaskGuestApp(appInfo.displayName(), bundleId: selectedBundleId, dataUUID: currentDataFolder, nativeWindow: nativeWindow) { pidNumber, error in
                         if let error {
                             continuation.resume(throwing: error)
                             return
@@ -393,6 +420,11 @@ class LCAppModel: ObservableObject, Hashable {
                     }
                 }
             } else {
+                if multitaskWindowMode != nil {
+                    throw "此系统版本不支持在多任务窗口中启动需要 JIT 的应用"
+                }
+                UserDefaults.standard.set(selectedBundleId, forKey: "selected")
+                UserDefaults.standard.set(currentDataFolder, forKey: "selectedContainer")
                 // Non-multitask JIT flow remains unchanged
                 if let scriptData = jitLaunchScriptJs, !scriptData.isEmpty {
                     await delegate?.jitLaunch(withScript: scriptData, appName: self.appInfo.displayName(), classicMode: classicMode)
@@ -401,8 +433,10 @@ class LCAppModel: ObservableObject, Hashable {
                 }
             }
         } else if multitask, #available(iOS 16.0, *) {
-            try await LCUtils.launchMultitaskGuestApp(appInfo.displayName())
+            try await LCUtils.launchMultitaskGuestApp(appInfo.displayName(), bundleId: selectedBundleId, dataUUID: currentDataFolder, nativeWindow: nativeWindow)
         } else {
+            UserDefaults.standard.set(selectedBundleId, forKey: "selected")
+            UserDefaults.standard.set(currentDataFolder, forKey: "selectedContainer")
             if #available(iOS 26.0, *), FileManager.default.fileExists(atPath: "\(appInfo.bundlePath()!)/Frameworks/MetalANGLE.framework/MetalANGLE") {
                 let fileContents = "\(appInfo.bundlePath()!)/Frameworks/MetalANGLE.framework/MetalANGLE".data(using: .utf8)
                 let fileURL = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask)[0].appendingPathComponent("preloadLibraries.txt")
@@ -415,7 +449,6 @@ class LCAppModel: ObservableObject, Hashable {
         await MainActor.run {
             // Record the launch time
             appInfo.lastLaunched = Date()
-            isAppRunning = false
         }
     }
     
