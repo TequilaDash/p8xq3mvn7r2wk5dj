@@ -409,7 +409,7 @@ class LCAppModel: ObservableObject, Hashable {
                             continuation.resume(throwing: "Failed to obtain PID from LiveProcess")
                             return
                         }
-                        Task {
+                        Task { @MainActor in
                             if let scriptData = self.jitLaunchScriptJs, !scriptData.isEmpty {
                                 await self.delegate?.jitLaunch(withPID: pidNumber.intValue, withScript: scriptData, appName: self.appInfo.displayName())
                             } else {
