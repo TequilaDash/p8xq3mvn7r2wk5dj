@@ -400,6 +400,11 @@ class LCAppModel: ObservableObject, Hashable {
         if jitNeeded {
             if multitask, #available(iOS 17.4, *) {
                 try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                    // 闭包外先取出需要的值：completion 是 @Sendable，捕获 self
+                    // 会被 Swift 6 拒绝（LCAppModel 非 Sendable）。
+                    let iManagerDisplayName = appInfo.displayName()
+                    let iManagerScriptData = jitLaunchScriptJs
+                    let iManagerDelegate = delegate
                     LCUtils.launchMultitaskGuestApp(appInfo.displayName(), bundleId: selectedBundleId, dataUUID: currentDataFolder, nativeWindow: nativeWindow) { pidNumber, error in
                         if let error {
                             continuation.resume(throwing: error)
@@ -410,10 +415,10 @@ class LCAppModel: ObservableObject, Hashable {
                             return
                         }
                         Task { @MainActor in
-                            if let scriptData = self.jitLaunchScriptJs, !scriptData.isEmpty {
-                                await self.delegate?.jitLaunch(withPID: pidNumber.intValue, withScript: scriptData, appName: self.appInfo.displayName())
+                            if let scriptData = iManagerScriptData, !scriptData.isEmpty {
+                                await iManagerDelegate?.jitLaunch(withPID: pidNumber.intValue, withScript: scriptData, appName: iManagerDisplayName)
                             } else {
-                                await self.delegate?.jitLaunch(withPID: pidNumber.intValue, withScript: nil, appName: self.appInfo.displayName())
+                                await iManagerDelegate?.jitLaunch(withPID: pidNumber.intValue, withScript: nil, appName: iManagerDisplayName)
                             }
                             continuation.resume()
                         }
