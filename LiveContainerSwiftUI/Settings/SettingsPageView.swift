@@ -31,6 +31,10 @@ struct SettingsPageView: View {
         case .advanced:
             AdvancedSettingsView()
                 .settingsPageMargins()
+        case .iManager:
+            // iManager: our own code lives in iManager/ (iManagerSettingsPage.swift).
+            IManagerSettingsPage()
+                .settingsPageMargins()
         case .app(let key):
             // Apps, should the app have gone since search found it.
             if let app = sharedModel.apps.first(where: { $0.homeKey == key }) {

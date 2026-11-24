@@ -36,7 +36,7 @@ enum SettingsSearch {
     /// Everything search can find.
     @MainActor
     private static func items(apps: [LCAppModel]) -> [SettingsSearchItem] {
-        let pages: [SettingsPage] = [.zeus, .general, .appearance, .wallpaper, .apps, .advanced]
+        let pages: [SettingsPage] = [.zeus, .general, .appearance, .wallpaper, .apps, .advanced, .iManager]
         var items = pages.map { page in
             SettingsSearchItem(id: "page.\(page.title)", title: page.title, location: nil, page: page)
         }
@@ -103,6 +103,9 @@ enum SettingsSearch {
                 "lc.settings.jitlessDiagnose",
                 "zc.settings.developer",
             ]
+        case .iManager:
+            // iManager pages are searched by their own titles below.
+            []
         case .app:
             []
         }

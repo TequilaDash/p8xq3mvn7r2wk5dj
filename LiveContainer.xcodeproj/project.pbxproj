@@ -300,6 +300,7 @@
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		172CA8992D9D72C300CF6989 /* Resources */ = {isa = PBXFileSystemSynchronizedRootGroup; exceptions = (172CA8BD2D9D74B700CF6989 /* PBXFileSystemSynchronizedBuildFileExceptionSet */, 172CA8C32D9D76AD00CF6989 /* PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet */, ); explicitFileTypes = {}; explicitFolders = (); path = Resources; sourceTree = "<group>"; };
+		1MANAGER0SYNCGRP0000001 /* iManager */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = iManager; sourceTree = "<group>"; };
 		17413FB62D9C0BAE00F3F928 /* LiveContainerSwiftUI */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = LiveContainerSwiftUI; sourceTree = "<group>"; };
 		174140162D9C0C1B00F3F928 /* TweakLoader */ = {isa = PBXFileSystemSynchronizedRootGroup; exceptions = (174140F52D9C1C9B00F3F928 /* PBXFileSystemSynchronizedBuildFileExceptionSet */, ); explicitFileTypes = {}; explicitFolders = (); path = TweakLoader; sourceTree = "<group>"; };
 		174140552D9C0D6D00F3F928 /* ZSign */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = ZSign; sourceTree = "<group>"; };
@@ -433,6 +434,7 @@
 				172CA8652D9D723200CF6989 /* entitlements.xml */,
 				172CA85F2D9D721700CF6989 /* LiveContainer */,
 				17413FB62D9C0BAE00F3F928 /* LiveContainerSwiftUI */,
+				1MANAGER0SYNCGRP0000001 /* iManager */,
 				174140162D9C0C1B00F3F928 /* TweakLoader */,
 				174140552D9C0D6D00F3F928 /* ZSign */,
 				174140AE2D9C0F4100F3F928 /* TestJITLess */,
@@ -518,6 +520,7 @@
 			);
 			fileSystemSynchronizedGroups = (
 				17413FB62D9C0BAE00F3F928 /* LiveContainerSwiftUI */,
+				1MANAGER0SYNCGRP0000001 /* iManager */,
 			);
 			name = LiveContainerSwiftUI;
 			packageProductDependencies = (

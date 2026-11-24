@@ -64,5 +64,13 @@ struct SettingsRootSections: View {
                 SettingsRow(page: .advanced)
             }
         }
+
+        Section {
+            // iManager: everything we added to upstream zContainer lives under
+            // iManager/ (iManagerSettingsPage.swift). One row, nothing else here.
+            SettingsPageLink(page: .iManager) {
+                SettingsRow(page: .iManager)
+            }
+        }
     }
 }

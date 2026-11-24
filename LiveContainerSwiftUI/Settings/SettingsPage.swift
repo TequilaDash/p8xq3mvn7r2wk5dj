@@ -25,6 +25,8 @@ enum SettingsPage: Hashable {
     case apps
     /// Settings > Advanced.
     case advanced
+    /// Settings > iManager: our own repairs and additions (iManager/iManagerSettingsPage.swift).
+    case iManager
     /// An app's settings, by its Home Screen key, which search opens straight
     /// from the app's name, as the Settings app's search does.
     case app(String)
