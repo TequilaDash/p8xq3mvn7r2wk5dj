@@ -123,22 +123,44 @@ static void TweakLoaderConstructor() {
     NSSetUncaughtExceptionHandler(LCGuestUncaughtExceptionHandler);
 
     // 会话登记: 访客进程把 pid/bundleId/时间戳写进 app group, 供宿主内存管理页
-    // 与堆叠后台内存胶囊定位进程 (jailed 下 sysctl KERN_PROC_ALL 不可枚举,
-    // 但同 uid 进程 proc_pid_rusage/kill(pid,0) 可用; 宿主用 kill 探活过滤死项).
-    // 1.1.111: 整块 @try/@catch——登记本身绝不能成为崩源，任何异常落日志后继续。
-    @try {
-        NSUserDefaults *shared = NSUserDefaults.lcSharedDefaults;
-        NSMutableDictionary *reg = [[shared dictionaryForKey:@"TDLiveGuestPids"] mutableCopy] ?: [NSMutableDictionary new];
-        reg[@(getpid())] = @{
-            @"bundleId": NSUserDefaults.lcGuestAppId ?: @"",
-            @"ts": @([[NSDate date] timeIntervalSince1970]),
-        };
-        [shared setObject:reg forKey:@"TDLiveGuestPids"];
-        [shared synchronize];
-    } @catch (NSException *exc) {
-        NSLog(@"[LC] TDLiveGuestPids registration failed: %@ - %@", exc.name, exc.reason);
-    }
-
+    // 与堆叠后台内存胶囊定位进程。1.1.112 实锤：这块就是 108/109/110/111 四版
+    // 访客全崩的崩源（@try 包住后访客立即不崩）。异常被吞导致登记失效、
+    // 内存页与胶囊拿不到访客 PID——本版把异常原文落盘到 ConsoleLog，
+    // 并把登记延后到主队列首个 runloop（constructor 阶段 UIKit/容器状态
+    // 未就绪是最大嫌疑），两项都做：登记更可能成功，失败也留证据。
+    dispatch_async(dispatch_get_main_queue(), ^{
+        @try {
+            NSUserDefaults *shared = NSUserDefaults.lcSharedDefaults;
+            NSMutableDictionary *reg = [[shared dictionaryForKey:@"TDLiveGuestPids"] mutableCopy] ?: [NSMutableDictionary new];
+            reg[@(getpid())] = @{
+                @"bundleId": NSUserDefaults.lcGuestAppId ?: @"",
+                @"ts": @([[NSDate date] timeIntervalSince1970]),
+            };
+            [shared setObject:reg forKey:@"TDLiveGuestPids"];
+            [shared synchronize];
+            NSLog(@"[LC] TDLiveGuestPids registered pid=%d bundle=%@", getpid(), NSUserDefaults.lcGuestAppId ?: @"(nil)");
+        } @catch (NSException *exc) {
+            NSString *text = [NSString stringWithFormat:@"[LC-EXCEPTION] register-pid name=%@ reason=%@ stack=%@",
+                              exc.name ?: @"(nil)", exc.reason ?: @"(nil)",
+                              [exc.callStackSymbols componentsJoinedByString:@" | "]];
+            NSLog(@"%@", text);
+            TDLConsoleLogFn logFn = (TDLConsoleLogFn)dlsym(RTLD_DEFAULT, "TDConsoleLog");
+            if (logFn) logFn(@"%@", text);
+            const char *dir = getenv("TD_CONSOLE_LOG_DIR");
+            NSString *directory = (dir && dir[0] == '/') ? [NSString stringWithUTF8String:dir] : nil;
+            if (!directory) {
+                const char *home = getenv("LC_HOME_PATH");
+                if (home && home[0] == '/') directory = [NSString stringWithFormat:@"%s/Documents/ConsoleLog", home];
+            }
+            if (directory) {
+                [[NSFileManager defaultManager] createDirectoryAtPath:directory withIntermediateDirectories:YES attributes:nil error:nil];
+                NSString *path = [directory stringByAppendingPathComponent:[NSString stringWithFormat:@"exception-%d.log", getpid()]];
+                NSData *data = [text dataUsingEncoding:NSUTF8StringEncoding];
+                int fd = open(path.fileSystemRepresentation, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0600);
+                if (fd >= 0) { write(fd, data.bytes, data.length); close(fd); }
+            }
+        }
+    });
     if([NSUserDefaults.guestAppInfo[@"dontInjectTweakLoader"] boolValue]) {
         // don't load any tweak since tweakloader is loaded after all initializers
         NSLog(@"Skip loading tweaks");

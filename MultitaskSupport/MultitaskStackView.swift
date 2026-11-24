@@ -269,7 +269,11 @@ public class MultitaskStackManager: NSObject, ObservableObject {
         let host = UIHostingController(rootView: AnyView(MultitaskStackView().environmentObject(self)))
         host.view.backgroundColor = .clear
         let window = UIWindow(windowScene: scene)
-        window.frame = target.frame
+        // 1.1.113: 全屏盖住。此前 frame=target.frame（上一个前台访客窗口的区域），
+        // deck 覆盖不到的屏幕空白处触摸会直接落到底下的访客窗口——用户实测
+        // “从堆叠后台空闲处点击能操作多任务 app 界面”。窗口盖满屏后，viewport
+        // 的 hitTest 对空白返回 self 消费，卡片/dock 之外的任何触摸都不再漏。
+        window.frame = scene.coordinateSpace.bounds
         window.backgroundColor = .clear
         window.windowLevel = UIWindow.Level(rawValue: UIWindow.Level.alert.rawValue + 1)
         window.rootViewController = host
@@ -301,8 +305,21 @@ public class MultitaskStackManager: NSObject, ObservableObject {
         previews.removeAll()
         displayedControllers.removeAll()
         focus(index: 0)
-        if restoreKey, let previous, !previous.isHidden, previous.windowScene?.activationState == .foregroundActive {
-            previous.makeKey()
+        if restoreKey {
+            // 1.1.113: previous 已验证可用才 makeKey；不可用（已隐藏/scene 不在前台/
+            // 窗口被释放）时退化到 scene 里第一个可见 normal 窗口。此前直接 makeKey，
+            // 系统找不到合法 key 窗口时走回主屏再重新进入——用户实测“从堆叠后台回
+            // app 会二次进入”。
+            let fallback = previous?.windowScene?.windows.first { !$0.isHidden && $0.windowLevel == .normal && $0.rootViewController != nil }
+                ?? UIApplication.shared.connectedScenes
+                    .compactMap { $0 as? UIWindowScene }
+                    .filter { $0.activationState == .foregroundActive }
+                    .flatMap(\.windows)
+                    .first { !$0.isHidden && $0.windowLevel == .normal && $0.rootViewController != nil }
+            let restoreTarget: UIWindow? = previous.flatMap { win in
+                (!win.isHidden && win.windowScene?.activationState == .foregroundActive) ? win : nil
+            } ?? fallback
+            restoreTarget?.makeKey()
         }
     }
 
