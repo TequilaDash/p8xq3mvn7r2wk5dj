@@ -438,12 +438,17 @@ static UIImage* LCDrawHomeScreenIcon(NSString* bundlePath, BOOL isDarkIcon) {
     // 就是旧版补丁写坏的，必须重打一次。正常 app 一次都不多打。
     int currentPatchRev = 7;
     __block bool needPatch = [info[@"LCPatchRevision"] intValue] < currentPatchRev;
+    __block BOOL iManagerSawDirty = NO;
     if (!needPatch && [fm fileExistsAtPath:execPath]) {
         LCParseMachO(execPath.UTF8String, true, ^(const char *path, struct mach_header_64 *header, int fd, void* filePtr) {
             if (header->cputype == CPU_TYPE_ARM64 && iManagerHasDirtyLoadCommandName(header)) {
                 needPatch = true;
+                iManagerSawDirty = YES;
             }
         });
+    }
+    if (iManagerSawDirty) {
+        NSLog(@"[iManager] DirtyLoadCommandRepatch: %@ has a corrupted load-command name, repatching", execPath.lastPathComponent);
     }
     if (needPatch || forceSign) {
         // copy-delete-move to avoid EXC_BAD_ACCESS (SIGKILL - CODESIGNING)

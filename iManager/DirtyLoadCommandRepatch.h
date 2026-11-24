@@ -5,28 +5,35 @@
 //  【问题】修好的打补丁逻辑不生效：装上新版后访客仍报
 //  "@loader_path/../../Tweaks/TweakLoader.dylibC (no such file)"。
 //
-//  【根因】上游 LiveContainerSwiftUI/Models/LCAppInfo.m 用版本号门控是否重打补丁：
+//  【第一层根因】上游 LiveContainerSwiftUI/Models/LCAppInfo.m 用版本号门控：
 //
 //      int currentPatchRev = 7;
 //      bool needPatch = [info[@"LCPatchRevision"] intValue] < currentPatchRev;
 //
-//  已经在上一个版本里被打过补丁的 app，LCPatchRevision 就是 7，装了新版后
-//  needPatch 为 false —— 补丁代码根本不执行，二进制里那条脏 load command
-//  原封不动留在原处。修复代码写得再对也不会生效。
+//  已装 app 的号已达 7 → 补丁不执行。本块按事实判断绕过门控。
 //
-//  【本块】不改上游的版本号（那个数字属于上游节奏），改为**按事实判断**：
-//  启动时直接读访客二进制，检查有没有"名字比字段容量还长/没有 NUL 结尾"的
-//  dylib 命令。有就说明这个 app 的补丁是旧版写坏的，需要重打一次。
+//  【第二层根因 —— 判据必须精确，否则等于没判】
+//  脏名的形态是"路径后面还粘着一个字符"，例如
+//      "@loader_path/../../Tweaks/TweakLoader.dylib" + "C"
+//  而命令的 cmdsize 是按 rnd32(strlen+1, 8) 对齐的：
+//      sizeof(dylib_command)=24，strlen("…TweakLoader.dylib")=43
+//      cmdsize = 24 + rnd32(44, 8) = 24 + 48 = 72
+//      名字字段容量 = 72 - 24 = 48 字节
+//  即容量比字符串多 5 字节。旧 strncpy 只写 43 字节、不写 NUL，第 44 字节是
+//  空洞里的残留（就是那个 "C"），而第 45~48 字节很可能本来就是 0。
 //
-//  判据（任一成立即视为脏）：
-//    · 名字字段在容量内找不到 '\0'（旧 strncpy 不写 NUL 的典型形态）；
-//    · 名字以已知的脏尾巴形态出现（如 "...TweakLoader.dylib" 后面还跟着字符）。
+//  所以"字段里找不到 NUL 就算脏"是**错的判据** —— 第 45 字节的 0 会让
+//  memchr 成功返回，脏名被判成干净，补丁永远不重打。
 //
-//  这样既不碰上游的 LCPatchRevision 语义，也只对真正被写坏的 app 重打，
-//  正常 app 一次都不多打。
+//  【正确判据】把名字当 C 字符串读出来，看 ".dylib" 之后还有没有字符：
+//      "@loader_path/../../Tweaks/TweakLoader.dylib"    → 干净
+//      "@loader_path/../../Tweaks/TweakLoader.dylibC"   → 脏（.dylib 后面有 C）
+//  另外两种同样判脏：
+//      · 整个字段里找不到 NUL（dyld 一定会读越界）；
+//      · 名字以 ".dylib" 结尾但不是已知的注入路径（被越界写坏成别的形态）。
 //
 //  【引用点】LiveContainerSwiftUI/Models/LCAppInfo.m
-//      bool needPatch = (LCPatchRevision 门控) || iManagerHasDirtyLoadCommandName(header);
+//      needPatch = (LCPatchRevision 门控) || iManagerHasDirtyLoadCommandName(header)
 //
 
 #ifndef IMANAGER_DIRTY_LOAD_COMMAND_REPATCH_H
@@ -38,30 +45,51 @@
 #include <mach-o/loader.h>
 #include "LoadCommandScanGuard.h"
 
-// 判断一条 dylib/rpath 命令的名字字段是否是"旧版补丁写坏的"形态。
-//   cmd/cmdsize/nameOffset 来自命令自身；返回 1 = 脏。
+// 判断一个名字字段是否是"旧版补丁写坏的"形态。
+//   cmd/cmdsize/nameOffset : 命令自身信息
+// 返回 1 = 脏。
 static inline int iManagerLoadCommandNameIsDirty(void *cmd, uint32_t cmdsize, uint32_t nameOffset) {
     if (!cmd || cmdsize <= nameOffset) return 0;
     size_t capacity = (size_t)cmdsize - (size_t)nameOffset;
     const char *field = (const char *)cmd + nameOffset;
-    // 容量内没有 NUL：dyld 一定会读到字段外，这就是脏名。
-    if (memchr(field, '\0', capacity) == NULL) return 1;
+
+    // 容量内没有 NUL：dyld 一定会读到字段外，无条件判脏。
+    const char *nul = (const char *)memchr(field, '\0', capacity);
+    if (nul == NULL) return 1;
+
+    size_t length = (size_t)(nul - field);
+    if (length == 0) return 0;                       // 空名字，不是我们的形态
+
+    // 名字里出现 ".dylib"，但 ".dylib" 后面还有字符 → 尾巴被粘上了脏字节。
+    // 这是真机现象 "@loader_path/../../Tweaks/TweakLoader.dylibC" 的形态。
+    static const char suffix[] = ".dylib";
+    const size_t suffixLength = sizeof(suffix) - 1;
+    if (length > suffixLength) {
+        // 找到最后一个 ".dylib" 出现位置（名字里通常只有一处）
+        const char *lastSuffix = NULL;
+        for (size_t i = 0; i + suffixLength <= length; i++) {
+            if (memcmp(field + i, suffix, suffixLength) == 0) lastSuffix = field + i;
+        }
+        if (lastSuffix != NULL) {
+            size_t afterSuffix = (size_t)((field + length) - (lastSuffix + suffixLength));
+            if (afterSuffix != 0) return 1;          // ".dylib" 后面还有东西 → 脏
+        }
+    }
+
     return 0;
 }
 
 // 扫描整个 load command 区，判断这份二进制是否带着旧版补丁写坏的脏名字。
-//   header 指向 mach_header_64，命令区紧随其后。
 // 返回 1 = 有脏名，需要重打补丁；0 = 干净。
 static inline int iManagerHasDirtyLoadCommandName(struct mach_header_64 *header) {
     if (!header) return 0;
     uint8_t *base = (uint8_t *)header + sizeof(struct mach_header_64);
     size_t offset = 0;
     for (uint32_t i = 0; i < header->ncmds; i++) {
-        if (!iManagerLoadCommandStepIsSane(((struct load_command *)(base + offset))->cmdsize,
-                                           offset, header->sizeofcmds)) {
+        struct load_command *lc = (struct load_command *)(base + offset);
+        if (!iManagerLoadCommandStepIsSane(lc->cmdsize, offset, header->sizeofcmds)) {
             return 0;   // 步长不可信：交给扫描护栏处理，这里不判脏
         }
-        struct load_command *lc = (struct load_command *)(base + offset);
         if (lc->cmd == LC_LOAD_DYLIB || lc->cmd == LC_LOAD_WEAK_DYLIB ||
             lc->cmd == LC_REEXPORT_DYLIB || lc->cmd == LC_LOAD_UPWARD_DYLIB) {
             struct dylib_command *dc = (struct dylib_command *)lc;
