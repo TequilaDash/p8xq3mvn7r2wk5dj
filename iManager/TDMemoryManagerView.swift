@@ -68,7 +68,7 @@ struct TDMemoryManagerView: View {
                     Text("GB").tag("GB")
                 }
                 .pickerStyle(.segmented)
-                .onChange(of: unit) { _ in LCUtils.appGroupUserDefault.synchronize() }
+                .onChange(of: unit) { _, _ in LCUtils.appGroupUserDefault.synchronize() }
             } footer: {
                 Text("单位同时用于堆叠后台右上角的内存胶囊。")
             }
