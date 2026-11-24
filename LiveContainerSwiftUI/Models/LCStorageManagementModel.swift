@@ -270,8 +270,15 @@ final class LCStorageManagementModel: ObservableObject {
             return 0
         }
 
+        // DirectoryEnumerator 的 makeIterator 在 async 上下文不可用（Swift 6），
+        // 先把它同步收集成数组，再在 async 循环里遍历。
+        var fileURLs: [URL] = []
+        while let next = enumerator.nextObject() as? URL {
+            fileURLs.append(next)
+        }
+
         var totalSize: Int64 = 0
-        for case let fileURL as URL in enumerator {
+        for fileURL in fileURLs {
             try Task.checkCancellation()
 
             let resourceValues = try fileURL.resourceValues(forKeys: resourceKeys)
