@@ -4,6 +4,8 @@
 #import "../litehook/src/litehook.h"
 #import "LCUtils.h"
 #include "dyld_cache_format.h"
+// iManager 源码块: dylibc 脏路径修复（strncpy 无 NUL → dyld 读到残留字节拼进路径）
+#import "../iManager/MachONameFix/iManagerMachONameFix.h"
 
 static uint32_t rnd32(uint32_t v, uint32_t r) {
     r--;
@@ -73,7 +75,9 @@ static void insertDylibCommand(uint32_t cmd, const char *path, struct mach_heade
     dylib->dylib.compatibility_version = 0x10000;
     dylib->dylib.current_version = 0x10000;
     dylib->dylib.timestamp = 2;
-    strncpy((void *)dylib + dylib->dylib.name.offset, name, strlen(name));
+    // iManager(MachONameFix): 原 strncpy(name, strlen(name)) 不写 NUL，dyld 读
+    // load command 字符串到第一个 \0，把残留字节读进路径（TweakLoader.dylibC）。
+    iManagerStrncpyZ((void *)dylib + dylib->dylib.name.offset, name, dylib->cmdsize - dylib->dylib.name.offset);
     header->ncmds++;
     header->sizeofcmds += dylib->cmdsize;
 }
@@ -99,7 +103,8 @@ static void insertRPathCommand(const char *path, struct mach_header_64 *header) 
     rpath->cmd = LC_RPATH;
     rpath->cmdsize = sizeof(struct rpath_command) + rnd32((uint32_t)strlen(path) + 1, 8);
     rpath->path.offset = sizeof(struct rpath_command);
-    strncpy((void *)rpath + rpath->path.offset, path, strlen(path));
+    // iManager(MachONameFix): 同 :78，rpath 路径同样要 NUL 结尾。
+    iManagerStrncpyZ((void *)rpath + rpath->path.offset, path, rpath->cmdsize - rpath->path.offset);
     header->ncmds++;
     header->sizeofcmds += rpath->cmdsize;
 }
