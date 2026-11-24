@@ -173,7 +173,6 @@ private final class IManagerAssistiveTouchWindow: UIWindow {
     var buttonRegion: CGRect = .zero
 
     override var canBecomeKey: Bool { false }
-    override var canBecomeVisibleWithoutUserInteraction: Bool { true }
 
     /// 这个透明窗口不能影响状态栏的几何与样式。
     @objc(_canAffectStatusBarAppearance)
