@@ -4,7 +4,39 @@
 #include <limits.h>
 #include <stdlib.h>
 #include <objc/runtime.h>
+#include <fcntl.h>
+#include <unistd.h>
 #import "../LiveContainer/utils.h"
+
+// 1.1.111 取证：访客主程序 initializer 抛未捕获 NSException 时，abort_report_np 之前
+// 没有我们的栈帧可看。这里装全局异常 handler，把 name + reason + callStackSymbols
+// 落到 NSLog、TDConsoleLog（dlsym，TweakLoader 不链接 Shared）和磁盘文件，
+// 下一次崩溃日志里直接出现异常原文，不再需要二分发版猜根因。
+static void LCGuestUncaughtExceptionHandler(NSException *exception) {
+    NSString *name = exception.name ?: @"(nil)";
+    NSString *reason = exception.reason ?: @"(nil)";
+    NSArray *symbols = exception.callStackSymbols ?: @[];
+    NSString *stack = [symbols componentsJoinedByString:@" | "];
+    NSString *text = [NSString stringWithFormat:@"[LC-EXCEPTION] name=%@ reason=%@ stack=%@", name, reason, stack];
+    NSLog(@"%@", text);
+    TDConsoleLogFn logFn = (TDConsoleLogFn)dlsym(RTLD_DEFAULT, "TDConsoleLog");
+    if (logFn) logFn(@"%@", text);
+    const char *dir = getenv("TD_CONSOLE_LOG_DIR");
+    NSString *directory = (dir && dir[0] == '/') ? [NSString stringWithUTF8String:dir] : nil;
+    if (!directory) {
+        const char *home = getenv("LC_HOME_PATH");
+        if (home && home[0] == '/') {
+            directory = [NSString stringWithFormat:@"%s/Documents/ConsoleLog", home];
+        }
+    }
+    if (directory) {
+        [[NSFileManager defaultManager] createDirectoryAtPath:directory withIntermediateDirectories:YES attributes:nil error:nil];
+        NSString *path = [directory stringByAppendingPathComponent:[NSString stringWithFormat:@"exception-%d.log", getpid()]];
+        NSData *data = [text dataUsingEncoding:NSUTF8StringEncoding];
+        int fd = open(path.fileSystemRepresentation, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0600);
+        if (fd >= 0) { write(fd, data.bytes, data.length); close(fd); }
+    }
+}
 
 static NSString *loadTweakAtURL(NSURL *url) {
     NSString *tweakPath = url.path;
@@ -83,11 +115,17 @@ static void TweakLoaderConstructor() {
     const char *tweakFolderC = getenv("LC_GLOBAL_TWEAKS_FOLDER");
     NSString *globalTweakFolder = @(tweakFolderC);
     unsetenv("LC_GLOBAL_TWEAKS_FOLDER");
-    
+
+    // 1.1.111 取证：尽早注册全局异常 handler。访客主程序 initializer 抛的
+    // NSException 走 uncaught-exception 路径到 abort_report_np，栈里没有我方
+    // 帧，装在这里才能在崩溃前拿到 name + reason + 调用栈。
+    NSSetUncaughtExceptionHandler(LCGuestUncaughtExceptionHandler);
+
     // 会话登记: 访客进程把 pid/bundleId/时间戳写进 app group, 供宿主内存管理页
     // 与堆叠后台内存胶囊定位进程 (jailed 下 sysctl KERN_PROC_ALL 不可枚举,
     // 但同 uid 进程 proc_pid_rusage/kill(pid,0) 可用; 宿主用 kill 探活过滤死项).
-    {
+    // 1.1.111: 整块 @try/@catch——登记本身绝不能成为崩源，任何异常落日志后继续。
+    @try {
         NSUserDefaults *shared = NSUserDefaults.lcSharedDefaults;
         NSMutableDictionary *reg = [[shared dictionaryForKey:@"TDLiveGuestPids"] mutableCopy] ?: [NSMutableDictionary new];
         reg[@(getpid())] = @{
@@ -96,6 +134,8 @@ static void TweakLoaderConstructor() {
         };
         [shared setObject:reg forKey:@"TDLiveGuestPids"];
         [shared synchronize];
+    } @catch (NSException *exc) {
+        NSLog(@"[LC] TDLiveGuestPids registration failed: %@ - %@", exc.name, exc.reason);
     }
 
     if([NSUserDefaults.guestAppInfo[@"dontInjectTweakLoader"] boolValue]) {
