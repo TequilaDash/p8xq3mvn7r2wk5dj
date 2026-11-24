@@ -87,6 +87,8 @@ private struct IManagerAssistiveTouchButton: View {
     @Binding var position: CGPoint
     /// 空闲淡化后的不透明度。
     let idleAlpha: Double
+    /// 悬浮窗，用于回写按钮的命中矩形。
+    let window: IManagerAssistiveTouchWindow?
 
     @State private var dimmed = false
     @State private var dimGeneration = 0
@@ -140,6 +142,14 @@ private struct IManagerAssistiveTouchButton: View {
                     }
             )
             .onAppear(perform: scheduleDim)
+            // 只上报按钮自己的矩形。挂在 GeometryReader 外层会上报整屏，
+            // 窗口就会吃掉全屏触摸、挡住下面所有界面。
+            .onGeometryChange(for: CGRect.self) { proxy in
+                proxy.frame(in: .global)
+            } action: { rect in
+                // 略微放大，手指没那么准也能点到。
+                window?.buttonRegion = rect.insetBy(dx: -8, dy: -8)
+            }
         }
     }
 
@@ -176,20 +186,6 @@ private final class IManagerAssistiveTouchWindow: UIWindow {
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
         guard buttonRegion.contains(point) else { return nil }
         return super.hitTest(point, with: event)
-    }
-}
-
-/// 把按钮的实时矩形回写给窗口，用于 hitTest。
-private struct IManagerButtonRegionReporter: ViewModifier {
-    let window: IManagerAssistiveTouchWindow?
-
-    func body(content: Content) -> some View {
-        content.onGeometryChange(for: CGRect.self) { proxy in
-            proxy.frame(in: .global)
-        } action: { rect in
-            // 命中区域略微放大，手指没那么准也能点到。
-            window?.buttonRegion = rect.insetBy(dx: -8, dy: -8)
-        }
     }
 }
 
@@ -259,7 +255,13 @@ final class IManagerAssistiveTouchController {
         overlay.frame = scene.coordinateSpace.bounds
         overlay.windowLevel = overlayLevel(in: scene)
         overlay.backgroundColor = .clear
-        overlay.rootViewController = UIHostingController(rootView: AnyView(rootView(window: overlay)))
+        // UIHostingController 的 view 默认是不透明白底；只清 window 的
+        // backgroundColor 不够，必须连 host.view 一起清，否则整个屏幕被
+        // 一块白板盖住，只露出按钮。
+        let host = UIHostingController(rootView: AnyView(rootView(window: overlay)))
+        host.view.backgroundColor = .clear
+        host.view.isOpaque = false
+        overlay.rootViewController = host
         // 先持有再显示：窗口可见性回调可能是同步的。
         window = overlay
         overlay.isHidden = false
@@ -309,6 +311,7 @@ private struct IManagerAssistiveTouchRoot: View {
         IManagerAssistiveTouchButton(
             action: onPress,
             doubleAction: onDoublePress,
+            window: window,
             position: Binding(
                 get: { CGPoint(x: savedX, y: savedY) },
                 set: { newValue in
@@ -319,7 +322,6 @@ private struct IManagerAssistiveTouchRoot: View {
             idleAlpha: idleAlpha
         )
         .background(Color.clear)
-        .modifier(IManagerButtonRegionReporter(window: window))
     }
 }
 
