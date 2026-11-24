@@ -1,0 +1,406 @@
+﻿2026-11-24T07:21:20.4540530Z Current runner version: '2.338.2'
+2026-11-24T07:21:20.4554860Z ##[group]Runner Image Provisioner
+2026-11-24T07:21:20.4555380Z Hosted Compute Agent
+2026-11-24T07:21:20.4555740Z Version: 20261111.635
+2026-11-24T07:21:20.4556140Z Commit: b8a594ea514ff44cadb5342986c68b1eac6e22ed
+2026-11-24T07:21:20.4556600Z Build Date: 2026-11-11T01:49:01Z
+2026-11-24T07:21:20.4557040Z Worker ID: {c593cc5b-d04f-43d3-88dc-04d3fe40191c}
+2026-11-24T07:21:20.4557480Z Region: westus
+2026-11-24T07:21:20.4557820Z Cloud: MacCloud
+2026-11-24T07:21:20.4558170Z ##[endgroup]
+2026-11-24T07:21:20.4559010Z ##[group]Operating System
+2026-11-24T07:21:20.4559380Z macOS
+2026-11-24T07:21:20.4559700Z 26.7.2
+2026-11-24T07:21:20.4560020Z 25G332
+2026-11-24T07:21:20.4560340Z ##[endgroup]
+2026-11-24T07:21:20.4560680Z ##[group]Runner Image
+2026-11-24T07:21:20.4561050Z Image: macos-26-arm64
+2026-11-24T07:21:20.4561420Z Version: 20261117.0516.1
+2026-11-24T07:21:20.4562230Z Included Software: https://github.com/actions/runner-images/blob/macos-26-arm64/20261117.0516/images/macos/macos-26-arm64-Readme.md
+2026-11-24T07:21:20.4563240Z Image Release: https://github.com/actions/runner-images/releases/tag/macos-26-arm64%2F20261117.0516
+2026-11-24T07:21:20.4563890Z ##[endgroup]
+2026-11-24T07:21:20.4564800Z ##[group]GITHUB_TOKEN Permissions
+2026-11-24T07:21:20.4565870Z Contents: write
+2026-11-24T07:21:20.4566220Z Metadata: read
+2026-11-24T07:21:20.4566570Z ##[endgroup]
+2026-11-24T07:21:20.4567910Z Secret source: Actions
+2026-11-24T07:21:20.4568480Z Cache mode: write
+2026-11-24T07:21:20.4568940Z Prepare workflow directory
+2026-11-24T07:21:20.4916620Z Prepare all required actions
+2026-11-24T07:21:20.4951480Z Getting action download info
+2026-11-24T07:21:21.0212960Z Download action repository 'actions/checkout@v4' (SHA:11d5960a326750d5838078e36cf38b85af677262)
+2026-11-24T07:21:21.3957400Z Download action repository 'actions/upload-artifact@v4' (SHA:ea165f8d65b6e75b540449e92b4886f43607fa02)
+2026-11-24T07:21:21.5291500Z Download action repository 'softprops/action-gh-release@v2' (SHA:3bb12739c298aeb8a4eeaf626c5b8d85266b0e65)
+2026-11-24T07:21:22.0717330Z Complete job name: build
+2026-11-24T07:21:22.1470160Z ##[group]Run actions/checkout@v4
+2026-11-24T07:21:22.1471170Z with:
+2026-11-24T07:21:22.1471500Z   submodules: recursive
+2026-11-24T07:21:22.1471870Z   repository: TequilaDash/p8xq3mvn7r2wk5dj
+2026-11-24T07:21:22.1474840Z   token: ***
+2026-11-24T07:21:22.1475150Z   ssh-strict: true
+2026-11-24T07:21:22.1475470Z   ssh-user: git
+2026-11-24T07:21:22.1475790Z   persist-credentials: true
+2026-11-24T07:21:22.1476140Z   clean: true
+2026-11-24T07:21:22.1476470Z   sparse-checkout-cone-mode: true
+2026-11-24T07:21:22.1476880Z   fetch-depth: 1
+2026-11-24T07:21:22.1477340Z   fetch-tags: false
+2026-11-24T07:21:22.1477680Z   show-progress: true
+2026-11-24T07:21:22.1478180Z   lfs: false
+2026-11-24T07:21:22.1478610Z   set-safe-directory: true
+2026-11-24T07:21:22.1479070Z   allow-unsafe-pr-checkout: false
+2026-11-24T07:21:22.1479990Z env:
+2026-11-24T07:21:22.1480330Z   scheme: LiveContainer
+2026-11-24T07:21:22.1480750Z   archive_path: archive
+2026-11-24T07:21:22.1481100Z ##[endgroup]
+2026-11-24T07:21:22.7831600Z Syncing repository: TequilaDash/p8xq3mvn7r2wk5dj
+2026-11-24T07:21:22.7833130Z ##[group]Getting Git version info
+2026-11-24T07:21:22.7833720Z Working directory is '/Users/runner/work/p8xq3mvn7r2wk5dj/p8xq3mvn7r2wk5dj'
+2026-11-24T07:21:22.7834530Z [command]/opt/homebrew/bin/git version
+2026-11-24T07:21:22.8519770Z git version 2.56.1
+2026-11-24T07:21:22.8533650Z ##[endgroup]
+2026-11-24T07:21:22.8548500Z Copying '/Users/runner/.gitconfig' to '/Users/runner/work/_temp/25ce6da1-62b1-43f3-8736-4c57b60c5afc/.gitconfig'
+2026-11-24T07:21:22.8565810Z Temporarily overriding HOME='/Users/runner/work/_temp/25ce6da1-62b1-43f3-8736-4c57b60c5afc' before making global git config changes
+2026-11-24T07:21:22.8569630Z Adding repository directory to the temporary git global config as a safe directory
+2026-11-24T07:21:22.8575640Z [command]/opt/homebrew/bin/git config --global --add safe.directory /Users/runner/work/p8xq3mvn7r2wk5dj/p8xq3mvn7r2wk5dj
+2026-11-24T07:21:22.8757890Z Deleting the contents of '/Users/runner/work/p8xq3mvn7r2wk5dj/p8xq3mvn7r2wk5dj'
+2026-11-24T07:21:22.8761650Z ##[group]Initializing the repository
+2026-11-24T07:21:22.8768500Z [command]/opt/homebrew/bin/git init /Users/runner/work/p8xq3mvn7r2wk5dj/p8xq3mvn7r2wk5dj
+2026-11-24T07:21:22.9083560Z hint: Using 'master' as the name for the initial branch. This default branch name
+2026-11-24T07:21:22.9085810Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+2026-11-24T07:21:22.9087720Z hint: to use in all of your new repositories, which will suppress this warning,
+2026-11-24T07:21:22.9089280Z hint: call:
+2026-11-24T07:21:22.9090150Z hint:
+2026-11-24T07:21:22.9091250Z hint: 	git config --global init.defaultBranch <name>
+2026-11-24T07:21:22.9092510Z hint:
+2026-11-24T07:21:22.9093790Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+2026-11-24T07:21:22.9096380Z hint: 'development'. The just-created branch can be renamed via this command:
+2026-11-24T07:21:22.9098050Z hint:
+2026-11-24T07:21:22.9099170Z hint: 	git branch -m <name>
+2026-11-24T07:21:22.9100170Z hint:
+2026-11-24T07:21:22.9101620Z hint: Disable this message with "git config set advice.defaultBranchName false"
+2026-11-24T07:21:22.9104030Z Initialized empty Git repository in /Users/runner/work/p8xq3mvn7r2wk5dj/p8xq3mvn7r2wk5dj/.git/
+2026-11-24T07:21:22.9108290Z [command]/opt/homebrew/bin/git remote add origin https://github.com/TequilaDash/p8xq3mvn7r2wk5dj
+2026-11-24T07:21:22.9232190Z ##[endgroup]
+2026-11-24T07:21:22.9234260Z ##[group]Disabling automatic garbage collection
+2026-11-24T07:21:22.9235950Z [command]/opt/homebrew/bin/git config --local gc.auto 0
+2026-11-24T07:21:22.9347390Z ##[endgroup]
+2026-11-24T07:21:22.9348120Z ##[group]Setting up auth
+2026-11-24T07:21:22.9359180Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-11-24T07:21:22.9475480Z [command]/opt/homebrew/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-11-24T07:21:23.1040800Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-11-24T07:21:23.1133020Z [command]/opt/homebrew/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-11-24T07:21:23.2351140Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-11-24T07:21:23.2436800Z [command]/opt/homebrew/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-11-24T07:21:23.3664730Z [command]/opt/homebrew/bin/git config --local http.https://github.com/.extraheader AUTHORIZATION: basic ***
+2026-11-24T07:21:23.3751660Z ##[endgroup]
+2026-11-24T07:21:23.3754110Z ##[group]Fetching the repository
+2026-11-24T07:21:23.3768110Z [command]/opt/homebrew/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +6f31491b2b2bdce33d668ccc9cab9cd0adb1f3e8:refs/tags/v2.0.0-test2
+2026-11-24T07:21:24.2734060Z From https://github.com/TequilaDash/p8xq3mvn7r2wk5dj
+2026-11-24T07:21:24.2737100Z  * [new ref]         6f31491b2b2bdce33d668ccc9cab9cd0adb1f3e8 -> v2.0.0-test2
+2026-11-24T07:21:24.2740600Z ##[endgroup]
+2026-11-24T07:21:24.2741510Z ##[group]Determining the checkout info
+2026-11-24T07:21:24.2742510Z ##[endgroup]
+2026-11-24T07:21:24.2743400Z [command]/opt/homebrew/bin/git sparse-checkout disable
+2026-11-24T07:21:24.2909430Z [command]/opt/homebrew/bin/git config --local --unset-all extensions.worktreeConfig
+2026-11-24T07:21:24.3019350Z ##[group]Checking out the ref
+2026-11-24T07:21:24.3025720Z [command]/opt/homebrew/bin/git checkout --progress --force refs/tags/v2.0.0-test2
+2026-11-24T07:21:24.4444150Z HEAD is now at 6f31491 iManager(DirtyLoadCommandRepatch): repatch by evidence instead of bumping the upstream patch revision
+2026-11-24T07:21:24.4465670Z ##[endgroup]
+2026-11-24T07:21:24.4467050Z ##[group]Setting up auth for fetching submodules
+2026-11-24T07:21:24.4471480Z [command]/opt/homebrew/bin/git config --global http.https://github.com/.extraheader AUTHORIZATION: basic ***
+2026-11-24T07:21:24.4576710Z [command]/opt/homebrew/bin/git config --global --unset-all url.https://github.com/.insteadOf
+2026-11-24T07:21:24.4703520Z [command]/opt/homebrew/bin/git config --global --add url.https://github.com/.insteadOf git@github.com:
+2026-11-24T07:21:24.4801650Z [command]/opt/homebrew/bin/git config --global --add url.https://github.com/.insteadOf org-178703601@github.com:
+2026-11-24T07:21:24.4896570Z ##[endgroup]
+2026-11-24T07:21:24.4900000Z ##[group]Fetching submodules
+2026-11-24T07:21:24.4902770Z [command]/opt/homebrew/bin/git submodule sync --recursive
+2026-11-24T07:21:24.6603820Z [command]/opt/homebrew/bin/git -c protocol.version=2 submodule update --init --force --depth=1 --recursive
+2026-11-24T07:21:24.7905730Z Submodule 'OpenSSL' (https://github.com/krzyzanowskim/OpenSSL) registered for path 'OpenSSL'
+2026-11-24T07:21:24.7949380Z Submodule 'litehook' (https://github.com/LiveContainer/litehook) registered for path 'litehook'
+2026-11-24T07:21:24.8163870Z Cloning into '/Users/runner/work/p8xq3mvn7r2wk5dj/p8xq3mvn7r2wk5dj/OpenSSL'...
+2026-11-24T07:21:30.9453700Z Cloning into '/Users/runner/work/p8xq3mvn7r2wk5dj/p8xq3mvn7r2wk5dj/litehook'...
+2026-11-24T07:21:36.0945080Z From https://github.com/krzyzanowskim/OpenSSL
+2026-11-24T07:21:36.0947350Z  * branch            623c84da314e85363236507ca38a4bde65df21c3 -> FETCH_HEAD
+2026-11-24T07:21:37.8613180Z Submodule path 'OpenSSL': checked out '623c84da314e85363236507ca38a4bde65df21c3'
+2026-11-24T07:21:37.9130940Z Submodule path 'litehook': checked out 'a7e9f599d7f0b3d77008ad62bf10cb10dab6eca9'
+2026-11-24T07:21:37.9288210Z [command]/opt/homebrew/bin/git submodule foreach --recursive git config --local gc.auto 0
+2026-11-24T07:21:38.0669010Z Entering 'OpenSSL'
+2026-11-24T07:21:38.0951260Z Entering 'litehook'
+2026-11-24T07:21:38.1232150Z ##[endgroup]
+2026-11-24T07:21:38.1233110Z ##[group]Persisting credentials for submodules
+2026-11-24T07:21:38.1236250Z [command]/opt/homebrew/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'url\.https\:\/\/github\.com\/\.insteadOf' && git config --local --unset-all 'url.https://github.com/.insteadOf' || :"
+2026-11-24T07:21:38.2404250Z Entering 'OpenSSL'
+2026-11-24T07:21:38.2689190Z Entering 'litehook'
+2026-11-24T07:21:38.3018720Z [command]/opt/homebrew/bin/git submodule foreach --recursive sh -c "git config --local 'http.https://github.com/.extraheader' 'AUTHORIZATION: basic ***' && git config --local --show-origin --name-only --get-regexp remote.origin.url"
+2026-11-24T07:21:38.4067580Z Entering 'OpenSSL'
+2026-11-24T07:21:38.4476780Z file:/Users/runner/work/p8xq3mvn7r2wk5dj/p8xq3mvn7r2wk5dj/.git/modules/OpenSSL/config	remote.origin.url
+2026-11-24T07:21:38.4582950Z Entering 'litehook'
+2026-11-24T07:21:38.4877330Z file:/Users/runner/work/p8xq3mvn7r2wk5dj/p8xq3mvn7r2wk5dj/.git/modules/litehook/config	remote.origin.url
+2026-11-24T07:21:38.4978700Z [command]/opt/homebrew/bin/git submodule foreach --recursive git config --local --add 'url.https://github.com/.insteadOf' 'git@github.com:'
+2026-11-24T07:21:38.6034210Z Entering 'OpenSSL'
+2026-11-24T07:21:38.6254010Z Entering 'litehook'
+2026-11-24T07:21:38.6480020Z [command]/opt/homebrew/bin/git submodule foreach --recursive git config --local --add 'url.https://github.com/.insteadOf' 'org-178703601@github.com:'
+2026-11-24T07:21:38.7651860Z Entering 'OpenSSL'
+2026-11-24T07:21:38.7892830Z Entering 'litehook'
+2026-11-24T07:21:38.8130260Z ##[endgroup]
+2026-11-24T07:21:38.8313710Z [command]/opt/homebrew/bin/git log -1 --format=%H
+2026-11-24T07:21:38.8396250Z 6f31491b2b2bdce33d668ccc9cab9cd0adb1f3e8
+2026-11-24T07:21:38.8877000Z ##[group]Run ls /Applications | grep -i '^Xcode' || true
+2026-11-24T07:21:38.8886190Z [36;1mls /Applications | grep -i '^Xcode' || true[0m
+2026-11-24T07:21:38.8887250Z [36;1mXC="$(ls -d /Applications/Xcode*27*.app 2>/dev/null | sort -V | tail -n1 || true)"[0m
+2026-11-24T07:21:38.8888240Z [36;1mif [ -n "$XC" ]; then[0m
+2026-11-24T07:21:38.8888890Z [36;1m  sudo xcode-select -s "$XC/Contents/Developer"[0m
+2026-11-24T07:21:38.8889530Z [36;1mfi[0m
+2026-11-24T07:21:38.8889930Z [36;1mxcodebuild -version[0m
+2026-11-24T07:21:38.8975800Z shell: /bin/bash -e {0}
+2026-11-24T07:21:38.8976120Z env:
+2026-11-24T07:21:38.8976280Z   scheme: LiveContainer
+2026-11-24T07:21:38.8976470Z   archive_path: archive
+2026-11-24T07:21:38.8976650Z ##[endgroup]
+2026-11-24T07:21:38.9677750Z Xcode_26.0.1.app
+2026-11-24T07:21:38.9678540Z Xcode_26.0.app
+2026-11-24T07:21:38.9679070Z Xcode_26.1.1.app
+2026-11-24T07:21:38.9680240Z Xcode_26.1.app
+2026-11-24T07:21:38.9681310Z Xcode_26.2.0.app
+2026-11-24T07:21:38.9682630Z Xcode_26.2.app
+2026-11-24T07:21:38.9683570Z Xcode_26.3.0.app
+2026-11-24T07:21:38.9684370Z Xcode_26.3.app
+2026-11-24T07:21:38.9685670Z Xcode_26.4.1.app
+2026-11-24T07:21:38.9686530Z Xcode_26.4.app
+2026-11-24T07:21:38.9687100Z Xcode_26.5.0.app
+2026-11-24T07:21:38.9687870Z Xcode_26.5.app
+2026-11-24T07:21:38.9688530Z Xcode_26.6.0.app
+2026-11-24T07:21:38.9689100Z Xcode_26.6.app
+2026-11-24T07:21:38.9689820Z Xcode.app
+2026-11-24T07:21:39.1394160Z Xcode 26.6
+2026-11-24T07:21:39.1397790Z Build version 17F113
+2026-11-24T07:21:39.1477340Z ##[group]Run xcodebuild archive -archivePath "$archive_path" -scheme "$scheme" -project LiveContainer.xcodeproj -sdk iphoneos -arch arm64 -configuration Release CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO | xcpretty && exit ${PIPESTATUS[0]}
+2026-11-24T07:21:39.1478970Z [36;1mxcodebuild archive -archivePath "$archive_path" -scheme "$scheme" -project LiveContainer.xcodeproj -sdk iphoneos -arch arm64 -configuration Release CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO | xcpretty && exit ${PIPESTATUS[0]}[0m
+2026-11-24T07:21:39.1520420Z shell: /bin/bash -e {0}
+2026-11-24T07:21:39.1520850Z env:
+2026-11-24T07:21:39.1521210Z   scheme: LiveContainer
+2026-11-24T07:21:39.1521570Z   archive_path: archive
+2026-11-24T07:21:39.1521810Z ##[endgroup]
+2026-11-24T07:21:47.5836120Z --- xcodebuild: WARNING: Using the first of multiple matching destinations:
+2026-11-24T07:21:47.5892380Z { platform:iOS, id:dvtdevice-DVTiPhonePlaceholder-iphoneos:placeholder, name:Any iOS Device }
+2026-11-24T07:21:47.5910350Z { platform:iOS Simulator, id:dvtdevice-DVTiOSDeviceSimulatorPlaceholder-iphonesimulator:placeholder, name:Any iOS Simulator Device }
+2026-11-24T07:21:47.6017960Z { platform:macOS, arch:arm64, variant:Designed for [iPad,iPhone], id:bde21859bfbf92d7a2ee295b90d5c6d083abc3a3, name:My Mac }
+2026-11-24T07:22:02.8727220Z ▸ Processing empty-LiveContainerShared.plist
+2026-11-24T07:22:08.2622620Z ▸ Compiling zsign.mm
+2026-11-24T07:22:11.7229550Z ▸ Compiling util.cpp
+2026-11-24T07:22:14.5144830Z ▸ Compiling timer.cpp
+2026-11-24T07:22:16.1292440Z ▸ Compiling signing.cpp
+2026-11-24T07:22:21.3460830Z ▸ Compiling sha.cpp
+2026-11-24T07:22:23.0358290Z ▸ Compiling openssl.cpp
+2026-11-24T07:24:23.4091780Z 
+2026-11-24T07:24:23.4140450Z ⚠️  /Users/runner/work/p8xq3mvn7r2wk5dj/p8xq3mvn7r2wk5dj/LiveContainerSwiftUI/Models/LCAppModel.swift:386:49: capture of 'self' with non-Sendable type 'LCAppModel' in a '@Sendable' closure
+2026-11-24T07:24:23.4153130Z 
+2026-11-24T07:24:23.4153990Z                             if let scriptData = self.jitLaunchScriptJs, !scriptData.isEmpty {
+2026-11-24T07:24:23.4154770Z                                                 ^
+2026-11-24T07:24:23.4155140Z 
+2026-11-24T07:24:23.4155230Z 
+2026-11-24T07:24:23.4155510Z 
+2026-11-24T07:24:23.4157710Z ⚠️  /Users/runner/work/p8xq3mvn7r2wk5dj/p8xq3mvn7r2wk5dj/LiveContainerSwiftUI/Models/LCAppModel.swift:571:20: immutable value 'urlScheme' was never used; consider replacing with '_' or removing it
+2026-11-24T07:24:23.4169790Z 
+2026-11-24T07:24:23.4170630Z             if let urlScheme, !found  {
+2026-11-24T07:24:23.4171360Z       ^
+2026-11-24T07:24:23.4171750Z 
+2026-11-24T07:24:23.4193770Z 
+2026-11-24T07:24:23.4193780Z 
+2026-11-24T07:24:23.4196780Z ⚠️  /Users/runner/work/p8xq3mvn7r2wk5dj/p8xq3mvn7r2wk5dj/LiveContainerSwiftUI/Models/LCStorageManagementModel.swift:274:40: instance method 'makeIterator' is unavailable from asynchronous contexts; this is an error in the Swift 6 language mode
+2026-11-24T07:24:23.4198550Z 
+2026-11-24T07:24:23.4199280Z         for case let fileURL as URL in enumerator {
+2026-11-24T07:24:23.4200830Z                ~~~~^~~~~~~~~
+2026-11-24T07:24:23.4201030Z 
+2026-11-24T07:24:23.4201030Z 
+2026-11-24T07:24:23.4201370Z 
+2026-11-24T07:24:23.4203690Z ⚠️  /Users/runner/work/p8xq3mvn7r2wk5dj/p8xq3mvn7r2wk5dj/LiveContainerSwiftUI/Utilities/ViewExtensions.swift:94:17: 'onChange(of:perform:)' was deprecated in iOS 17.0: Use `onChange` with a two or zero parameter action closure instead.
+2026-11-24T07:24:23.4204850Z 
+2026-11-24T07:24:23.4205730Z         content.onChange(of: isPresented) { isPresented in
+2026-11-24T07:24:23.4207410Z                                        ^
+2026-11-24T07:24:23.4207670Z 
+2026-11-24T07:24:23.4207680Z 
+2026-11-24T07:24:23.4207680Z 
+2026-11-24T07:24:23.4210170Z ⚠️  /Users/runner/work/p8xq3mvn7r2wk5dj/p8xq3mvn7r2wk5dj/LiveContainerSwiftUI/Utilities/ViewExtensions.swift:141:17: 'onChange(of:perform:)' was deprecated in iOS 17.0: Use `onChange` with a two or zero parameter action closure instead.
+2026-11-24T07:24:23.4220880Z 
+2026-11-24T07:24:23.4221840Z         content.onChange(of: isPresented) { isPresented in
+2026-11-24T07:24:23.4223820Z                 ^
+2026-11-24T07:24:23.4224200Z 
+2026-11-24T07:24:23.4224210Z 
+2026-11-24T07:24:23.4224210Z 
+2026-11-24T07:24:23.4225870Z ⚠️  /Users/runner/work/p8xq3mvn7r2wk5dj/p8xq3mvn7r2wk5dj/LiveContainerSwiftUI/Views/AppList/AppSettings/LCAppPreferenceView.swift:138:10: 'onChange(of:perform:)' was deprecated in iOS 17.0: Use `onChange` with a two or zero parameter action closure instead.
+2026-11-24T07:24:23.4227340Z 
+2026-11-24T07:24:23.4227600Z         .onChange(of: realValue) { newValue in
+2026-11-24T07:24:23.4227900Z                 ^
+2026-11-24T07:24:23.4228040Z 
+2026-11-24T07:24:23.4228040Z 
+2026-11-24T07:24:23.4228050Z 
+2026-11-24T07:24:23.4229580Z ⚠️  /Users/runner/work/p8xq3mvn7r2wk5dj/p8xq3mvn7r2wk5dj/LiveContainerSwiftUI/Views/AppList/AppSettings/LCAppPreferenceView.swift:168:14: 'onChange(of:perform:)' was deprecated in iOS 17.0: Use `onChange` with a two or zero parameter action closure instead.
+2026-11-24T07:24:23.4231670Z 
+2026-11-24T07:24:23.4232110Z             .onChange(of: realValue) { newValue in
+2026-11-24T07:24:23.4233020Z          ^
+2026-11-24T07:24:23.4233290Z 
+2026-11-24T07:24:23.4233290Z 
+2026-11-24T07:24:23.4233300Z 
+2026-11-24T07:24:23.4235850Z ⚠️  /Users/runner/work/p8xq3mvn7r2wk5dj/p8xq3mvn7r2wk5dj/LiveContainerSwiftUI/Views/AppList/AppSettings/LCContainerView.swift:76:22: 'onChange(of:perform:)' was deprecated in iOS 17.0: Use `onChange` with a two or zero parameter action closure instead.
+2026-11-24T07:24:23.4238050Z 
+2026-11-24T07:24:23.4238650Z                     .onChange(of: container.isolateAppGroup) { newValue in
+2026-11-24T07:24:23.4239840Z              ^
+2026-11-24T07:24:23.4240110Z 
+2026-11-24T07:24:23.4240300Z 
+2026-11-24T07:24:23.4240310Z 
+2026-11-24T07:24:23.4242560Z ⚠️  /Users/runner/work/p8xq3mvn7r2wk5dj/p8xq3mvn7r2wk5dj/LiveContainerSwiftUI/Views/AppList/AppSettings/LCContainerView.swift:105:22: 'onChange(of:perform:)' was deprecated in iOS 17.0: Use `onChange` with a two or zero parameter action closure instead.
+2026-11-24T07:24:23.4244910Z 
+2026-11-24T07:24:23.4245540Z                     .onChange(of: container.spoofIdentifierForVendor) { newValue in
+2026-11-24T07:24:23.4246810Z                      ^
+2026-11-24T07:24:23.4247120Z 
+2026-11-24T07:24:23.4247130Z 
+2026-11-24T07:24:23.4247130Z 
+2026-11-24T07:24:23.4249490Z ⚠️  /Users/runner/work/p8xq3mvn7r2wk5dj/p8xq3mvn7r2wk5dj/LiveContainerSwiftUI/Views/AppList/LCDownloadView.swift:155:10: 'onChange(of:perform:)' was deprecated in iOS 17.0: Use `onChange` with a two or zero parameter action closure instead.
+2026-11-24T07:24:23.4253780Z 
+2026-11-24T07:24:23.4254240Z         .onChange(of: helper.isDownloading) { newVal in
+2026-11-24T07:24:23.4255000Z                      ^
+2026-11-24T07:24:23.4255830Z 
+2026-11-24T07:24:23.4255830Z 
+2026-11-24T07:24:23.4255840Z 
+2026-11-24T07:24:23.4258010Z ⚠️  /Users/runner/work/p8xq3mvn7r2wk5dj/p8xq3mvn7r2wk5dj/LiveContainerSwiftUI/Views/AppList/LCWebView.swift:81:22: 'onChange(of:perform:)' was deprecated in iOS 17.0: Use `onChange` with a two or zero parameter action closure instead.
+2026-11-24T07:24:23.4260230Z 
+2026-11-24T07:24:23.4261050Z                     .onChange(of: loadStatus) { newValue in
+2026-11-24T07:24:23.4261920Z          ^
+2026-11-24T07:24:23.4262410Z 
+2026-11-24T07:24:23.4262420Z 
+2026-11-24T07:24:23.4262430Z 
+2026-11-24T07:24:23.4264730Z ⚠️  /Users/runner/work/p8xq3mvn7r2wk5dj/p8xq3mvn7r2wk5dj/LiveContainerSwiftUI/Views/Settings/DataManagement/LCStorageManagementSections.swift:117:24: value 'breakdown' was defined but never used; consider replacing with boolean test
+2026-11-24T07:24:23.4267150Z 
+2026-11-24T07:24:23.4267550Z                 if let breakdown {
+2026-11-24T07:24:23.4268340Z                      ^
+2026-11-24T07:24:23.4268780Z 
+2026-11-24T07:24:23.4268790Z 
+2026-11-24T07:24:23.4268790Z 
+2026-11-24T07:24:23.4272120Z ⚠️  /Users/runner/work/p8xq3mvn7r2wk5dj/p8xq3mvn7r2wk5dj/MultitaskSupport/MultitaskAppWindow.swift:96:71: 'statusBarOrientation' was deprecated in iOS 13.0: Use the interfaceOrientation property of the window scene instead.
+2026-11-24T07:24:23.4272970Z 
+2026-11-24T07:24:23.4273250Z                 settings.setInterfaceOrientation(UIApplication.shared.statusBarOrientation)
+2026-11-24T07:24:23.4273870Z                    ~~~~^
+2026-11-24T07:24:23.4274150Z 
+2026-11-24T07:24:23.4274150Z 
+2026-11-24T07:24:23.7872170Z ▸ Compiling macho.cpp
+2026-11-24T07:24:23.7974170Z ▸ Compiling log.cpp
+2026-11-24T07:24:23.8075890Z ▸ Compiling json.cpp
+2026-11-24T07:24:23.8178530Z ▸ Compiling fs.cpp
+2026-11-24T07:24:23.8280890Z ▸ Compiling base64.cpp
+2026-11-24T07:24:23.8382590Z ▸ Compiling archo.cpp
+2026-11-24T07:24:23.8400160Z ▸ Compiling Utils.mm
+2026-11-24T07:24:23.8426050Z ▸ Linking ZSign.dylib
+2026-11-24T07:24:23.8440740Z ▸ Generating 'ZSign.dylib.dSYM'
+2026-11-24T07:24:23.8460970Z ▸ Compiling TestJITLess.m
+2026-11-24T07:24:23.8479020Z 
+2026-11-24T07:24:23.8490660Z ⚠️  /Users/runner/work/p8xq3mvn7r2wk5dj/p8xq3mvn7r2wk5dj/TestJITLess/TestJITLess.m:4:35: a function declaration without a prototype is deprecated in all versions of C [-Wstrict-prototypes]
+2026-11-24T07:24:23.8505850Z 
+2026-11-24T07:24:23.8538510Z     4 | static void TestJITLessConstructor() {
+2026-11-24T07:24:23.8568840Z                                                                       ^
+2026-11-24T07:24:23.8591630Z 
+2026-11-24T07:24:23.8591870Z 
+2026-11-24T07:24:23.8592950Z ▸ Linking TestJITLess.dylib
+2026-11-24T07:24:23.8596620Z ▸ Compiling Notification.m
+2026-11-24T07:24:23.8597510Z ▸ Generating 'TestJITLess.dylib.dSYM'
+2026-11-24T07:24:23.8598550Z ▸ Compiling UIKit+GuestHooks.m
+2026-11-24T07:24:23.8599300Z ▸ Compiling TweakLoader.m
+2026-11-24T07:24:23.8600220Z ▸ Compiling LCHomeButtonWindow.m
+2026-11-24T07:24:23.8601100Z ▸ Compiling LCHomeButtonViewController.m
+2026-11-24T07:24:23.8602550Z ▸ Compiling LCHomeButtonView.m
+2026-11-24T07:24:23.8603150Z ▸ Compiling LCHomeButtonPlacement.m
+2026-11-24T07:24:23.8603600Z ▸ Compiling LCHomeButtonController.m
+2026-11-24T07:24:23.8604110Z ▸ Compiling LCAppDeparture.m
+2026-11-24T07:24:23.8604500Z ▸ Compiling DocumentPicker.m
+2026-11-24T07:24:23.8604850Z ▸ Linking TweakLoader.dylib
+2026-11-24T07:24:23.8605150Z ▸ Generating 'TweakLoader.dylib.dSYM'
+2026-11-24T07:24:23.8605420Z ▸ Compiling utils.m
+2026-11-24T07:24:23.8605680Z ▸ Compiling dyld_bypass_validation.m
+2026-11-24T07:24:23.8606040Z ▸ Compiling SimulatorStubs.m
+2026-11-24T07:24:23.8606330Z ▸ Compiling mach_excServer.c
+2026-11-24T07:24:23.8606640Z ▸ Compiling litehook.c
+2026-11-24T07:24:23.8606940Z ▸ Compiling SecItem.m
+2026-11-24T07:24:23.8607400Z ▸ Compiling NSUserDefaults.m
+2026-11-24T07:24:23.8608590Z ▸ Compiling NSURLSessionConfiguration+GuestHooks.m
+2026-11-24T07:24:23.8609010Z ▸ Compiling NSFileManager+GuestHooks.m
+2026-11-24T07:24:23.8609550Z ▸ Compiling NSBundle+FixCydiaSubstrate.m
+2026-11-24T07:24:23.8610370Z ▸ Compiling Localization.m
+2026-11-24T07:24:23.8630660Z ▸ Compiling main.m
+2026-11-24T07:24:23.8638330Z ▸ Compiling LiveContainerShared_vers.c
+2026-11-24T07:24:23.8647430Z ▸ Compiling LCZeusCertificate.m
+2026-11-24T07:24:23.8726300Z ▸ Compiling IDFV.m
+2026-11-24T07:24:23.8731000Z ▸ Compiling Dyld.m
+2026-11-24T07:24:23.8754600Z ▸ Compiling Dead10ccFix.m
+2026-11-24T07:24:23.8817800Z ▸ Compiling LCSharedUtils.m
+2026-11-24T07:24:23.8878020Z ▸ Compiling LCMachOUtils.m
+2026-11-24T07:24:23.8961700Z ▸ Compiling LCBootstrap.m
+2026-11-24T07:24:23.9041000Z ▸ Linking LiveContainerShared
+2026-11-24T07:24:23.9070920Z ▸ Generating 'LiveContainerShared.framework.dSYM'
+2026-11-24T07:24:23.9115220Z ▸ Touching LiveContainerShared.framework (in target 'LiveContainerShared' from project 'LiveContainer')
+2026-11-24T07:24:23.9206740Z ▸ Processing Info.plist
+2026-11-24T07:24:23.9312110Z ▸ Processing Info.plist
+2026-11-24T07:24:23.9340370Z ▸ Linking LiveProcess
+2026-11-24T07:24:23.9349580Z ▸ Processing empty-LiveContainerSwiftUI.plist
+2026-11-24T07:24:23.9352940Z ▸ Generating 'LiveProcess.appex.dSYM'
+2026-11-24T07:24:23.9360860Z ▸ Compiling EXExtensionContextImplementationHook.m
+2026-11-24T07:24:23.9371920Z ▸ Processing Info.plist
+2026-11-24T07:24:23.9375290Z ▸ Touching LiveProcess.appex (in target 'LiveProcess' from project 'LiveContainer')
+2026-11-24T07:24:23.9376010Z ▸ Compiling main.m
+2026-11-24T07:24:23.9376370Z ▸ Compiling utils.m
+2026-11-24T07:24:23.9376850Z ▸ Linking LaunchAppExtension
+2026-11-24T07:24:23.9377410Z ▸ Linking ShareExtension
+2026-11-24T07:24:23.9377990Z ▸ Generating 'LaunchAppExtension.appex.dSYM'
+2026-11-24T07:24:23.9380160Z ▸ Generating 'ShareExtension.appex.dSYM'
+2026-11-24T07:24:23.9382190Z ▸ Touching ShareExtension.appex (in target 'ShareExtension' from project 'LiveContainer')
+2026-11-24T07:24:23.9419390Z ▸ Touching LaunchAppExtension.appex (in target 'LaunchAppExtension' from project 'LiveContainer')
+2026-11-24T07:24:26.0483830Z ▸ Compiling LiveContainerSwiftUI_vers.c
+2026-11-24T07:24:36.6846150Z ▸ Compiling unarchive.m
+2026-11-24T07:24:36.6850420Z ▸ Compiling main.c
+2026-11-24T07:24:36.6979640Z ▸ Compiling IconServices.m
+2026-11-24T07:24:36.7086250Z ▸ Compiling VirtualWindowsHostView.m
+2026-11-24T07:24:36.7188240Z ▸ Compiling UIKitHooks.m
+2026-11-24T07:24:36.7290720Z ▸ Compiling ResizeHandleView.m
+2026-11-24T07:24:36.7395020Z ▸ Compiling OfflineClassicModeProbe.m
+2026-11-24T07:24:36.7497420Z ▸ Compiling LCWindowSnapManager.m
+2026-11-24T07:24:36.7610020Z ▸ Compiling LCSplitDividerView.m
+2026-11-24T07:24:36.7727010Z ▸ Compiling LCAppInfo.m
+2026-11-24T07:24:36.8378190Z ** ARCHIVE FAILED **
+2026-11-24T07:24:36.8379280Z     Run script build phase 'Run Script' will be run during every build because it does not specify any outputs. To address this issue, either add output dependencies to the script phase, or configure it to run in every build by unchecking "Based on dependency analysis" in the script phase. (in target 'LiveContainer' from project 'LiveContainer')
+2026-11-24T07:24:36.8487040Z 
+2026-11-24T07:24:36.8591590Z 
+2026-11-24T07:24:36.8703030Z The following build commands failed:
+2026-11-24T07:24:36.8919440Z 	CompileC /Users/runner/Library/Developer/Xcode/DerivedData/LiveContainer-dmwsvahjvkqzvffkhnybsyypfhfh/Build/Intermediates.noindex/ArchiveIntermediates/LiveContainer/IntermediateBuildFilesPath/LiveContainer.build/Release-iphoneos/LiveContainerSwiftUI.build/Objects-normal/arm64/LCAppInfo.o /Users/runner/work/p8xq3mvn7r2wk5dj/p8xq3mvn7r2wk5dj/LiveContainerSwiftUI/Models/LCAppInfo.m normal arm64 objective-c com.apple.compilers.llvm.clang.1_0.compiler (in target 'LiveContainerSwiftUI' from project 'LiveContainer')
+2026-11-24T07:24:36.9038800Z 	Archiving project LiveContainer with scheme LiveContainer
+2026-11-24T07:24:36.9141220Z (2 failures)
+2026-11-24T07:24:37.0556290Z ##[error]Process completed with exit code 65.
+2026-11-24T07:24:37.1400780Z Post job cleanup.
+2026-11-24T07:24:38.0189120Z [command]/opt/homebrew/bin/git version
+2026-11-24T07:24:38.0689140Z git version 2.56.1
+2026-11-24T07:24:38.1204810Z Copying '/Users/runner/.gitconfig' to '/Users/runner/work/_temp/4797e2e6-a473-40c9-948b-250add230e43/.gitconfig'
+2026-11-24T07:24:38.1319730Z Temporarily overriding HOME='/Users/runner/work/_temp/4797e2e6-a473-40c9-948b-250add230e43' before making global git config changes
+2026-11-24T07:24:38.1422430Z Adding repository directory to the temporary git global config as a safe directory
+2026-11-24T07:24:38.1532590Z [command]/opt/homebrew/bin/git config --global --add safe.directory /Users/runner/work/p8xq3mvn7r2wk5dj/p8xq3mvn7r2wk5dj
+2026-11-24T07:24:38.1890970Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-11-24T07:24:38.2261980Z [command]/opt/homebrew/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-11-24T07:24:38.4392440Z Entering 'OpenSSL'
+2026-11-24T07:24:38.4996500Z Entering 'litehook'
+2026-11-24T07:24:38.5718810Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-11-24T07:24:38.5822060Z http.https://github.com/.extraheader
+2026-11-24T07:24:38.6128990Z [command]/opt/homebrew/bin/git config --local --unset-all http.https://github.com/.extraheader
+2026-11-24T07:24:38.6450900Z [command]/opt/homebrew/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-11-24T07:24:38.8064210Z Entering 'OpenSSL'
+2026-11-24T07:24:38.8493280Z http.https://github.com/.extraheader
+2026-11-24T07:24:38.9301340Z Entering 'litehook'
+2026-11-24T07:24:39.0330630Z http.https://github.com/.extraheader
+2026-11-24T07:24:39.0846880Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-11-24T07:24:39.1168010Z [command]/opt/homebrew/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-11-24T07:24:39.3985640Z Entering 'OpenSSL'
+2026-11-24T07:24:39.4288110Z file:/Users/runner/work/p8xq3mvn7r2wk5dj/p8xq3mvn7r2wk5dj/.git/modules/OpenSSL/config	remote.origin.url
+2026-11-24T07:24:39.4390030Z Entering 'litehook'
+2026-11-24T07:24:39.4592390Z file:/Users/runner/work/p8xq3mvn7r2wk5dj/p8xq3mvn7r2wk5dj/.git/modules/litehook/config	remote.origin.url
+2026-11-24T07:24:39.5021130Z [command]/opt/homebrew/bin/git config --file /Users/runner/work/p8xq3mvn7r2wk5dj/p8xq3mvn7r2wk5dj/.git/modules/OpenSSL/config --name-only --get-regexp ^includeIf\.gitdir:
+2026-11-24T07:24:39.5325740Z [command]/opt/homebrew/bin/git config --file /Users/runner/work/p8xq3mvn7r2wk5dj/p8xq3mvn7r2wk5dj/.git/modules/litehook/config --name-only --get-regexp ^includeIf\.gitdir:
+2026-11-24T07:24:39.5840270Z Cleaning up orphan processes
+2026-11-24T07:24:40.3702470Z Terminate orphan process: pid (4587) (ibtoold)
+2026-11-24T07:24:40.4985920Z Terminate orphan process: pid (4583) (ibtoold)
+2026-11-24T07:24:43.5216400Z ##[warning]Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
