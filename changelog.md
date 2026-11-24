@@ -1,3 +1,16 @@
+20261124-140000 1.1.112 Update：
+1. 1.1.111 二分回退后访客仍崩（"app 已终止"），崩源不在 T2 挂接三件套。
+   本轮做两件事：
+   - 全局异常取证：TweakLoaderConstructor 最前面注册
+     LCGuestUncaughtExceptionHandler，访客主程序 initializer 抛的 NSException
+     在 abort 前把 name+reason+callStackSymbols 落到 NSLog / TDConsoleLog /
+     ConsoleLog/exception-<pid>.log。下一次崩溃日志直接带异常原文，
+     不再需要二分发版猜根因。
+   - PID 登记 @try/@catch：TDLiveGuestPids 登记块整体包住，任何异常落日志
+     后继续，登记本身不可能成为崩源。
+2. 判读：用户装 112 后再崩，ConsoleLog 里会出现 [LC-EXCEPTION] 行，
+   看 name/reason/stack 即可定位；若不再崩，说明 108 登记块就是崩源。
+
 20261123-235000 1.1.111 Update：
 1. 1.1.110 仍有访客启动即崩（Via/LocalDevVPN 三份 .ips，同 109 栈：dlopen 内
    callInitializer SIGABRT）。本轮不猜，做二分：把六期 T2 唯一会在访客
