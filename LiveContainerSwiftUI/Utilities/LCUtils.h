@@ -15,10 +15,14 @@ uint32_t dyld_get_sdk_version(const struct mach_header* mh);
 
 + (void)validateJITLessSetupWithCompletionHandler:(void (^)(BOOL success, NSError *error))completionHandler;
 + (NSData *)certificateData;
-+ (void)launchMultitaskGuestApp:(NSString *)displayName completionHandler:(void (^)(NSNumber *pid, NSError *error))completionHandler API_AVAILABLE(ios(16.0));
++ (void)launchMultitaskGuestApp:(NSString *)displayName bundleId:(NSString *)bundleId dataUUID:(NSString *)dataUUID nativeWindow:(BOOL)nativeWindow completionHandler:(void (^)(NSNumber *pid, NSError *error))completionHandler API_AVAILABLE(ios(16.0));
 
 
 + (NSProgress *)signAppBundleWithZSign:(NSURL *)path completionHandler:(void (^)(BOOL success, NSError *error))completionHandler;
+// Reads the identifier claimed by the bundle's current embedded.mobileprovision.
+// This parses the profile payload only; it does not verify its CMS signature.
+// Returns nil when no concrete application identifier can be parsed.
++ (NSString *)guestBundleIdentifierFromProvisioningProfileInBundleAtPath:(NSString *)path;
 + (NSProgress *)signFilesWithZSignWithURLs:(NSArray<NSURL*>*)urls completionHandler:(void (^)(BOOL success, NSError *error))completionHandler;
 + (NSString*)getCertTeamIdWithKeyData:(NSData*)keyData password:(NSString*)password;
 + (int)validateCertificateWithCompletionHandler:(void(^)(int status, NSDate *expirationDate, NSString *organizationalUnitName, NSString *error))completionHandler;

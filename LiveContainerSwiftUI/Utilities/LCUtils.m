@@ -54,15 +54,14 @@
     return nil;
 }
 
-+ (void)launchMultitaskGuestApp:(NSString *)displayName completionHandler:(void (^)(NSNumber *pid, NSError *error))completionHandler {
-    // Taken before anything can fail: left behind, zContainer's next start
-    // would turn into the app, without asking for Face ID for a locked one.
-    NSUserDefaults *lcUserDefaults = NSUserDefaults.standardUserDefaults;
-    NSString* bundleId = [lcUserDefaults stringForKey:@"selected"];
-    NSString* dataUUID = [lcUserDefaults stringForKey:@"selectedContainer"];
-    
-    [lcUserDefaults removeObjectForKey:@"selected"];
-    [lcUserDefaults removeObjectForKey:@"selectedContainer"];
++ (void)launchMultitaskGuestApp:(NSString *)displayName bundleId:(NSString *)bundleId dataUUID:(NSString *)dataUUID nativeWindow:(BOOL)nativeWindow completionHandler:(void (^)(NSNumber *pid, NSError *error))completionHandler {
+    // Identity and window mode belong to this request. Shared launch defaults
+    // could be overwritten by another app while signing/JIT work suspends.
+    if (bundleId.length == 0 || dataUUID.length == 0) {
+        NSError *error = [NSError errorWithDomain:@"LCMultitaskLaunch" code:1 userInfo:@{NSLocalizedDescriptionKey: @"应用或容器标识缺失，无法启动"}];
+        if (completionHandler) completionHandler(nil, error);
+        return;
+    }
 
     if(!self.liveProcessBundleIdentifier) {
         NSError *error = [NSError errorWithDomain:displayName code:2 userInfo:@{NSLocalizedDescriptionKey: @"LiveProcess extension not found. Please reinstall zContainer and select Keep Extensions"}];
@@ -71,23 +70,31 @@
     }
     
     dispatch_async(dispatch_get_main_queue(), ^{
-        if (@available(iOS 16.1, *)) {
-            if(UIApplication.sharedApplication.supportsMultipleScenes && [NSUserDefaults.lcSharedDefaults integerForKey:@"LCMultitaskMode"] == 1) {
-                [MultitaskWindowManager openAppWindowWithDisplayName:displayName dataUUID:dataUUID bundleId:bundleId pidCallback:completionHandler];
-                MultitaskDockManager *dock = [MultitaskDockManager shared];
-                [dock addRunningApp:displayName appUUID:dataUUID view:nil];
-                return;
+        if (nativeWindow) {
+            if (@available(iOS 16.1, *)) {
+                if (UIApplication.sharedApplication.supportsMultipleScenes) {
+                    [MultitaskWindowManager openAppWindowWithDisplayName:displayName dataUUID:dataUUID bundleId:bundleId pidCallback:completionHandler];
+                    MultitaskDockManager *dock = [MultitaskDockManager shared];
+                    [dock addRunningApp:displayName appUUID:dataUUID view:nil];
+                    return;
+                }
             }
+            NSError *error = [NSError errorWithDomain:@"LCMultitaskLaunch" code:3 userInfo:@{NSLocalizedDescriptionKey: @"系统当前无法打开原生多任务窗口"}];
+            if (completionHandler) completionHandler(nil, error);
+            return;
         }
         
-        // The Home Screen's window: on iPad another scene, such as an app's own
-        // window, can be connected too.
-        UIViewController *rootVC = MainWindow.window.rootViewController;
+        UIViewController *rootVC = MultitaskDockManager.shared.windowHostingController;
+        if (!rootVC) {
+            NSError *error = [NSError errorWithDomain:@"LCMultitaskLaunch" code:7 userInfo:@{NSLocalizedDescriptionKey: @"主窗口尚未就绪，无法建立多任务窗口"}];
+            if (completionHandler) completionHandler(nil, error);
+            return;
+        }
         DecoratedAppSceneViewController *launcherView = [[DecoratedAppSceneViewController alloc] initWindowName:displayName bundleId:bundleId dataUUID:dataUUID rootVC:rootVC];
         // Wire PID callback
         launcherView.pidAvailableHandler = completionHandler;
         launcherView.view.autoresizingMask = UIViewAutoresizingFlexibleTopMargin | UIViewAutoresizingFlexibleLeftMargin | UIViewAutoresizingFlexibleRightMargin | UIViewAutoresizingFlexibleBottomMargin;
-        launcherView.view.center = rootVC.view.center;
+        launcherView.view.center = CGPointMake(CGRectGetMidX(rootVC.view.bounds), CGRectGetMidY(rootVC.view.bounds));
         // On iPhone it may be opening into a half of the split screen.
         [LCWindowSnapManager.shared claimPhoneSplitRequestForWindow:launcherView];
     });
@@ -116,6 +123,66 @@
     loaded = YES;
 }
 
+// Read the application-identifier claim from the embedded profile's XML plist.
+// This does not verify the CMS signature or establish the original publishing
+// identity; a wildcard profile cannot identify a particular guest.
+static NSString* LCBundleIdentifierFromProvisioningProfileData(NSData* profileData) {
+    if(profileData.length == 0) {
+        return nil;
+    }
+    NSData* openTag = [@"<plist" dataUsingEncoding:NSUTF8StringEncoding];
+    NSData* xmlTag = [@"<?xml" dataUsingEncoding:NSUTF8StringEncoding];
+    NSData* closeTag = [@"</plist>" dataUsingEncoding:NSUTF8StringEncoding];
+    NSRange whole = NSMakeRange(0, profileData.length);
+    NSRange begin = [profileData rangeOfData:openTag options:0 range:whole];
+    if(begin.location == NSNotFound) {
+        begin = [profileData rangeOfData:xmlTag options:0 range:whole];
+    }
+    if(begin.location == NSNotFound) {
+        return nil;
+    }
+    NSRange tail = NSMakeRange(begin.location, profileData.length - begin.location);
+    NSRange end = [profileData rangeOfData:closeTag options:NSDataSearchBackwards range:tail];
+    if(end.location == NSNotFound) {
+        return nil;
+    }
+    NSData* plistData = [profileData subdataWithRange:NSMakeRange(begin.location, end.location + end.length - begin.location)];
+    NSDictionary* profile = [NSPropertyListSerialization propertyListWithData:plistData options:0 format:NULL error:nil];
+    if(![profile isKindOfClass:NSDictionary.class]) {
+        return nil;
+    }
+    NSDictionary* entitlements = profile[@"Entitlements"];
+    if(![entitlements isKindOfClass:NSDictionary.class]) {
+        return nil;
+    }
+    for(NSString* key in @[@"application-identifier", @"com.apple.application-identifier"]) {
+        NSString* value = entitlements[key];
+        if(![value isKindOfClass:NSString.class] || [value rangeOfString:@"*"].location != NSNotFound) {
+            continue;
+        }
+        NSRange separator = [value rangeOfString:@"."];
+        if(separator.location != NSNotFound && separator.location > 0 && separator.location + 1 < value.length) {
+            return [value substringFromIndex:separator.location + 1];
+        }
+    }
+    return nil;
+}
+
++ (NSString *)guestBundleIdentifierFromProvisioningProfileInBundleAtPath:(NSString *)path {
+    if(path.length == 0) {
+        return nil;
+    }
+    // Read only the claim in the profile currently embedded in the bundle. A
+    // hidden `.td-original.mobileprovision` can be stale or copied after patching;
+    // it is not evidence of the guest's original publishing identity.
+    NSString* profilePath = [path stringByAppendingPathComponent:@"embedded.mobileprovision"];
+    NSFileManager* fm = NSFileManager.defaultManager;
+    if(![fm fileExistsAtPath:profilePath]) {
+        return nil;
+    }
+    return LCBundleIdentifierFromProvisioningProfileData([NSData dataWithContentsOfFile:profilePath]);
+}
+
 + (NSProgress *)signAppBundleWithZSign:(NSURL *)path completionHandler:(void (^)(BOOL success, NSError *error))completionHandler {
     NSError *error;
 
@@ -129,7 +196,7 @@
     }
 
     NSLog(@"[LC] starting signing...");
-    
+
     NSProgress* ans = [NSClassFromString(@"ZSigner") signWithAppPath:[path path] bundleId:NSBundle.mainBundle.bundleIdentifier cert:self.certificateData pass:LCSharedUtils.certificatePassword completionHandler:completionHandler];
     
     return ans;
