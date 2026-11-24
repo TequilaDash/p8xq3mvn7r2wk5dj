@@ -87,9 +87,6 @@ private struct IManagerAssistiveTouchButton: View {
     @Binding var position: CGPoint
     /// 空闲淡化后的不透明度。
     let idleAlpha: Double
-    /// 悬浮窗，用于回写按钮的命中矩形。
-    let window: IManagerAssistiveTouchWindow?
-
     @State private var dimmed = false
     @State private var dimGeneration = 0
     @State private var dragStart: CGPoint?
@@ -142,32 +139,9 @@ private struct IManagerAssistiveTouchButton: View {
                     }
             )
             .onAppear(perform: scheduleDim)
-            .onAppear {
-                // 命中矩形不能靠 .onGeometryChange 量 —— 它挂在 .position() 之后，
-                // 而 position 返回的视图会撑满父容器，量到的永远是整屏，窗口就会
-                // 吃掉全部触摸（白屏消失后界面依然点不动的根因）。
-                // 这里直接用已知的 center 与 size 算，坐标原点取 GeometryReader 的全局位置。
-                let origin = proxy.frame(in: .global).origin
-                let rect = CGRect(
-                    x: origin.x + center.x - size / 2,
-                    y: origin.y + center.y - size / 2,
-                    width: size,
-                    height: size
-                )
-                // 略微放大，手指没那么准也能点到。
-                window?.buttonRegion = rect.insetBy(dx: -8, dy: -8)
-            }
-            .onChange(of: position) { _, _ in
-                // 拖动后同步命中矩形。
-                let origin = proxy.frame(in: .global).origin
-                let rect = CGRect(
-                    x: origin.x + center.x - size / 2,
-                    y: origin.y + center.y - size / 2,
-                    width: size,
-                    height: size
-                )
-                window?.buttonRegion = rect.insetBy(dx: -8, dy: -8)
-            }
+            // 命中区域用旧线的做法：一个不接收触摸的 UIView 占位，按钮布局到哪
+            // 它就跟着到哪，由 UIKit 的布局系统驱动，不手算坐标。
+            .background(IManagerHitRegion())
         }
     }
 
@@ -192,8 +166,8 @@ private struct IManagerAssistiveTouchButton: View {
 /// 只在按钮区域接收触摸，其余区域完全穿透的窗口。
 /// 这样它能盖在 alert 之上，又不会挡住 alert 自己的按钮。
 private final class IManagerAssistiveTouchWindow: UIWindow {
-    /// 按钮当前占据的矩形（窗口坐标），由 SwiftUI 布局实时回写。
-    var buttonRegion: CGRect = .zero
+    /// 按钮那块区域，由 IManagerHitRegion 在布局时回写（旧线做法）。
+    weak var buttonRegion: UIView?
 
     override var canBecomeKey: Bool { false }
 
@@ -202,8 +176,46 @@ private final class IManagerAssistiveTouchWindow: UIWindow {
     func iManagerCanAffectStatusBarAppearance() -> Bool { false }
 
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
-        guard buttonRegion.contains(point) else { return nil }
+        // 命中时再换算，拖动时 SwiftUI 祖先移动、这块标记自己没重新布局，
+        // 缓存的矩形会滞后（旧线踩过）。
+        guard let region = buttonRegion, region.window === self,
+              region.bounds.contains(region.convert(point, from: self)) else { return nil }
         return super.hitTest(point, with: event)
+    }
+}
+
+/// 旧线 TDOverlayHitRegion 的同款：一个不接收触摸的占位视图，
+/// 布局到哪就把自己交给窗口当命中区域，其余区域窗口一律穿透。
+private struct IManagerHitRegion: UIViewRepresentable {
+    func makeUIView(context: Context) -> UIView {
+        let view = RegionView()
+        view.isUserInteractionEnabled = false
+        view.backgroundColor = .clear
+        return view
+    }
+
+    func updateUIView(_ view: UIView, context: Context) {}
+
+    static func dismantleUIView(_ view: UIView, coordinator: ()) {
+        (view as? RegionView)?.clearInteractiveRegion()
+    }
+
+    private final class RegionView: UIView {
+        weak var overlayWindow: IManagerAssistiveTouchWindow?
+
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            clearInteractiveRegion()
+            overlayWindow = window as? IManagerAssistiveTouchWindow
+            overlayWindow?.buttonRegion = self
+        }
+
+        func clearInteractiveRegion() {
+            if overlayWindow?.buttonRegion === self {
+                overlayWindow?.buttonRegion = nil
+            }
+            overlayWindow = nil
+        }
     }
 }
 
@@ -276,7 +288,7 @@ final class IManagerAssistiveTouchController {
         // UIHostingController 的 view 默认是不透明白底；只清 window 的
         // backgroundColor 不够，必须连 host.view 一起清，否则整个屏幕被
         // 一块白板盖住，只露出按钮。
-        let host = UIHostingController(rootView: AnyView(rootView(window: overlay)))
+        let host = UIHostingController(rootView: AnyView(rootView()))
         host.view.backgroundColor = .clear
         host.view.isOpaque = false
         overlay.rootViewController = host
@@ -299,8 +311,8 @@ final class IManagerAssistiveTouchController {
         return UIWindow.Level(rawValue: max(UIWindow.Level.alert.rawValue + 2, highest + 1))
     }
 
-    private func rootView(window: IManagerAssistiveTouchWindow) -> some View {
-        IManagerAssistiveTouchRoot(window: window, onPress: { [weak self] in
+    private func rootView() -> some View {
+        IManagerAssistiveTouchRoot(onPress: { [weak self] in
             // 同旧线 lcHostHomePressed：先把多任务窗口收起来，再回主屏。
             if #available(iOS 16.0, *) {
                 MultitaskDockManager.shared.minimizeAllWindows()
@@ -314,7 +326,6 @@ final class IManagerAssistiveTouchController {
 
 /// 悬浮窗里的根视图：读设置、画按钮、回写位置。
 private struct IManagerAssistiveTouchRoot: View {
-    let window: IManagerAssistiveTouchWindow
     let onPress: () -> Void
     let onDoublePress: () -> Void
 
@@ -336,8 +347,7 @@ private struct IManagerAssistiveTouchRoot: View {
                     savedY = newValue.y
                 }
             ),
-            idleAlpha: idleAlpha,
-            window: window
+            idleAlpha: idleAlpha
         )
         .background(Color.clear)
     }
