@@ -142,12 +142,30 @@ private struct IManagerAssistiveTouchButton: View {
                     }
             )
             .onAppear(perform: scheduleDim)
-            // 只上报按钮自己的矩形。挂在 GeometryReader 外层会上报整屏，
-            // 窗口就会吃掉全屏触摸、挡住下面所有界面。
-            .onGeometryChange(for: CGRect.self) { proxy in
-                proxy.frame(in: .global)
-            } action: { rect in
+            .onAppear {
+                // 命中矩形不能靠 .onGeometryChange 量 —— 它挂在 .position() 之后，
+                // 而 position 返回的视图会撑满父容器，量到的永远是整屏，窗口就会
+                // 吃掉全部触摸（白屏消失后界面依然点不动的根因）。
+                // 这里直接用已知的 center 与 size 算，坐标原点取 GeometryReader 的全局位置。
+                let origin = proxy.frame(in: .global).origin
+                let rect = CGRect(
+                    x: origin.x + center.x - size / 2,
+                    y: origin.y + center.y - size / 2,
+                    width: size,
+                    height: size
+                )
                 // 略微放大，手指没那么准也能点到。
+                window?.buttonRegion = rect.insetBy(dx: -8, dy: -8)
+            }
+            .onChange(of: position) { _, _ in
+                // 拖动后同步命中矩形。
+                let origin = proxy.frame(in: .global).origin
+                let rect = CGRect(
+                    x: origin.x + center.x - size / 2,
+                    y: origin.y + center.y - size / 2,
+                    width: size,
+                    height: size
+                )
                 window?.buttonRegion = rect.insetBy(dx: -8, dy: -8)
             }
         }
