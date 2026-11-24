@@ -1,0 +1,48 @@
+name: Build zcontainer-test2
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ['zcontainer-test2']
+    tags: ['v2*']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-latest
+    env:
+      scheme: LiveContainer
+      archive_path: archive
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Select Xcode 27.x if present
+        run: |
+          ls /Applications | grep -i '^Xcode' || true
+          XC="$(ls -d /Applications/Xcode*27*.app 2>/dev/null | sort -V | tail -n1 || true)"
+          if [ -n "$XC" ]; then
+            sudo xcode-select -s "$XC/Contents/Developer"
+          fi
+          xcodebuild -version
+      - name: Archive
+        run: xcodebuild archive -archivePath "$archive_path" -scheme "$scheme" -project LiveContainer.xcodeproj -sdk iphoneos -arch arm64 -configuration Release CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO | xcpretty && exit ${PIPESTATUS[0]}
+      - name: Create IPA (unsigned, upstream packaging)
+        run: sh .github/build_github.sh
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: LiveContainer-unsigned-ipa
+          path: ${{ env.scheme }}.ipa
+      - name: Publish Release (on tag)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ env.scheme }}.ipa
+          tag_name: ${{ github.ref_name }}
+          name: zcontainer-test2 ${{ github.ref_name }}
+          body: |
+            zcontainer-test2 initial build from upstream getzeusapp/LiveContainer@zcontainer (${{ github.sha }}).
+            Unsigned IPA: sign with your certificate before installing.
