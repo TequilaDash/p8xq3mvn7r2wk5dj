@@ -7,6 +7,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #import "../LiveContainer/utils.h"
+typedef void (*TDLConsoleLogFn)(NSString *format, ...) NS_FORMAT_FUNCTION(1, 2);
 
 // 1.1.111 取证：访客主程序 initializer 抛未捕获 NSException 时，abort_report_np 之前
 // 没有我们的栈帧可看。这里装全局异常 handler，把 name + reason + callStackSymbols
@@ -19,7 +20,7 @@ static void LCGuestUncaughtExceptionHandler(NSException *exception) {
     NSString *stack = [symbols componentsJoinedByString:@" | "];
     NSString *text = [NSString stringWithFormat:@"[LC-EXCEPTION] name=%@ reason=%@ stack=%@", name, reason, stack];
     NSLog(@"%@", text);
-    TDConsoleLogFn logFn = (TDConsoleLogFn)dlsym(RTLD_DEFAULT, "TDConsoleLog");
+    TDLConsoleLogFn logFn = (TDLConsoleLogFn)dlsym(RTLD_DEFAULT, "TDConsoleLog");
     if (logFn) logFn(@"%@", text);
     const char *dir = getenv("TD_CONSOLE_LOG_DIR");
     NSString *directory = (dir && dir[0] == '/') ? [NSString stringWithUTF8String:dir] : nil;
