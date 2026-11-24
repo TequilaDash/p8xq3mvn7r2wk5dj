@@ -229,6 +229,20 @@ class LCAppModel: ObservableObject, Hashable {
     
     // You should let LCAppModel.runApp to decide whether to run in multitask mode, but you may override the multitask parameter if necessary.
     // `willLaunch` runs just before zContainer turns into the app the classic way, after signing, so the Home Screen can zoom into it.
+    /// 在 JIT 启动流程里调用 delegate。单独成函数是为了让 completion 闭包
+    /// 不必捕获非 Sendable 的 delegate（Swift 6 并发检查要求）。
+    @MainActor
+    private static func performJITLaunch(delegate: (any LCAppModelDelegate)?,
+                                         pid: Int32,
+                                         script: String?,
+                                         appName: String) async {
+        if let script, !script.isEmpty {
+            await delegate?.jitLaunch(withPID: pid, withScript: script, appName: appName)
+        } else {
+            await delegate?.jitLaunch(withPID: pid, withScript: nil, appName: appName)
+        }
+    }
+
     @MainActor
     func runApp(multitask: Bool? = nil, containerFolderName : String? = nil, bundleIdOverride : String? = nil, urlStr : String? = nil, forceJIT: Bool? = nil, multitaskWindowMode: MultitaskMode? = nil, willLaunch: (@MainActor () async -> Void)? = nil) async throws{
         if isAppRunning {
@@ -404,7 +418,10 @@ class LCAppModel: ObservableObject, Hashable {
                     // 会被 Swift 6 拒绝（LCAppModel 非 Sendable）。
                     let iManagerDisplayName = appInfo.displayName() ?? ""
                     let iManagerScriptData = jitLaunchScriptJs
-                    let iManagerDelegate = delegate
+                    // delegate 不是 Sendable；这个 completion 由 LCUtils 派发到
+                    // 主队列，且 LCAppModel 是 @MainActor，实际访问是串行的。
+                    // nonisolated(unsafe) 把这一保证显式化，供 Swift 6 检查放行。
+                    nonisolated(unsafe) let iManagerDelegate = delegate
                     LCUtils.launchMultitaskGuestApp(appInfo.displayName(), bundleId: selectedBundleId, dataUUID: currentDataFolder, nativeWindow: nativeWindow) { pidNumber, error in
                         if let error {
                             continuation.resume(throwing: error)
@@ -414,12 +431,14 @@ class LCAppModel: ObservableObject, Hashable {
                             continuation.resume(throwing: "Failed to obtain PID from LiveProcess")
                             return
                         }
+                        // 派发回主线程执行 JIT 启动。不在 @Sendable 闭包里捕获
+                        // delegate（它非 Sendable），把值传进静态函数。
+                        let iManagerPid = pidNumber.intValue
                         Task { @MainActor in
-                            if let scriptData = iManagerScriptData, !scriptData.isEmpty {
-                                await iManagerDelegate?.jitLaunch(withPID: pidNumber.intValue, withScript: scriptData, appName: iManagerDisplayName)
-                            } else {
-                                await iManagerDelegate?.jitLaunch(withPID: pidNumber.intValue, withScript: nil, appName: iManagerDisplayName)
-                            }
+                            await LCAppModel.performJITLaunch(delegate: iManagerDelegate,
+                                                              pid: iManagerPid,
+                                                              script: iManagerScriptData,
+                                                              appName: iManagerDisplayName)
                             continuation.resume()
                         }
                     }
