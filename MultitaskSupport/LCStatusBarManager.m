@@ -10,11 +10,14 @@
 
 @implementation LCStatusBarManager
 - (void)handleTapAction:(UIAction *)action {
-    if(self.nativeWindowViewController) {
-        [self.nativeWindowViewController handleStatusBarTapAction:action];
+    AppSceneViewController *native = self.nativeWindowViewController;
+    UIView *view = native.viewIfLoaded;
+    if (native.isAppRunning && view.window && !view.window.hidden && !view.hidden && view.alpha >= 0.01 && view.window.windowScene.statusBarManager == self) {
+        [native handleStatusBarTapAction:action];
         return;
     }
-    BOOL handledByVirtualWindow = [MultitaskDockManager.shared.windowHostingView handleStatusBarTapAction:action];
+    VirtualWindowsHostView *host = MultitaskDockManager.shared.windowHostingView;
+    BOOL handledByVirtualWindow = host.window.windowScene.statusBarManager == self && [host handleStatusBarTapAction:action];
     if(!handledByVirtualWindow) {
         [super handleTapAction:action];
     }

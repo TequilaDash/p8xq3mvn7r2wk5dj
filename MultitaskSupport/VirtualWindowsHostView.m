@@ -13,6 +13,7 @@ NSNotificationName const LCVirtualWindowsTouchedOutsideNotification = @"LCVirtua
 @implementation VirtualWindowsHostView {
     /// The size the windows were last laid out for.
     CGSize _laidOutSize;
+    UIEdgeInsets _laidOutSafeAreaInsets;
 }
 - (instancetype)init {
     // MultitaskDockManager sizes it to the main window's root view when it puts
@@ -24,19 +25,26 @@ NSNotificationName const LCVirtualWindowsTouchedOutsideNotification = @"LCVirtua
     self.shouldForwardTapAction = YES;
     return self;
 }
+- (void)safeAreaInsetsDidChange {
+    [super safeAreaInsetsDidChange];
+    [self setNeedsLayout];
+}
 - (void)layoutSubviews {
     [super layoutSubviews];
-    // A new size, as when the screen rotates, lays the snapped windows out
-    // again and keeps tucked-away ones against their sides.
-    if (CGSizeEqualToSize(self.bounds.size, _laidOutSize)) {
+    // Cutout/status-bar changes can leave the viewport size unchanged. The
+    // remote scenes still need the new edge clearance in that case.
+    UIEdgeInsets insets = self.window ? LCGuestSceneSafeAreaInsets(self, self, UIEdgeInsetsZero) : UIEdgeInsetsZero;
+    if (CGSizeEqualToSize(self.bounds.size, _laidOutSize) && UIEdgeInsetsEqualToEdgeInsets(insets, _laidOutSafeAreaInsets)) {
         return;
     }
     _laidOutSize = self.bounds.size;
+    _laidOutSafeAreaInsets = insets;
     [LCWindowSnapManager.shared layoutInView:self];
     for (UIView *view in self.subviews) {
         DecoratedAppSceneViewController *window = (id)view._viewDelegate;
-        if ([window isKindOfClass:DecoratedAppSceneViewController.class] && window.isStashed) {
-            [window restash];
+        if ([window isKindOfClass:DecoratedAppSceneViewController.class]) {
+            if (window.isStashed) [window restash];
+            if (window.appSceneVC.presenter) [window.appSceneVC updateFrameWithSettingsBlock:nil];
         }
     }
 }
@@ -63,6 +71,7 @@ NSNotificationName const LCVirtualWindowsTouchedOutsideNotification = @"LCVirtua
 }
 
 - (BOOL)handleStatusBarTapAction:(UIAction *)action {
+    if (!self.window || self.window.hidden || self.hidden || self.alpha < 0.01) return NO;
     // On iPad, only after a touch on a window: the Home Screen may be under
     // the status bar. On iPhone a window there covers it, and touches on its
     // app go to the app, past this view, which can't count them.
@@ -73,7 +82,7 @@ NSNotificationName const LCVirtualWindowsTouchedOutsideNotification = @"LCVirtua
     DecoratedAppSceneViewController *target = nil;
     for (UIView *view in self.subviews.reverseObjectEnumerator) {
         DecoratedAppSceneViewController *window = (id)view._viewDelegate;
-        if (view.hidden || ![window isKindOfClass:DecoratedAppSceneViewController.class]) {
+        if (view.hidden || view.alpha < 0.01 || ![window isKindOfClass:DecoratedAppSceneViewController.class] || window.isStashed) {
             continue;
         }
         if (LCWindowSnapManager.usesPhoneLayout && CGRectGetMinY(view.frame) >= 1) {

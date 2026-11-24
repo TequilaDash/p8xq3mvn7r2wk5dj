@@ -97,6 +97,8 @@ class AppInfoProvider {
     /// Picture, by their container. The dock fades them and drops their dot.
     @Published var hiddenAppUUIDs: Set<String> = []
     @Published var settingsChanged: Bool = false
+    private var visibilityGeneration: UInt = 0
+    private var isHidingDock = false
 
     /// The view the virtual windows live in, on the main window. Reading it
     /// first puts it there when it isn't yet, since the main window may not
@@ -105,6 +107,12 @@ class AppInfoProvider {
     @objc public var windowHostingView: VirtualWindowsHostView {
         attachWindowHostingView()
         return hostView
+    }
+
+    /// The actual UIKit owner of every decorated window's view.
+    @objc public var windowHostingController: UIViewController? {
+        attachWindowHostingView()
+        return windowHostController.parent == nil ? nil : windowHostController
     }
 
     /// Puts the apps' windows back above the Home Screen, after a screen that
@@ -123,6 +131,11 @@ class AppInfoProvider {
         isCreated && !shared.hostView.subviews.isEmpty
     }
     private let hostView = VirtualWindowsHostView()
+    private lazy var windowHostController: UIViewController = {
+        let controller = UIViewController()
+        controller.view = hostView
+        return controller
+    }()
     internal var hostingController: UIHostingController<AnyView>?
 
     public struct Constants {
@@ -281,15 +294,10 @@ class AppInfoProvider {
         return calculateIconSize(for: dockWidth)
     }
 
-    /// The main window, the one showing the Home Screen, which the virtual
-    /// windows and the dock go on. On iPad other scenes can be connected too,
-    /// so it isn't simply the first one. An iPhone has the one scene, whose
-    /// first window it has always used.
+    /// Resolve the Home Screen's app window on every device. An unordered
+    /// first connected window can be the floating overlay or a guest scene.
     public var keyWindow: UIWindow? {
-        if SharedModel.isPhone {
-            return (UIApplication.shared.connectedScenes.first as? UIWindowScene)?.windows.first
-        }
-        return MainWindow.window
+        MainWindow.window
     }
 
     public var safeAreaInsets: UIEdgeInsets {
@@ -327,33 +335,27 @@ class AppInfoProvider {
         NotificationCenter.default.removeObserver(self, name: UIDevice.orientationDidChangeNotification, object: nil)
     }
 
-    /// Puts the virtual windows' host view on the main window, and waits
-    /// while no main window is known.
-    ///
-    /// It goes just above the root view, sized to it, in the view the root
-    /// view is in, and comes back there when something covered it. Not in
-    /// the root view: that's SwiftUI's hosting view, whose gestures take every
-    /// touch on its subviews, so a long press on a window would open the menu
-    /// of the Home Screen icon or widget under it. The host view passes
-    /// touches through wherever there's no window, so being on top costs the
-    /// Home Screen nothing. Until the root view is on a window it goes in the
-    /// root view itself.
+    /// Isolate virtual-window gestures from SwiftUI without putting a child
+    /// controller's view outside its parent's view hierarchy.
     private func attachWindowHostingView() {
-        guard let window = keyWindow, let rootView = window.rootViewController?.view else { return }
-        guard let container = rootView.superview else {
-            if hostView.superview == nil {
-                hostView.frame = rootView.bounds
-                rootView.addSubview(hostView)
-            }
+        guard let window = keyWindow, let root = window.rootViewController else { return }
+        if let container = root as? MultitaskRootViewController,
+           container.windowsController === windowHostController {
+            container.loadViewIfNeeded()
+            container.view.bringSubviewToFront(hostView)
             return
         }
-        let siblings = container.subviews
-        if hostView.superview !== container {
-            hostView.frame = rootView.frame
-            container.insertSubview(hostView, aboveSubview: rootView)
-        } else if let rootIndex = siblings.firstIndex(of: rootView), siblings.firstIndex(of: hostView) != rootIndex + 1 {
-            container.insertSubview(hostView, aboveSubview: rootView)
+        if windowHostController.parent != nil {
+            windowHostController.willMove(toParent: nil)
+            hostView.removeFromSuperview()
+            windowHostController.removeFromParent()
         }
+        // Remove the former root before making it a child. UIKit must never
+        // observe a window root controller that already has a parent.
+        window.rootViewController = nil
+        let container = MultitaskRootViewController(home: root, windows: windowHostController)
+        window.rootViewController = container
+        container.view.layoutIfNeeded()
     }
 
     @objc private func deviceOrientationDidChange() {
@@ -520,7 +522,9 @@ class AppInfoProvider {
     @objc public func removeRunningApp(_ appUUID: String) {
         guard isDockEnabled() else { return }
         
-        DispatchQueue.main.async {
+        // Cleanup must remove the old entry before an exit completion can
+        // launch the same container again; a queued removal could erase it.
+        let remove = {
             withAnimation(Constants.appsAnimation) {
                 self.apps.removeAll { $0.appUUID == appUUID }
             }
@@ -536,15 +540,30 @@ class AppInfoProvider {
                 }
             }
         }
+        if Thread.isMainThread {
+            remove()
+        } else {
+            DispatchQueue.main.async(execute: remove)
+        }
     }
     
     @objc public func showDock() {
+        if !Thread.isMainThread {
+            DispatchQueue.main.async { self.showDock() }
+            return
+        }
         guard isDockEnabled() else { return }
-        guard !isVisible, let hostingController = hostingController else { return }
+        guard !isVisible || isHidingDock, let hostingController = hostingController else { return }
         
         guard let keyWindow = self.keyWindow else { return }
+        visibilityGeneration &+= 1
+        let generation = visibilityGeneration
+        isHidingDock = false
         
         DispatchQueue.main.async {
+            guard self.visibilityGeneration == generation else { return }
+            hostingController.view.layer.removeAllAnimations()
+            hostingController.view.transform = .identity
             self.isVisible = true
             
             let screenBounds = keyWindow.bounds
@@ -584,9 +603,17 @@ class AppInfoProvider {
     }
     
     @objc public func hideDock() {
+        if !Thread.isMainThread {
+            DispatchQueue.main.async { self.hideDock() }
+            return
+        }
         guard isVisible, let hostingController = hostingController else { return }
+        visibilityGeneration &+= 1
+        let generation = visibilityGeneration
+        isHidingDock = true
         
         DispatchQueue.main.async {
+            guard self.visibilityGeneration == generation else { return }
             UIView.animate(
                 withDuration: Constants.standardAnimationDuration,
                 delay: 0,
@@ -604,6 +631,10 @@ class AppInfoProvider {
                 let targetY = hostingController.view.frame.origin.y // Keep current Y
                 hostingController.view.frame.origin = CGPoint(x: targetX, y: targetY)
             } completion: { _ in
+                // A last-app restart may already have shown its replacement.
+                // The old fade-out must not hide that new Dock entry.
+                guard self.visibilityGeneration == generation else { return }
+                self.isHidingDock = false
                 self.isVisible = false
                 hostingController.view.transform = .identity
             }
@@ -621,24 +652,47 @@ class AppInfoProvider {
     
     
     // Find and bring corresponding multitask view to front
-    func bringMultitaskViewToFront(uuid: String, from center: CGPoint? = nil) -> Bool {
+    func bringMultitaskViewToFront(uuid: String, from center: CGPoint? = nil, fromDeck: Bool = false) -> Bool {
         guard let windowScene = keyWindow?.windowScene else {
             return false
         }
         attachWindowHostingView()
 
         guard let targetView = apps.first(where: { $0.appUUID == uuid })?.view,
-              let window = windowScene.windows.first else {
+              let window = targetView.window, window.windowScene === windowScene else {
             return false
         }
+        MultitaskManager.recordUse(container: uuid)
         passURLSchemeToView(targetView)
         // On iPhone it may be coming forward into a half of the split screen.
         if let decoratedVC = targetView._viewDelegate() as? DecoratedAppSceneViewController,
            LCWindowSnapManager.shared.claimPhoneSplitRequest(forWindow: decoratedVC) {
             return true
         }
-        animateViewAppearance(targetView, from: center, in: window)
+        if fromDeck, let decorated = targetView._viewDelegate() as? DecoratedAppSceneViewController {
+            revealForDeckSelection(decorated)
+            bringViewToFront(targetView, in: window)
+            decorated.revealWindowControls()
+        } else {
+            animateViewAppearance(targetView, from: center, in: window)
+        }
         return true
+    }
+
+    /// The deck already animated a content snapshot to the final viewport.
+    /// End any Dock flyer synchronously under that snapshot, not in a second
+    /// run-loop/animation after deck dismissal. Virtual guests share the host
+    /// window: do not call makeKey on it or steal a native scene's focus.
+    func revealForDeckSelection(_ controller: DecoratedAppSceneViewController) {
+        if let pip = PiPManager.shared, pip.isPiP(withDecoratedVC: controller) { pip.stopPiP() }
+        UIView.performWithoutAnimation {
+            controller.restoreFromDock()
+            controller.view.layer.removeAllAnimations()
+            controller.view.transform = .identity
+            controller.view.alpha = 1
+            controller.view.isHidden = false
+            controller.view.layoutIfNeeded()
+        }
     }
 
     private func passURLSchemeToView(_ view: UIView) {
@@ -747,9 +801,20 @@ class AppInfoProvider {
             }
         }
     }
+
     
     @objc public func minimizeAllWindows(except: DecoratedAppSceneViewController? = nil) {
-        DispatchQueue.main.async {
+        let minimizeWindows = {
+            // Home navigation is one departure event, not N minimize events.
+            // Record only the top visible guest before any view is hidden.
+            if except == nil,
+               let front = self.hostView.subviews.reversed().first(where: {
+                   !$0.isHidden && $0.alpha > 0 && $0._viewDelegate() is DecoratedAppSceneViewController
+               }),
+               let decorated = front._viewDelegate() as? DecoratedAppSceneViewController,
+               let uuid = decorated.appSceneVC.dataUUID {
+                MultitaskManager.recordUse(container: uuid)
+            }
             self.apps.forEach { app in
                 if let vc = app.view?._viewDelegate() as? DecoratedAppSceneViewController,
                    vc != except {
@@ -757,6 +822,12 @@ class AppInfoProvider {
                     vc.minimizeWindow()
                 }
             }
+        }
+        // Capture visible guests before Home navigation changes the screen.
+        if Thread.isMainThread {
+            minimizeWindows()
+        } else {
+            DispatchQueue.main.async(execute: minimizeWindows)
         }
     }
     

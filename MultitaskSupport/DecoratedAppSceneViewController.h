@@ -20,6 +20,11 @@ API_AVAILABLE(ios(16.0))
 /// Whether the window is tucked into the side of the screen, as macOS tucks
 /// away Picture in Picture, with a tab at the edge that brings it back.
 @property(nonatomic, readonly) BOOL isStashed;
+/// Last visible guest content, captured before minimization. Independent of
+/// whether the Dock is enabled; its wrapper alone runs the Dock animation.
+@property(nonatomic, strong, readonly) UIView *stackPreview;
+/// Content-only overview snapshot; never share the Dock flyer's UIView.
+@property(nonatomic, strong, readonly) UIView *stackContentPreview;
 - (instancetype)initWindowName:(NSString*)windowName bundleId:(NSString*)bundleId dataUUID:(NSString*)dataUUID rootVC:(UIViewController*)rootVC;
 /// Closes the window, ending its app, as its red dot does.
 - (void)closeWindow;

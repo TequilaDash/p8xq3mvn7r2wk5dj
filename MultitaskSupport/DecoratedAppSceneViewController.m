@@ -499,14 +499,16 @@ static NSNotificationName const LCWindowTouchedNotification = @"LCWindowTouchedN
 /// The picture of the window on its way into the multitask dock, while it
 /// goes.
 @property(nonatomic, weak) UIView *dockFlyer;
+@property(nonatomic, strong, readwrite) UIView *stackPreview;
+@property(nonatomic, strong, readwrite) UIView *stackContentPreview;
 @end
 
 @implementation DecoratedAppSceneViewController
 - (instancetype)initWindowName:(NSString*)windowName bundleId:(NSString*)bundleId dataUUID:(NSString*)dataUUID rootVC:(UIViewController*)rootVC {
     self = [super initWithNibName:nil bundle:nil];
     self.view = [[LCWindowView alloc] initWithFrame:self.view.frame];
-    [MultitaskDockManager.shared.windowHostingView addSubview:self.view];
     [rootVC addChildViewController:self];
+    [rootVC.view addSubview:self.view];
     
     _dataUUID = dataUUID;
     _scaleRatio = 1.0;
@@ -552,6 +554,7 @@ static NSNotificationName const LCWindowTouchedNotification = @"LCWindowTouchedN
         controlsItem.hidesSharedBackground = YES;
     }
     self.navigationItem.leftBarButtonItem = controlsItem;
+    [self didMoveToParentViewController:rootVC];
 
     return self;
 }
@@ -564,7 +567,7 @@ static NSNotificationName const LCWindowTouchedNotification = @"LCWindowTouchedN
     frame.origin = CGPointMake(rootViewCenter.x - frame.size.width / 2, rootViewCenter.y - frame.size.height / 2);
     
     if(_isMaximized) {
-        CGRect maxFrame = UIEdgeInsetsInsetRect(self.view.window.frame, self.view.window.safeAreaInsets);
+        CGRect maxFrame = [self screenSafeArea];
         // save origin as normalized coordinates
         frame.origin.x /= maxFrame.size.width;
         frame.origin.y /= maxFrame.size.height;
@@ -681,6 +684,7 @@ static NSNotificationName const LCWindowTouchedNotification = @"LCWindowTouchedN
         [_appSceneVC.view.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor],
         [_appSceneVC.view.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor]
     ]];
+    [_appSceneVC didMoveToParentViewController:self];
     
     
     NSUserDefaults *defaults = NSUserDefaults.lcSharedDefaults;
@@ -747,14 +751,7 @@ static NSNotificationName const LCWindowTouchedNotification = @"LCWindowTouchedN
     } else {
         self.appSceneVC.contentView.layer.sublayerTransform = CATransform3DMakeScale(_scaleRatio, _scaleRatio, 1.0);
     }
-    __weak typeof(self) weakSelf = self;
-    [self.appSceneVC updateFrameWithSettingsBlock:^(UIMutableApplicationSceneSettings *settings) {
-        if(weakSelf.isMaximized) {
-            [weakSelf updateMaximizedSafeAreaWithSettings:settings];
-        } else {
-            [weakSelf applyWindowedInsetsToSettings:settings];
-        }
-    }];
+    [self.appSceneVC updateFrameWithSettingsBlock:nil];
 }
 
 - (void)closeWindow {
@@ -820,6 +817,15 @@ static NSNotificationName const LCWindowTouchedNotification = @"LCWindowTouchedN
     if (CGRectIsEmpty(self.view.bounds)) return nil;
     UIView *picture = [self.view snapshotViewAfterScreenUpdates:NO];
     if (!picture) return nil;
+    self.stackPreview = picture;
+    // The overview supplies its own 34pt header. Capturing self.view here
+    // would duplicate window controls/borders inside the guest preview.
+    UIView *content = self.appSceneVC.viewIfLoaded;
+    [content layoutIfNeeded];
+    UIView *contentPicture = !CGRectIsEmpty(content.bounds) ? [content snapshotViewAfterScreenUpdates:NO] : nil;
+    // Retain a valid last picture if a transition briefly returns nil.
+    if (contentPicture) self.stackContentPreview = contentPicture;
+    [MultitaskStackManager.shared rememberController:self.appSceneVC];
     UIView *flyer = [[UIView alloc] initWithFrame:self.view.frame];
     flyer.userInteractionEnabled = NO;
     picture.frame = flyer.bounds;
@@ -847,6 +853,8 @@ static NSNotificationName const LCWindowTouchedNotification = @"LCWindowTouchedN
 }
 
 - (void)restoreFromDock {
+    self.stackPreview = nil;
+    self.stackContentPreview = nil;
     // A window brought back before its picture reached the dock comes
     // straight back out.
     [self.dockFlyer removeFromSuperview];
@@ -929,7 +937,7 @@ static NSNotificationName const LCWindowTouchedNotification = @"LCWindowTouchedN
         updateSettingsBlock = ^(UIMutableApplicationSceneSettings *settings) {
             [self updateWindowedFrameWithSettings:settings];
         };
-        CGRect maxFrame = UIEdgeInsetsInsetRect(self.view.window.frame, self.view.window.safeAreaInsets);
+        CGRect maxFrame = [self screenSafeArea];
         CGRect newFrame = CGRectMake(self.originalFrame.origin.x * maxFrame.size.width, self.originalFrame.origin.y * maxFrame.size.height, self.originalFrame.size.width, self.originalFrame.size.height);
         // The title bar comes back as the window shrinks, not after.
         self.isMaximized = NO;
@@ -1052,24 +1060,19 @@ static NSNotificationName const LCWindowTouchedNotification = @"LCWindowTouchedN
 - (void)appSceneVC:(AppSceneViewController*)vc didUpdateFromSettings:(UIMutableApplicationSceneSettings *)baseSettings transitionContext:(id)newContext lifecycleActionType:(uint32_t)actionType {
     [self.appSceneVC updateSettingsWithBlock:^(UIMutableApplicationSceneSettings *settings) {
         settings.userInterfaceStyle = baseSettings.userInterfaceStyle;
-        settings.interfaceOrientation = baseSettings.interfaceOrientation;
+        UIInterfaceOrientation orientation = self.view.window.windowScene.interfaceOrientation;
+        settings.interfaceOrientation = orientation != UIInterfaceOrientationUnknown ? orientation : baseSettings.interfaceOrientation;
         settings.deviceOrientation = baseSettings.deviceOrientation;
         settings.foreground = YES;
-        
+
         if(self.isMaximized) {
             [self updateMaximizedFrameWithSettings:settings];
         } else {
             [self updateWindowedFrameWithSettings:settings];
         }
-        CGRect newFrame = CGRectMake(0, 0, self.view.bounds.size.width, self.view.bounds.size.height - self.navigationBar.frame.size.height/self.scaleRatio);
-        
-        if(UIInterfaceOrientationIsLandscape(baseSettings.interfaceOrientation)) {
-            settings.frame = CGRectMake(0, 0, newFrame.size.height, newFrame.size.width);
-        } else {
-            settings.frame = CGRectMake(0, 0, newFrame.size.width, newFrame.size.height);
-        }
     }];
 }
+
 
 - (void)observeValueForKeyPath:(NSString *)keyPath ofObject:(id)object change:(NSDictionary *)change context:(void *)context {
     [self.view layoutIfNeeded];
@@ -1084,16 +1087,8 @@ static NSNotificationName const LCWindowTouchedNotification = @"LCWindowTouchedN
         
         [self updateVerticalConstraints];
         
-        if(_isMaximized) {
-            [self.appSceneVC updateSettingsWithBlock:^(UIMutableApplicationSceneSettings *settings) {
-                [self updateMaximizedFrameWithSettings:settings];
-            }];
-        } else {
-            [self.appSceneVC updateSettingsWithBlock:^(UIMutableApplicationSceneSettings *settings) {
-                [self applyWindowedInsetsToSettings:settings];
-            }];
-        }
         [self.view layoutIfNeeded];
+        [self.appSceneVC updateFrameWithSettingsBlock:nil];
     }];
 }
 
@@ -1262,6 +1257,7 @@ static NSNotificationName const LCWindowTouchedNotification = @"LCWindowTouchedN
     if (self.view.hidden || !self.view.superview) {
         return;
     }
+    [MultitaskManager recordUseOfContainer:self.dataUUID];
     [NSNotificationCenter.defaultCenter postNotificationName:LCWindowTouchedNotification object:self];
     // Reading the host view brings it back above the Home Screen first, in
     // case something the Home Screen drew since covered the windows.
@@ -1284,20 +1280,15 @@ static NSNotificationName const LCWindowTouchedNotification = @"LCWindowTouchedN
         // app goes edge to edge with the screen's safe area passed on to it.
         // Only a window bar at the bottom of the window keeps a title bar.
         BOOL hideWindowBar = self.isMaximized || !bottomWindowBar || LCWindowSnapManager.usesPhoneLayout;
+        if (self.isMaximized && self.view.superview) {
+            self.view.frame = self.view.superview.bounds;
+        }
         CGFloat navBarHeight = hideWindowBar ? 0 : 44;
         self.navigationBar.alpha = hideWindowBar ? 0 : 1;
         self.navigationBar.hidden = hideWindowBar;
         [self updateWindowControlsVisibility];
         [self updateAppSafeArea];
         
-        // Update safe area insets
-        if(self.isMaximized) {
-            self.appSceneVC.shouldSkipDebounceOnce = YES;
-            __weak typeof(self) weakSelf = self;
-            [self.appSceneVC updateSettingsWithBlock:^(UIMutableApplicationSceneSettings *settings) {
-                [weakSelf updateMaximizedFrameWithSettings:settings];
-            }];
-        }
         
         [NSLayoutConstraint deactivateConstraints:self.activatedVerticalConstraints];
         if(bottomWindowBar) {
@@ -1356,11 +1347,9 @@ static NSNotificationName const LCWindowTouchedNotification = @"LCWindowTouchedN
 /// The screen's safe area, in the view the windows are in.
 - (CGRect)screenSafeArea {
     UIView *hostView = self.view.superview;
-    CGRect bounds = hostView ? hostView.bounds : self.view.window.bounds;
-    if (CGRectIsEmpty(bounds)) {
-        bounds = UIScreen.mainScreen.bounds;
-    }
-    return UIEdgeInsetsInsetRect(bounds, self.view.window.safeAreaInsets);
+    if (!hostView) return self.view.bounds;
+    UIEdgeInsets insets = hostView.window ? LCGuestSceneSafeAreaInsets(hostView, hostView, UIEdgeInsetsZero) : UIEdgeInsetsZero;
+    return UIEdgeInsetsInsetRect(hostView.bounds, insets);
 }
 
 /// The part of the screen a window tucks against: its safe area.
@@ -1597,16 +1586,20 @@ static NSNotificationName const LCWindowTouchedNotification = @"LCWindowTouchedN
     // A window filling the screen, or a half of an iPhone's, keeps them
     // clear of the parts of the screen it covers.
     BOOL fillsArea = self.isMaximized || self.isPhoneSplit;
-    UIEdgeInsets safeArea = fillsArea ? self.view.safeAreaInsets : UIEdgeInsetsZero;
+    UIEdgeInsets safeArea = fillsArea ? LCGuestSceneSafeAreaInsets(self.view, self.view, UIEdgeInsetsZero) : UIEdgeInsetsZero;
     CGFloat x = (rightToLeft ? safeArea.right : safeArea.left) + offset.x;
     if (rightToLeft) {
         x = width - x - size.width;
     }
     CGFloat statusBarClearance = 0;
-    UIStatusBarManager *statusBar = self.view.window.windowScene.statusBarManager;
-    BOOL reachesTop = CGRectGetMinY([self.view convertRect:self.view.bounds toView:nil]) < 1;
-    if (fillsArea && reachesTop && statusBar && !statusBar.isStatusBarHidden) {
-        statusBarClearance = MAX(CGRectGetHeight(statusBar.statusBarFrame) - LCControlsStatusBarClearance, 0);
+    UIWindowScene *scene = self.view.window.windowScene;
+    UIStatusBarManager *statusBar = scene.statusBarManager;
+    if (fillsArea && statusBar && !statusBar.isStatusBarHidden) {
+        CGRect bar = [self.view convertRect:statusBar.statusBarFrame fromCoordinateSpace:scene.coordinateSpace];
+        CGRect overlap = CGRectIntersection(self.view.bounds, bar);
+        if (!CGRectIsNull(overlap) && !CGRectIsEmpty(overlap)) {
+            statusBarClearance = MAX(CGRectGetMaxY(overlap) - CGRectGetMinY(self.view.bounds) - LCControlsStatusBarClearance, 0);
+        }
     }
     capsule.frame = CGRectMake(x, statusBarClearance + offset.y, size.width, size.height);
 
@@ -1762,10 +1755,7 @@ static NSNotificationName const LCWindowTouchedNotification = @"LCWindowTouchedN
             [self.view layoutIfNeeded];
         } completion:nil];
     }
-    __weak typeof(self) weakSelf = self;
-    [self.appSceneVC updateSettingsWithBlock:^(UIMutableApplicationSceneSettings *settings) {
-        [weakSelf applyWindowedInsetsToSettings:settings];
-    }];
+    [self.appSceneVC updateFrameWithSettingsBlock:nil];
     [self updateMaximizeControl];
 }
 
@@ -1896,82 +1886,46 @@ static NSNotificationName const LCWindowTouchedNotification = @"LCWindowTouchedN
     return [[UITargetedPreview alloc] initWithView:capsule parameters:parameters];
 }
 
-- (UIEdgeInsets)updateMaximizedSafeAreaWithSettings:(UIMutableApplicationSceneSettings *)settings {
-    BOOL bottomWindowBar = [NSUserDefaults.lcSharedDefaults boolForKey:@"LCMultitaskBottomWindowBar"];
-    UIEdgeInsets safeAreaInsets = self.view.window.safeAreaInsets;
-    if(self.navigationBar.hidden) {
-        settings.peripheryInsets = safeAreaInsets;
-        safeAreaInsets = UIEdgeInsetsZero;
-    } else if(bottomWindowBar) {
-        // allow the control bar to overlap the bottom safe area
-        safeAreaInsets.bottom = 0;
-        settings.peripheryInsets = safeAreaInsets;
-        safeAreaInsets.top = safeAreaInsets.left = safeAreaInsets.right = 0;
-    } else {
-        settings.peripheryInsets = UIEdgeInsetsMake(0, safeAreaInsets.left, safeAreaInsets.bottom, safeAreaInsets.right);
-        safeAreaInsets.bottom = safeAreaInsets.left = safeAreaInsets.right = 0;
-    }
-    
-    // scale peripheryInsets to match the scale ratio
-    settings.peripheryInsets = UIEdgeInsetsMake(settings.peripheryInsets.top/_scaleRatio, settings.peripheryInsets.left/_scaleRatio, settings.peripheryInsets.bottom/_scaleRatio, settings.peripheryInsets.right/_scaleRatio);
-    if(UIDevice.currentDevice.userInterfaceIdiom != UIUserInterfaceIdiomPad) {
-        UIInterfaceOrientation currentOrientation = UIApp.statusBarOrientation;
-        if(UIInterfaceOrientationIsLandscape(currentOrientation)) {
-            safeAreaInsets.top = 0;
-        }
-        settings.safeAreaInsetsPortrait = LCUIEdgeInsetsRotateToOrientation(settings.peripheryInsets, currentOrientation);
-
-    } else {
-        settings.safeAreaInsetsPortrait = UIEdgeInsetsMake(settings.peripheryInsets.top, settings.peripheryInsets.left, settings.peripheryInsets.bottom, settings.peripheryInsets.right);
-    }
-    
-    safeAreaInsets.bottom = 0;
-    return safeAreaInsets;
-}
 
 - (void)updateMaximizedFrameWithSettings:(UIMutableApplicationSceneSettings *)settings {
-    CGRect maxFrame = UIEdgeInsetsInsetRect(self.view.window.frame, [self updateMaximizedSafeAreaWithSettings:settings]);
-    self.view.frame = maxFrame;
+    UIView *host = self.view.superview;
+    if (host) self.view.frame = host.bounds;
+    [self updateGuestFrameWithSettings:settings];
 }
 
-/// Tells a windowed app to keep the strip along the window's top clear,
-/// where the window controls are and the window drags. With the window bar
-/// at the bottom nothing covers the app. The screen's own safe area stays
-/// outside a window.
-- (void)applyWindowedInsetsToSettings:(UIMutableApplicationSceneSettings *)settings {
-    BOOL bottomWindowBar = [NSUserDefaults.lcSharedDefaults boolForKey:@"LCMultitaskBottomWindowBar"];
-    UIEdgeInsets insets = UIEdgeInsetsMake(bottomWindowBar ? 0 : LCWindowTopStripHeight / _scaleRatio, 0, 0, 0);
-    // A half of an iPhone's split screen has no strip: its app keeps clear
-    // of the parts of the screen the half covers, as the status bar.
-    if (LCWindowSnapManager.usesPhoneLayout) {
-        UIEdgeInsets covered = self.view.safeAreaInsets;
-        insets = UIEdgeInsetsMake(covered.top / _scaleRatio, covered.left / _scaleRatio, covered.bottom / _scaleRatio, covered.right / _scaleRatio);
-    }
-    settings.peripheryInsets = insets;
-    UIWindowScene *scene = self.view.window.windowScene;
-    if (UIDevice.currentDevice.userInterfaceIdiom != UIUserInterfaceIdiomPad && scene) {
-        settings.safeAreaInsetsPortrait = LCUIEdgeInsetsRotateToOrientation(insets, scene.interfaceOrientation);
-    } else {
-        settings.safeAreaInsetsPortrait = insets;
-    }
-}
 
-/// The same for apps hosted with UIKit's scene hosting, which takes the
-/// app's safe area from its view's: the strip adds to it.
+/// updateVerticalConstraints already removes a visible bottom bar from the
+/// app viewport. It must not also reserve a 44pt TOP inset. Display cutouts
+/// remain supplied once by LCGuestSceneSafeAreaInsets, including split mode.
+/// Upstream DecoratedAppSceneViewController.m:509-519 excludes the bar by
+/// constraints on its own edge, not by an extra top clearance.
 - (void)updateAppSafeArea {
-    BOOL bottomWindowBar = [NSUserDefaults.lcSharedDefaults boolForKey:@"LCMultitaskBottomWindowBar"];
-    CGFloat top = !self.isMaximized && !bottomWindowBar && !LCWindowSnapManager.usesPhoneLayout ? LCWindowTopStripHeight : 0;
-    self.appSceneVC.additionalSafeAreaInsets = UIEdgeInsetsMake(top, 0, 0, 0);
+    self.appSceneVC.additionalSafeAreaInsets = UIEdgeInsetsZero;
+}
+
+// Scene dimensions describe the constrained app viewport, never the decorated
+// window minus a possibly hidden/stale navigation-bar frame. Clearance is
+// published separately by AppSceneViewController and UIKitHooks.
+- (void)updateGuestFrameWithSettings:(UIMutableApplicationSceneSettings *)settings {
+    [self.view layoutIfNeeded];
+    CGSize size = self.appSceneVC.view.bounds.size;
+    if (!self.appSceneVC.usesHostingControllerAPI) {
+        size.width /= self.scaleRatio;
+        size.height /= self.scaleRatio;
+    }
+    if (UIInterfaceOrientationIsLandscape(settings.interfaceOrientation)) {
+        size = CGSizeMake(size.height, size.width);
+    }
+    settings.frame = (CGRect){CGPointZero, size};
 }
 
 - (void)updateWindowedFrameWithSettings:(UIMutableApplicationSceneSettings *)settings {
-    UIEdgeInsets safeAreaInsets = self.view.window.safeAreaInsets;
-    CGRect maxFrame = UIEdgeInsetsInsetRect(self.view.window.frame, safeAreaInsets);
-    [self applyWindowedInsetsToSettings:settings];
+    CGRect maxFrame = [self screenSafeArea];
 
     // A window being dragged goes where the finger takes it, however tall,
     // rather than back on screen.
     if (self.isBeingDragged) {
+        [self updateGuestFrameWithSettings:settings];
         return;
     }
 
@@ -1986,6 +1940,7 @@ static NSNotificationName const LCWindowTouchedNotification = @"LCWindowTouchedN
         [UIView animateWithDuration:0.3 animations:^{
             self.view.frame = placed;
         }];
+        [self updateGuestFrameWithSettings:settings];
         return;
     }
     
@@ -2001,6 +1956,7 @@ static NSNotificationName const LCWindowTouchedNotification = @"LCWindowTouchedN
     [UIView animateWithDuration:0.3 animations:^{
         self.view.frame = frame;
     }];
+    [self updateGuestFrameWithSettings:settings];
 }
 
 - (void)updateOriginalFrame {
@@ -2010,7 +1966,7 @@ static NSNotificationName const LCWindowTouchedNotification = @"LCWindowTouchedN
 }
 
 - (void)updateOriginalFrameFromFrame:(CGRect)frame {
-    CGRect maxFrame = UIEdgeInsetsInsetRect(self.view.window.frame, self.view.window.safeAreaInsets);
+    CGRect maxFrame = [self screenSafeArea];
     // save origin as normalized coordinates
     self.originalFrame = CGRectMake(frame.origin.x / maxFrame.size.width, frame.origin.y / maxFrame.size.height, frame.size.width, frame.size.height);
 }

@@ -28,8 +28,15 @@ API_AVAILABLE(ios(16.0))
 @property(nonatomic) int pid;
 @property(nonatomic) id<AppSceneViewControllerDelegate> delegate;
 @property(nonatomic) BOOL isAppRunning;
+@property(nonatomic) BOOL isUserTerminating;
+@property(nonatomic, readonly) BOOL isTerminated;
+@property(nonatomic, readonly) bool isNativeWindow;
 @property(nonatomic) BOOL shouldIgnoreSceneUpdates, shouldSkipDebounceOnce;
 @property(nonatomic) CGFloat scaleRatio;
+/// 访客自己的方向覆盖（堆叠卡片「旋转方向」）; Unknown 表示跟随宿主.
+/// 写这个值后调用 updateFrameWithSettingsBlock:, 让场景按新方向重排,
+/// 不依赖访客进程内的 mask hook 是否被触发.
+@property(nonatomic) UIInterfaceOrientation orientationOverride;
 @property(nonatomic) UIView* contentView;
 @property(nonatomic) _UIScenePresenter *presenter;
 @property(nonatomic) _UISceneHostingController *hostingController API_AVAILABLE(ios(17.0));
@@ -39,6 +46,9 @@ API_AVAILABLE(ios(16.0))
 - (void)updateSettingsWithBlock:(void(^)(UIMutableApplicationSceneSettings *settings))block;
 - (void)appTerminationCleanUp;
 - (void)terminate;
+/// Completes on the main queue only after this PID exited and its scene was
+/// invalidated, or with an error. A timeout never counts as a successful exit.
+- (void)terminateWithCompletion:(void (^)(NSError * _Nullable error))completion NS_SWIFT_NAME(terminate(completion:));
 - (void)openURLScheme:(NSString *)urlString;
 - (void)handleStatusBarTapAction:(UIAction *)action;
 - (BOOL)usesHostingControllerAPI;

@@ -15,9 +15,8 @@
 //  移植到 test2 时逐项核对过依赖，只有两处需要适配：
 //    1. 旧线 HomeButton(action:showsGlass:) —— test2 的 HomeButton 只有 action 参数，
 //       玻璃效果由 homeButtonGlass() 内部固定，不需要参数。
-//    2. 旧线 MultitaskStackManager.shared.present() —— test2 还没有堆叠后台
-//       这个类（后面要接过来）。双击**保留**，走 onDoublePress 回调，
-//       接堆叠后台时只需在引用点赋值，本文件不用改。
+//    2. 旧线 MultitaskStackManager.shared.present() —— 堆叠后台已从旧线移植
+//       （iManager/MultitaskStackView.swift），双击直接调用它。
 //  其余依赖 test2 都有：MultitaskDockManager.shared.minimizeAllWindows(except:)、
 //  HomeDesign.homeButtonSize、HomeScreenModel.goHome()。
 //
@@ -250,8 +249,7 @@ final class IManagerAssistiveTouchController {
     private var observers: [NSObjectProtocol] = []
     /// 单击按钮要做什么，由引用点设置（通常是回主屏）。
     var onPress: (() -> Void)?
-    /// 双击按钮要做什么。旧线是进多任务堆叠；test2 的堆叠后台接进来后
-    /// 在引用点赋 MultitaskStackManager.shared.present 即可，本文件不用改。
+    /// 双击按钮的额外动作。堆叠后台已接（双击直接 present），这里留给调用方扩展。
     var onDoublePress: (() -> Void)?
 
     private init() {
@@ -359,6 +357,8 @@ final class IManagerAssistiveTouchController {
             }
             self?.onPress?()
         }, onDoublePress: { [weak self] in
+            // 双击：打开最近任务（旧线 MultitaskStackManager.shared.present()）。
+            MultitaskStackManager.shared.present()
             self?.onDoublePress?()
         })
     }

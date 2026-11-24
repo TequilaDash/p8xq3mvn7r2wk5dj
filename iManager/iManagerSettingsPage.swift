@@ -38,6 +38,17 @@ struct IManagerSettingsPage: View {
                 }
 
                 NavigationLink {
+                    IManagerRecentTasksPage()
+                } label: {
+                    IManagerRow(
+                        icon: "rectangle.stack.fill",
+                        color: .purple,
+                        title: "最近任务样式",
+                        detail: IManagerRecentTasks.isEnabled ? "已启用" : "未启用"
+                    )
+                }
+
+                NavigationLink {
                     IManagerAssistiveTouchPage()
                 } label: {
                     IManagerRow(

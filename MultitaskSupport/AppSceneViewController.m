@@ -1,3 +1,5 @@
+extern const char *TDHostHomeDocumentsPath(void);
+
 //
 //  AppSceneView.m
 //  LiveContainer
@@ -13,10 +15,12 @@
 #import "LCSharedUtils.h"
 #import "utils.h"
 #import "UIKitPrivate+MultitaskSupport.h"
+#include <errno.h>
+#include <signal.h>
 
 @interface AppSceneViewController()
 @property int resizeDebounceToken;
-@property bool isNativeWindow;
+@property(nonatomic, readwrite) bool isNativeWindow;
 @property NSUUID* identifier;
 @end
 
@@ -26,6 +30,11 @@
 @property(nonatomic) NSString *sceneID;
 @property(nonatomic) NSExtension* extension;
 @property(nonatomic) bool isAppTerminationCleanUpCalled;
+@property(nonatomic, readwrite) BOOL isTerminated;
+@property(nonatomic) BOOL observedTerminationExit;
+@property(nonatomic) NSUInteger terminationWaitGeneration;
+@property(nonatomic, strong) dispatch_source_t terminationExitSource;
+@property(nonatomic, copy) void (^terminationCompletion)(NSError *error);
 @end
 
 @implementation AppSceneViewController
@@ -38,7 +47,9 @@
     self.bundleId = bundleId;
     self.scaleRatio = 1.0;
     self.isAppTerminationCleanUpCalled = false;
-    self.isNativeWindow = [NSUserDefaults.lcSharedDefaults integerForKey:@"LCMultitaskMode" ] == 1;
+    // The caller chooses the window type per launch, not the current global
+    // preference (which may have changed while this guest was running).
+    self.isNativeWindow = ![delegate isKindOfClass:DecoratedAppSceneViewController.class];
     
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
@@ -56,13 +67,36 @@
     
     NSExtensionItem *item = [NSExtensionItem new];
     NSMutableArray* bookmarks = [NSMutableArray array];
+    const char *tdHostDocumentsPath = TDHostHomeDocumentsPath();
+    NSString *tdGlobalFlagPath = tdHostDocumentsPath ? [[NSString stringWithUTF8String:tdHostDocumentsPath] stringByAppendingPathComponent:@"TDGlobalHide"] : nil;
+    BOOL tdGlobalHide = tdGlobalFlagPath && [[NSString stringWithContentsOfFile:tdGlobalFlagPath encoding:NSUTF8StringEncoding error:nil] isEqualToString:@"1"];
+    // A dictionary literal throws on a nil value. Host boot can leave the URL
+    // scheme unset, and the selected ids are optional, so never pass nil here.
+    NSString *hostScheme = NSUserDefaults.lcAppUrlScheme;
+    if (!hostScheme) {
+        NSArray *schemes = NSBundle.mainBundle.infoDictionary[@"CFBundleURLTypes"][0][@"CFBundleURLSchemes"];
+        hostScheme = schemes.firstObject ?: @"livecontainer";
+    }
     NSMutableDictionary *userInfo = @{
-        @"hostUrlScheme": NSUserDefaults.lcAppUrlScheme,
-        @"selected": _bundleId,
-        @"selectedContainer": _dataUUID,
+        @"hostUrlScheme": hostScheme,
+        @"selected": _bundleId ?: @"",
+        @"selectedContainer": _dataUUID ?: @"",
         @"bookmarks": bookmarks,
         @"lcHomePath": NSHomeDirectory(),
+        @"tdGlobalHide": @(tdGlobalHide),
     }.mutableCopy;
+    // Keep per-app fields for LiveProcess versions that read them from the
+    // request. The common bootstrap reads the installed guest plist itself.
+    bool payloadIsSharedApp = false;
+    NSBundle *payloadBundle = bundleId ? [LCSharedUtils findBundleWithBundleId:bundleId isSharedAppOut:&payloadIsSharedApp] : nil;
+    NSString *payloadInfoPath = payloadBundle ? [payloadBundle.bundlePath stringByAppendingPathComponent:@"LCAppInfo.plist"] : nil;
+    NSDictionary *payloadAppInfo = payloadInfoPath ? [NSDictionary dictionaryWithContentsOfFile:payloadInfoPath] : nil;
+    for (NSString *key in @[@"hideLiveContainer", @"sysctlSpoof", @"secTaskSpoof",
+                             @"csopsSpoof", @"procSpoof", @"csopsKeepDebugged"]) {
+        if ([payloadAppInfo[key] isKindOfClass:NSNumber.class]) {
+            userInfo[key] = payloadAppInfo[key];
+        }
+    }
     
     NSString* launchAppUrlScheme = [NSUserDefaults.standardUserDefaults stringForKey:@"launchAppUrlScheme"];
     [NSUserDefaults.lcUserDefaults removeObjectForKey:@"launchAppUrlScheme"];
@@ -73,20 +107,21 @@
     NSURL *docURL = [NSFileManager.defaultManager URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask].lastObject;
     if ([NSUserDefaults.standardUserDefaults boolForKey:@"LCSharePrivateDataWithLiveProcess"]) {
         NSData* bookmarkData = [docURL bookmarkDataWithOptions:(1<<11) includingResourceValuesForKeys:0 relativeToURL:0 error:0];
-        [bookmarks addObject:bookmarkData];
+        // Bookmark creation returns nil on failure; -addObject:nil throws.
+        if (bookmarkData) { [bookmarks addObject:bookmarkData]; }
     } else {
-        bool isSharedApp = false;
-        NSBundle* bundle = [LCSharedUtils findBundleWithBundleId:bundleId isSharedAppOut:&isSharedApp];
         // when mutlitask with private app, we can restrict its sandbox to only its own container
-        if (!isSharedApp) {
+        if (!payloadIsSharedApp) {
             NSURL *dataURL = [docURL URLByAppendingPathComponent:[NSString stringWithFormat:@"Data/Application/%@", dataUUID]];
             NSURL *tweaksURL = [docURL URLByAppendingPathComponent:@"Tweaks"];
-            [bookmarks addObject:[bundle.bundleURL bookmarkDataWithOptions:(1<<11) includingResourceValuesForKeys:0 relativeToURL:0 error:0]];
+            NSData *bundleBm = [payloadBundle.bundleURL bookmarkDataWithOptions:(1<<11) includingResourceValuesForKeys:0 relativeToURL:0 error:0];
+            if (bundleBm) { [bookmarks addObject:bundleBm]; }
             NSData* containerBookmark = [dataURL bookmarkDataWithOptions:(1<<11) includingResourceValuesForKeys:0 relativeToURL:0 error:0];
             if(containerBookmark) {
                 [bookmarks addObject:containerBookmark];
             }
-            [bookmarks addObject:[tweaksURL bookmarkDataWithOptions:(1<<11) includingResourceValuesForKeys:0 relativeToURL:0 error:0]];
+            NSData *tweaksBm = [tweaksURL bookmarkDataWithOptions:(1<<11) includingResourceValuesForKeys:0 relativeToURL:0 error:0];
+            if (tweaksBm) { [bookmarks addObject:tweaksBm]; }
         }
     }
     item.userInfo = userInfo;
@@ -94,7 +129,9 @@
     __weak typeof(self) weakSelf = self;
     [_extension setRequestCancellationBlock:^(NSUUID *uuid, NSError *error) {
         [weakSelf appTerminationCleanUp];
-        [weakSelf.delegate appSceneVC:weakSelf didInitializeWithError:error];
+        if (!weakSelf.isUserTerminating) {
+            [weakSelf.delegate appSceneVC:weakSelf didInitializeWithError:error];
+        }
     }];
     [_extension setRequestInterruptionBlock:^(NSUUID *uuid) {
         [weakSelf appTerminationCleanUp];
@@ -123,6 +160,7 @@
 }
 
 - (void)setUpAppPresenter {
+    if (self.isUserTerminating || self.isAppTerminationCleanUpCalled) return;
     RBSProcessPredicate* predicate = [PrivClass(RBSProcessPredicate) predicateMatchingIdentifier:@(self.pid)];
     FBProcessManager *manager = [PrivClass(FBProcessManager) sharedInstance];
     // At this point, the process is spawned and we're ready to create a scene to render in our app
@@ -224,6 +262,9 @@
         [self.contentView addSubview:self.presenter.presentationView];
     }
     [self.view addSubview:_contentView];
+    if (@available(iOS 18.0, *)) {
+        [self.hostingController.sceneViewController didMoveToParentViewController:self];
+    }
     
     // If we have a staging URL scheme, pass it now
     NSString *launchUrl = [NSUserDefaults.standardUserDefaults stringForKey:@"launchAppUrlScheme"];
@@ -244,15 +285,112 @@
     self.hostScene = self.view.window.windowScene;
     self.settingsDiffKey = NSUUID.UUID.UUIDString;
     [self.hostScene _registerSettingsDiffActionArray:@[self] forKey:self.settingsDiffKey];
+    // A successful scene launch is usage, independent of Dock visibility.
+    [MultitaskManager recordUseOfContainer:self.dataUUID];
+    [MultitaskStackManager.shared rememberController:self];
+    [NSNotificationCenter.defaultCenter postNotificationName:@"LCMultitaskWindowsChanged" object:self];
 }
 
 - (void)terminate {
-    if(self.isAppRunning) {
-        [self.extension _kill:SIGTERM];
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            [self.extension _kill:SIGKILL];
-        });
+    if (!NSThread.isMainThread) {
+        dispatch_async(dispatch_get_main_queue(), ^{ [self terminate]; });
+        return;
     }
+    // Keep the existing extension termination path, bound to this launch.
+    self.isUserTerminating = YES;
+    int pid = self.pid;
+    if (pid > 0 && (kill(pid, 0) == 0 || errno != ESRCH)) {
+        NSUUID *identifier = self.identifier;
+        NSExtension *extension = self.extension;
+        [extension _kill:SIGTERM];
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            if (!self.observedTerminationExit && self.pid == pid && [self.identifier isEqual:identifier] && (kill(pid, 0) == 0 || errno != ESRCH)) {
+                [extension _kill:SIGKILL];
+            }
+        });
+    } else if (pid > 0) {
+        [self appTerminationCleanUp];
+    }
+}
+
+- (void)finishTerminationWithError:(NSError *)error {
+    void (^completion)(NSError *) = self.terminationCompletion;
+    self.terminationCompletion = nil;
+    ++self.terminationWaitGeneration;
+    if (self.terminationExitSource) {
+        dispatch_source_cancel(self.terminationExitSource);
+        self.terminationExitSource = nil;
+    }
+    // Delegate/Dock cleanup queued by appTerminationCleanUp runs first.
+    if (completion) dispatch_async(dispatch_get_main_queue(), ^{ completion(error); });
+}
+
+- (void)finishTerminationIfPossible {
+    if (self.terminationCompletion && self.observedTerminationExit && self.isTerminated) {
+        [self finishTerminationWithError:nil];
+    }
+}
+
+- (void)terminateWithCompletion:(void (^)(NSError *))completion {
+    if (!completion) {
+        [self terminate];
+        return;
+    }
+    if (!NSThread.isMainThread) {
+        dispatch_async(dispatch_get_main_queue(), ^{ [self terminateWithCompletion:completion]; });
+        return;
+    }
+    if (self.terminationCompletion || self.pid <= 0) {
+        NSString *message = self.terminationCompletion ? @"该应用正在结束，请勿重复重新启动" : @"应用仍在启动，无法确认要结束的进程";
+        completion([NSError errorWithDomain:@"LCAppTermination" code:1 userInfo:@{NSLocalizedDescriptionKey: message}]);
+        return;
+    }
+    int pid = self.pid;
+    NSUInteger generation = ++self.terminationWaitGeneration;
+    self.terminationCompletion = completion;
+    self.observedTerminationExit = NO;
+    if (kill(pid, 0) == -1 && errno == ESRCH) {
+        self.isUserTerminating = YES;
+        self.observedTerminationExit = YES;
+        [self appTerminationCleanUp];
+        [self finishTerminationIfPossible];
+        return;
+    }
+    dispatch_source_t source = dispatch_source_create(DISPATCH_SOURCE_TYPE_PROC, (uintptr_t)pid, DISPATCH_PROC_EXIT, dispatch_get_main_queue());
+    if (!source) {
+        [self finishTerminationWithError:[NSError errorWithDomain:@"LCAppTermination" code:2 userInfo:@{NSLocalizedDescriptionKey: @"无法确认该应用是否退出，未重新启动"}]];
+        return;
+    }
+    self.terminationExitSource = source;
+    // This source retains the controller even when closing its card/window
+    // removes its last UI owner. Only an exit event (or ESRCH) proves exit.
+    dispatch_source_set_event_handler(source, ^{
+        if (self.terminationWaitGeneration != generation || !self.terminationExitSource) return;
+        if (dispatch_source_get_data(self.terminationExitSource) & DISPATCH_PROC_EXIT) {
+            self.observedTerminationExit = YES;
+            [self appTerminationCleanUp];
+            [self finishTerminationIfPossible];
+        }
+    });
+    dispatch_source_set_registration_handler(source, ^{
+        if (self.terminationWaitGeneration == generation && kill(pid, 0) == -1 && errno == ESRCH) {
+            self.observedTerminationExit = YES;
+            [self appTerminationCleanUp];
+            [self finishTerminationIfPossible];
+        }
+    });
+    dispatch_resume(source);
+    NSLog(@"[LC][Multitask] waiting for selected guest exit bundle=%@ container=%@ pid=%d", self.bundleId, self.dataUUID, pid);
+    // closeWindow may already have sent SIGTERM; observe that same close
+    // rather than sending a second signal/escalation sequence.
+    if (!self.isUserTerminating) [self terminate];
+    __weak typeof(self) weakSelf = self;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(10 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        typeof(self) self = weakSelf;
+        if (!self || self.terminationWaitGeneration != generation || !self.terminationCompletion) return;
+        NSString *message = [NSString stringWithFormat:@"等待应用进程退出超时（PID %d），未重新启动以避免重复运行", pid];
+        [self finishTerminationWithError:[NSError errorWithDomain:@"LCAppTermination" code:3 userInfo:@{NSLocalizedDescriptionKey: message}]];
+    });
 }
 
 - (void)_performActionsForUIScene:(UIScene *)scene withUpdatedFBSScene:(id)fbsScene settingsDiff:(FBSSceneSettingsDiff *)diff fromSettings:(UIApplicationSceneSettings *)settings transitionContext:(id)context lifecycleActionType:(uint32_t)actionType {
@@ -280,8 +418,31 @@
             return;
         }
         [self updateSettingsWithBlock:^(UIMutableApplicationSceneSettings *settings) {
-            settings.deviceOrientation = UIDevice.currentDevice.orientation;
-            settings.interfaceOrientation = self.view.window.windowScene.interfaceOrientation;
+            // 堆叠卡片的「旋转方向」: 有覆盖就用访客自己的方向, 否则跟随宿主.
+            UIInterfaceOrientation orientation = self.orientationOverride != UIInterfaceOrientationUnknown
+                ? self.orientationOverride
+                : self.view.window.windowScene.interfaceOrientation;
+            // deviceOrientation 必须跟着一起改, 否则 UIKit 认为设备没转, 场景设置里的
+            // interfaceOrientation 不生效 —— 「反转」点了没反应就是这个原因.
+            if (self.orientationOverride != UIInterfaceOrientationUnknown) {
+                switch (orientation) {
+                    case UIInterfaceOrientationLandscapeLeft:
+                        settings.deviceOrientation = UIDeviceOrientationLandscapeRight;
+                        break;
+                    case UIInterfaceOrientationLandscapeRight:
+                        settings.deviceOrientation = UIDeviceOrientationLandscapeLeft;
+                        break;
+                    case UIInterfaceOrientationPortraitUpsideDown:
+                        settings.deviceOrientation = UIDeviceOrientationPortraitUpsideDown;
+                        break;
+                    default:
+                        settings.deviceOrientation = UIDeviceOrientationPortrait;
+                        break;
+                }
+            } else {
+                settings.deviceOrientation = UIDevice.currentDevice.orientation;
+            }
+            settings.interfaceOrientation = orientation;
             CGRect frame = self.view.frame;
             if(!self.usesHostingControllerAPI) {
                 frame.size.width /= self.scaleRatio;
@@ -313,29 +474,63 @@
     }
     
     if(!_hostingController && self.contentView) {
-        // Legacy path
-        [self.presenter.scene updateSettingsWithBlock:updateSettingsBlock];
+        // The legacy presenter has no view-geometry publisher. Apply the
+        // viewport's clearance at the end of every update, including resizes.
+        [self.presenter.scene updateSettingsWithBlock:^(UIMutableApplicationSceneSettings *settings) {
+            updateSettingsBlock(settings);
+            if (self.view.window && !CGRectIsEmpty(self.view.bounds)) {
+                UIEdgeInsets insets = LCGuestSceneSafeAreaInsets(self.view, self.view, self.additionalSafeAreaInsets);
+                CGFloat scale = self.scaleRatio;
+                LCApplyGuestSceneSafeAreaInsets(settings, UIEdgeInsetsMake(insets.top / scale, insets.left / scale, insets.bottom / scale, insets.right / scale));
+                LCApplyGuestSceneStatusBarFrame(settings, self.view, scale);
+            }
+        }];
         return;
     }
-    
-    /// iOS 18.0 path, most are automatically handled by setting values to _UISceneHostingViewController
-    /// This is also reachable on legacy path when contentView is nil during early setup
-    UIMutableApplicationSceneSettings *tempSettings = [self.presenter.scene.settings mutableCopy];
+
+    FBScene *scene = self.presenter.scene;
+    UIMutableApplicationSceneSettings *tempSettings = [scene.settings mutableCopy];
     if(!tempSettings) {
         tempSettings = [UIMutableApplicationSceneSettings new];
     }
     updateSettingsBlock(tempSettings);
-    CGRect frame = tempSettings.frame;
-    if(UIInterfaceOrientationIsLandscape(tempSettings.interfaceOrientation)) {
-        frame = CGRectMake(frame.origin.x, frame.origin.y, frame.size.height, frame.size.width);
-    }
-    
     if (self.contentView) {
-        // Discard position
-        frame.origin = CGPointZero;
-        self.contentView.frame = frame;
+        // UIKit owns the hosted scene's frame. Size its actual surface to the
+        // container instead of feeding a scene frame back into a transformed
+        // UIView.frame (which is undefined and shrinks again at non-unit scale).
+        CGFloat scale = self.scaleRatio;
+        if (!CGRectIsEmpty(self.view.bounds)) {
+            CGRect bounds = CGRectMake(0, 0, self.view.bounds.size.width / scale, self.view.bounds.size.height / scale);
+            if (!CGRectEqualToRect(self.contentView.bounds, bounds)) self.contentView.bounds = bounds;
+            self.contentView.layer.anchorPoint = CGPointZero;
+            self.contentView.layer.position = CGPointZero;
+        }
+
+        // This method publishes a complete settings object directly. Do not
+        // depend on that private FrontBoard path invoking the hosting hook.
+        // An attached surface already converts through its scale; only the
+        // unattached-container seed needs an explicit scale conversion.
+        UIView *viewport = self.contentView.window ? self.contentView : self.view;
+        CGFloat viewportScale = viewport == self.contentView ? 1 : scale;
+        if (self.view.window && viewport.window == self.view.window && !CGRectIsEmpty(viewport.bounds)) {
+            UIEdgeInsets insets = LCGuestSceneSafeAreaInsets(viewport, self.view, self.additionalSafeAreaInsets);
+            LCApplyGuestSceneSafeAreaInsets(tempSettings, UIEdgeInsetsMake(insets.top / viewportScale, insets.left / viewportScale, insets.bottom / viewportScale, insets.right / viewportScale));
+            LCApplyGuestSceneStatusBarFrame(tempSettings, viewport, viewportScale);
+        }
+        // Once attached, UIKit owns the hosted scene's display frame. Before
+        // attachment its settings may still contain zero or an earlier size:
+        // retain the caller's initial viewport instead of replaying that frame.
+        CGRect hostedFrame = scene.settings.frame;
+        if (self.contentView.window && !CGRectIsEmpty(hostedFrame)) {
+            tempSettings.frame = hostedFrame;
+        }
+        [scene updateSettings:tempSettings withTransitionContext:nil completion:nil];
     } else {
-        // This method can be called while contentView is nil to set up initial frame
+        // Early legacy setup, before a presentation view exists.
+        CGRect frame = tempSettings.frame;
+        if(UIInterfaceOrientationIsLandscape(tempSettings.interfaceOrientation)) {
+            frame = CGRectMake(frame.origin.x, frame.origin.y, frame.size.height, frame.size.width);
+        }
         self.view.frame = frame;
     }
 }
@@ -345,13 +540,31 @@
 }
 
 - (void)appTerminationCleanUp {
+    if (!NSThread.isMainThread) {
+        dispatch_async(dispatch_get_main_queue(), ^{ [self appTerminationCleanUp]; });
+        return;
+    }
+    // The request-invalidation callback can win the race with the proc
+    // source. ESRCH is another exit proof; EPERM must never count as exit.
+    if (self.terminationCompletion && self.pid > 0 && kill(self.pid, 0) == -1 && errno == ESRCH) {
+        self.observedTerminationExit = YES;
+    }
     if(_isAppTerminationCleanUpCalled) {
+        [self finishTerminationIfPossible];
         return;
     }
     _isAppTerminationCleanUpCalled = true;
     dispatch_async(dispatch_get_main_queue(), ^{
+        // Preserve the last obtainable screen BEFORE the remote surface is
+        // invalidated. Explicit user close is not retained as a recent task.
+        if (self.isUserTerminating) {
+            [MultitaskStackManager.shared forgetController:self];
+        } else {
+            [MultitaskStackManager.shared rememberController:self];
+        }
         if(self.sceneID) {
             [[PrivClass(FBSceneManager) sharedInstance] destroyScene:self.sceneID withTransitionContext:nil];
+            self.sceneID = nil;
         }
         if(self.usesHostingControllerAPI) {
             if(@available(iOS 17.0, *)) {
@@ -364,9 +577,16 @@
             [self.presenter invalidate];
         }
         self.presenter = nil;
-        
+        if (self.settingsDiffKey) {
+            [self.hostScene _unregisterSettingsDiffActionArrayForKey:self.settingsDiffKey];
+            self.hostScene = nil;
+            self.settingsDiffKey = nil;
+        }
+        self.isTerminated = YES;
         [self.delegate appSceneVCAppDidExit:self];
         [MultitaskManager unregisterMultitaskContainerWithContainer:self.dataUUID];
+        [NSNotificationCenter.defaultCenter postNotificationName:@"LCMultitaskWindowsChanged" object:self];
+        [self finishTerminationIfPossible];
     });
 }
 
@@ -429,3 +649,99 @@
 
 @end
  
+
+#pragma mark - 多任务最小化
+
+// 访客进程 (LiveProcess) 单击主屏按键时发 Darwin 通知, 宿主把所有多任务窗口
+// 收进 Dock, 扩展进程保持存活; 随后 zContainer 被拉到前台.
+static void LCMinimizeControllerTree(UIViewController *controller) {
+    if (!controller) return;
+    if ([controller respondsToSelector:NSSelectorFromString(@"minimizeWindow")]) {
+        [(id)controller minimizeWindow];
+    }
+    for (UIViewController *child in controller.childViewControllers) {
+        LCMinimizeControllerTree(child);
+    }
+    LCMinimizeControllerTree(controller.presentedViewController);
+}
+
+static void LCMinimizeAllMultitaskWindows(CFNotificationCenterRef center, void *observer,
+                                          CFStringRef name, const void *object,
+                                          CFDictionaryRef userInfo) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if (NSUserDefaults.lcGuestAppId || NSUserDefaults.isLiveProcess) return;
+        NSLog(@"[TDHome] minimizeAll notification received");
+        NSUserDefaults *defaults = NSUserDefaults.lcSharedDefaults;
+        id departure = [defaults objectForKey:@"LCRecentGuestDeparture"];
+        [defaults removeObjectForKey:@"LCRecentGuestDeparture"];
+        if ([departure isKindOfClass:NSDictionary.class]) {
+            id container = departure[@"container"];
+            id timestamp = departure[@"timestamp"];
+            if ([container isKindOfClass:NSString.class] && [container length] &&
+                [timestamp isKindOfClass:NSNumber.class]) {
+                NSTimeInterval age = NSDate.date.timeIntervalSince1970 - [timestamp doubleValue];
+                if (age >= -5 && age < 30 && [MultitaskManager isUsingWithContainer:container]) {
+                    [MultitaskManager recordUseOfContainer:container];
+                }
+            }
+        }
+        for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
+            if (![scene isKindOfClass:UIWindowScene.class]) continue;
+            for (UIWindow *window in ((UIWindowScene *)scene).windows) {
+                LCMinimizeControllerTree(window.rootViewController);
+            }
+        }
+    });
+}
+
+__attribute__((constructor))
+static void LCRegisterMinimizeAllNotification(void) {
+    CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL,
+                                    LCMinimizeAllMultitaskWindows,
+                                    CFSTR("com.kdt.livecontainer.minimizeAll"),
+                                    NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
+}
+
+// 双击辅助触控 -> 打开堆叠后台界面(图五). 通知由访客进程里的 Home 按钮发出;
+// 堆叠界面属于宿主(只有宿主知道每个访客窗口), 所以在这里接.
+static void LCShowAppStackNotification(CFNotificationCenterRef center, void *observer,
+                                       CFStringRef name, const void *object,
+                                       CFDictionaryRef userInfo) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        // A fullscreen guest runs inside this process, so its double tap can
+        // open the stack over the guest window directly. A multitask guest's
+        // LiveProcess has no manager; the host receives this notification.
+        // A fullscreen guest posts this and then goes home; delay so the stack
+        // opens on the Home Screen instead of racing the guest window.
+        BOOL insideGuest = NSUserDefaults.lcGuestAppId != nil || NSUserDefaults.isLiveProcess;
+        void (^open)(void) = ^{
+            if (@available(iOS 16.0, *)) {
+                NSLog(@"[TDHome] app stack request received; opening");
+                [MultitaskStackManager.shared present];
+            }
+        };
+        if (insideGuest) {
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.6 * NSEC_PER_SEC)), dispatch_get_main_queue(), open);
+        } else {
+            open();
+        }
+    });
+}
+
+__attribute__((constructor))
+static void LCRegisterShowAppStackNotification(void) {
+    CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL,
+                                    LCShowAppStackNotification,
+                                    CFSTR("com.kdt.livecontainer.showAppStack"),
+                                    NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
+    // A classic fullscreen guest restarts this process to return home. Its
+    // request must survive that restart, even if the Darwin message arrived
+    // before this framework was loaded. The manager reads that request and
+    // waits for scene activation instead of presenting on a guest's window.
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if (NSUserDefaults.lcGuestAppId || NSUserDefaults.isLiveProcess) return;
+        if (@available(iOS 16.0, *)) {
+            (void)[MultitaskStackManager shared];
+        }
+    });
+}

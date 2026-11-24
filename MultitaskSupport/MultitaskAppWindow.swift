@@ -15,11 +15,13 @@ struct MultitaskAppInfo {
     let launchID = UUID()
     // the window's session once iOS disconnected it; iOS can bring a disconnected window back, so the entry stays until that session is gone
     var disconnectedSessionID: String? = nil
+    fileprivate var pidCallback: ((NSNumber, Error?) -> Void)?
 
-    init(displayName: String, dataUUID: String, bundleId: String) {
+    init(displayName: String, dataUUID: String, bundleId: String, pidCallback: ((NSNumber, Error?) -> Void)?) {
         self.displayName = displayName
         self.dataUUID = dataUUID
         self.bundleId = bundleId
+        self.pidCallback = pidCallback
     }
 }
 
@@ -29,9 +31,15 @@ struct MultitaskAppInfo {
     static var appDict: [String: MultitaskAppInfo] = [:]
     
     @objc class func openAppWindow(displayName: String, dataUUID: String, bundleId: String, pidCallback: ((NSNumber, Error?) -> Void)?) {
-        DataManager.shared.model.pidCallback = pidCallback
-        appDict[dataUUID] = MultitaskAppInfo(displayName: displayName, dataUUID: dataUUID, bundleId: bundleId)
-        openWindow(id: "appView", value: dataUUID)
+        guard appDict[dataUUID] == nil else {
+            pidCallback?(0, NSError(domain: "LCMultitaskLaunch", code:4, userInfo: [NSLocalizedDescriptionKey: "该容器已有原生窗口，未重复启动"]))
+            return
+        }
+        let info = MultitaskAppInfo(displayName: displayName, dataUUID: dataUUID, bundleId: bundleId, pidCallback: pidCallback)
+        appDict[dataUUID] = info
+        // A restart gets a new SwiftUI scene value, so openWindow cannot
+        // reconnect the old, already-terminated controller for this container.
+        openWindow(id: "appView", value: info.launchID.uuidString)
     }
     
     @objc class func openExistingAppWindow(dataUUID: String) -> Bool {
@@ -39,10 +47,10 @@ struct MultitaskAppInfo {
         // the window was closed, so the app launches again the full way: signing, JIT and the launch date
         if let sessionID = info.disconnectedSessionID,
            !UIApplication.shared.openSessions.contains(where: { $0.persistentIdentifier == sessionID }) {
-            appDict[dataUUID] = nil
+            removeAppInfo(info)
             return false
         }
-        openWindow(id: "appView", value: dataUUID)
+        openWindow(id: "appView", value: info.launchID.uuidString)
         return true
     }
 
@@ -50,55 +58,164 @@ struct MultitaskAppInfo {
     class func recordDisconnectedSession(_ sessionID: String, for info: MultitaskAppInfo) {
         guard appDict[info.dataUUID]?.launchID == info.launchID else { return }
         appDict[info.dataUUID]?.disconnectedSessionID = sessionID
+        if appDict[info.dataUUID]?.pidCallback != nil {
+            completeLaunch(for: info, pid: 0, error: NSError(domain: "LCMultitaskLaunch", code:5, userInfo: [NSLocalizedDescriptionKey: "多任务窗口在启动完成前已断开"]))
+        }
     }
 
     // removes the entry of a closing window's launch only, so a newer launch of the same container keeps its own
     class func removeAppInfo(_ info: MultitaskAppInfo) {
         guard appDict[info.dataUUID]?.launchID == info.launchID else { return }
+        let callback = appDict[info.dataUUID]?.pidCallback
         appDict[info.dataUUID] = nil
+        if let callback {
+            callback(0, NSError(domain: "LCMultitaskLaunch", code:6, userInfo: [NSLocalizedDescriptionKey: "多任务窗口在启动完成前已关闭"]))
+        }
+    }
+
+    /// A late result from an old window must never consume a newer launch's
+    /// continuation (or attach JIT to a different guest's PID).
+    class func completeLaunch(for info: MultitaskAppInfo, pid: NSNumber, error: Error?) {
+        guard appDict[info.dataUUID]?.launchID == info.launchID else { return }
+        let callback = appDict[info.dataUUID]?.pidCallback
+        appDict[info.dataUUID]?.pidCallback = nil
+        callback?(pid, error)
     }
 }
 
 @available(iOS 16.1, *)
 struct AppSceneViewSwiftUI: UIViewControllerRepresentable {
     @Binding var show: Bool
+    @Binding var didRequestManualClose: Bool
     let bundleId: String
     let dataUUID: String
     let initSize: CGSize
     let onAppInitialize: (Int32, Error?) -> Void
     
     class Coordinator: NSObject, AppSceneViewControllerDelegate {
-        let onExit: () -> Void
+        let onExit: (Bool) -> Void
         let onAppInitialize: (Int32, Error?) -> Void
-        init(onAppInitialize: @escaping (Int32, Error?) -> Void, onExit: @escaping () -> Void) {
+        init(onAppInitialize: @escaping (Int32, Error?) -> Void, onExit: @escaping (Bool) -> Void) {
             self.onAppInitialize = onAppInitialize
             self.onExit = onExit
         }
         
-        func appSceneVCAppDidExit(_: AppSceneViewController!) {
-            onExit()
+        func appSceneVCAppDidExit(_ vc: AppSceneViewController!) {
+            onExit(vc?.isUserTerminating ?? false)
         }
         
-        func appSceneVC(_ vc: AppSceneViewController!, didInitializeWithError error: (any Error)!) {
-            DispatchQueue.main.async {
-                (vc.view.window?.windowScene?.statusBarManager as? LCStatusBarManager)?.nativeWindowViewController = vc
+        /// One line per activation in the exportable log, so fullscreen and
+        /// multitask geometry can be compared instead of inferred.
+        /// Same resolution order as TDConsoleLog: the env override, then the
+        /// guest's Documents. A missing app group must not silently disable
+        /// diagnostics: a sideloaded group can be unavailable while the app
+        /// still runs.
+        private static func consoleLogDirectory() -> URL? {
+            var paths: [String] = []
+            if let override = ProcessInfo.processInfo.environment["TD_CONSOLE_LOG_DIR"], override.hasPrefix("/") {
+                paths.append(override)
             }
+            if let home = ProcessInfo.processInfo.environment["LC_HOME_PATH"], home.hasPrefix("/") {
+                paths.append(home + "/Documents/ConsoleLog")
+            }
+            if let group = LCSharedUtils.appGroupID(),
+               let container = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: group) {
+                paths.append(container.appendingPathComponent("LiveContainer/ConsoleLog").path)
+            }
+            for path in paths {
+                let url = URL(fileURLWithPath: path, isDirectory: true)
+                if (try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)) != nil {
+                    return url
+                }
+            }
+            return nil
+        }
+
+        private static func appendGeometryLine(_ line: String) {
+            guard let dir = consoleLogDirectory() else { return }
+            // 与 TDConsoleLog 同一个文件名, iManager 的 ConsoleLog 页面才会列出来、才能导出。
+            let formatter = DateFormatter()
+            formatter.dateFormat = "yyyyMMdd"
+            let name = "console-\(formatter.string(from: Date()))-pid\(getpid()).log"
+            let path = dir.appendingPathComponent(name)
+            if let handle = try? FileHandle(forWritingTo: path) {
+                handle.seekToEndOfFile()
+                handle.write(line.data(using: String.Encoding.utf8) ?? Data())
+                try? handle.close()
+            } else {
+                try? line.write(to: path, atomically: true, encoding: .utf8)
+            }
+        }
+
+        private static func logGeometry(vc: AppSceneViewController, window: UIWindow?) {
+            appendGeometryLine("[geometry] mode=native-host pid=\(getpid()) view=\(vc.view.bounds) window=\(window?.bounds.debugDescription ?? "(none)") safe=\(String(describing: window?.safeAreaInsets)) scene=\(String(describing: window?.windowScene?.interfaceOrientation.rawValue))\n")
+            logBottomOverlays(window: window)
+        }
+
+        /// Everything that is drawn over the bottom edge of a screen, so the
+        /// small block that covers the content can be named from the log
+        /// instead of guessed at: the class, its frame in the window that owns
+        /// it, and whether it is visible. The guest's resize grabber and the
+        /// split divider are subviews of the guest window; the floating Home
+        /// button is a window of its own.
+        private static func logBottomOverlays(window: UIWindow?) {
+            let band: CGFloat = 140
+            var lines: [String] = []
+            func describe(_ view: UIView, in container: UIView, depth: Int) {
+                let frame = view.convert(view.bounds, to: container)
+                if frame.maxY >= container.bounds.maxY - band {
+                    lines.append("\(String(repeating: "  ", count: depth))\(type(of: view)) frame=\(String(describing: frame)) alpha=\(view.alpha) hidden=\(view.isHidden)")
+                }
+                for sub in view.subviews {
+                    describe(sub, in: container, depth: depth + 1)
+                }
+            }
+            func scan(_ candidate: UIWindow?) {
+                guard let candidate else { return }
+                for sub in candidate.subviews {
+                    describe(sub, in: candidate, depth: 0)
+                }
+            }
+            scan(window)
+            for scene in UIApplication.shared.connectedScenes {
+                guard let windowScene = scene as? UIWindowScene else { continue }
+                for hostWindow in windowScene.windows {
+                    scan(hostWindow)
+                }
+            }
+            guard !lines.isEmpty else { return }
+            let text = "[bottom-overlays] pid=\(getpid())\n" + lines.joined(separator: "\n") + "\n"
+            appendGeometryLine(text)
+            NSLog("%@", text)
+        }
+
+        func appSceneVC(_ vc: AppSceneViewController!, didInitializeWithError error: (any Error)!) {
             onAppInitialize(vc.pid, error)
+            // Keep the error in SwiftUI state before leaving the embedded scene.
+            if error != nil {
+                NSLog("[LC][Multitask] app init failed: %@", error.localizedDescription)
+                DispatchQueue.main.async {
+                    self.onExit(vc?.isUserTerminating ?? false)
+                }
+            }
         }
         
         func appSceneVCWillActivateScene(_ vc: AppSceneViewController!) {
+            let window = vc.view.window
+            (window?.windowScene?.statusBarManager as? LCStatusBarManager)?.nativeWindowViewController = vc
+            Self.logGeometry(vc: vc, window: window)
             vc.updateSettings { settings in
                 guard let settings else { return }
-                let defaultInsets = vc.view.window?.safeAreaInsets ?? .zero
-                settings.peripheryInsets = defaultInsets
-                settings.safeAreaInsetsPortrait = defaultInsets
                 settings.deviceOrientation = UIDevice.current.orientation
-                settings.setInterfaceOrientation(UIApplication.shared.statusBarOrientation)
-                if(settings.interfaceOrientation().isLandscape) {
-                    settings.setFrame(CGRect(x: 0, y: 0, width: vc.view.frame.size.height, height: vc.view.frame.size.width))
-                } else {
-                    settings.setFrame(CGRect(x: 0, y: 0, width: vc.view.frame.size.width, height: vc.view.frame.size.height))
+                // Use the same scene orientation as the later resize path.
+                if let orientation = window?.windowScene?.interfaceOrientation, orientation != .unknown {
+                    settings.setInterfaceOrientation(orientation)
                 }
+                let size = vc.view.bounds.size
+                let frame = settings.interfaceOrientation().isLandscape
+                    ? CGRect(x: 0, y: 0, width: size.height, height: size.width)
+                    : CGRect(origin: .zero, size: size)
+                settings.setFrame(frame)
             }
             // fix live resize
             vc.contentView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
@@ -106,7 +223,22 @@ struct AppSceneViewSwiftUI: UIViewControllerRepresentable {
         
         func appSceneVC(_ vc: AppSceneViewController!, didUpdateFrom settings: UIMutableApplicationSceneSettings!, transitionContext context: Any!, lifecycleActionType actionType: UInt32) {
             settings.interruptionPolicy = 0
-            //settings.peripheryInsets = vc.view.window?.safeAreaInsets ?? .zero
+            // This path forwards the host's lifecycle transition, but not its
+            // whole-window geometry: the embedded viewport can be smaller.
+            guard let window = vc.view.window, !vc.view.bounds.isEmpty else { return }
+            if let orientation = window.windowScene?.interfaceOrientation, orientation != .unknown {
+                settings.setInterfaceOrientation(orientation)
+            }
+            let scale = vc.scaleRatio
+            let size = CGSize(width: vc.view.bounds.width / scale, height: vc.view.bounds.height / scale)
+            let frame = settings.interfaceOrientation().isLandscape
+                ? CGRect(x: 0, y: 0, width: size.height, height: size.width)
+                : CGRect(origin: .zero, size: size)
+            settings.setFrame(frame)
+            let insets = LCGuestSceneSafeAreaInsets(vc.view, vc.view, vc.additionalSafeAreaInsets)
+            LCApplyGuestSceneSafeAreaInsets(settings, UIEdgeInsets(top: insets.top / scale, left: insets.left / scale,
+                                                                 bottom: insets.bottom / scale, right: insets.right / scale))
+            LCApplyGuestSceneStatusBarFrame(settings, vc.view, scale)
             vc.presenter.scene.updateSettings(settings, withTransitionContext: context, completion: nil)
             // Not sure what actionType 2 is, but it's only set when this scene enters foreground, so we can pass URL scheme here
             if actionType == 2, let launchUrl = UserDefaults.standard.string(forKey: "launchAppUrlScheme") {
@@ -117,7 +249,8 @@ struct AppSceneViewSwiftUI: UIViewControllerRepresentable {
     }
     
     func makeCoordinator() -> Coordinator {
-        Coordinator(onAppInitialize: onAppInitialize, onExit: {
+        Coordinator(onAppInitialize: onAppInitialize, onExit: { isManual in
+            if isManual { didRequestManualClose = true }
             show = false
         })
     }
@@ -149,9 +282,13 @@ struct MultitaskAppWindow: View {
     @AppStorage("LCSkipTerminatedScreen", store: LCUtils.appGroupUserDefault) var skipTerminatedScreen = false
     let pub = NotificationCenter.default.publisher(for: UIScene.didDisconnectNotification)
     init(id: String) {
-        guard let appInfo = MultitaskWindowManager.appDict[id] else {
+        guard let launchID = UUID(uuidString: id),
+              var appInfo = MultitaskWindowManager.appDict.values.first(where: { $0.launchID == launchID }) else {
             return
         }
+        // Only the launch registry owns the callback; State copies keep the
+        // identity but must not retain a consumed continuation.
+        appInfo.pidCallback = nil
         _appInfo = State(initialValue: appInfo)
     }
     
@@ -160,16 +297,16 @@ struct MultitaskAppWindow: View {
         Group {
             if show, let appInfo {
                 GeometryReader { geometry in
-                    AppSceneViewSwiftUI(show: $show, bundleId: appInfo.bundleId, dataUUID: appInfo.dataUUID, initSize: geometry.size,
+                    AppSceneViewSwiftUI(show: $show, didRequestManualClose: $didRequestManualClose, bundleId: appInfo.bundleId, dataUUID: appInfo.dataUUID, initSize: geometry.size,
                                         onAppInitialize: { pid, error in
                         DispatchQueue.main.async {
+                            guard MultitaskWindowManager.appDict[appInfo.dataUUID]?.launchID == appInfo.launchID else { return }
                             if error == nil {
                                 self.pid = Int(pid)
                             } else {
                                 self.errorMessage = error?.localizedDescription
                             }
-                            DataManager.shared.model.pidCallback?(NSNumber(value: pid), error)
-                            DataManager.shared.model.pidCallback = nil
+                            MultitaskWindowManager.completeLaunch(for: appInfo, pid: NSNumber(value: pid), error: error)
                         }
                     })
                     .background(.black)
@@ -178,7 +315,7 @@ struct MultitaskAppWindow: View {
                 .ignoresSafeArea(.all, edges: .all)
                 .navigationTitle(Text("\(appInfo.displayName) - \(String(pid))"))
                 
-            } else if skipTerminatedScreen && isVirtualWindowMode, appInfo != nil {
+            } else if skipTerminatedScreen && errorMessage == nil && isVirtualWindowMode, appInfo != nil {
                 Color.clear
                     .ignoresSafeArea(.all, edges: .all)
                     .onAppear {
@@ -231,6 +368,8 @@ struct MultitaskAppWindow: View {
                 }
             }
         }
+        // Native guest scenes can be the first scene on cold reconnect.
+        .onAppear { TDHostHomeOverlayController.shared.attach() }
         .onReceive(pub) { out in
             if let scene1 = sceneDelegate.window?.windowScene, let scene2 = out.object as? UIWindowScene, scene1 == scene2 {
                 // recorded on every screen, so a later launch knows this window is gone once its session is
