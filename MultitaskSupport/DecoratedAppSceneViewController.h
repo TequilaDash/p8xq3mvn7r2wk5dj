@@ -32,6 +32,8 @@ API_AVAILABLE(ios(16.0))
 /// Brings a minimized window back out of its app's icon in the multitask
 /// dock, the way it went in.
 - (void)restoreFromDock;
+/// 铺满屏幕（deck 选卡回前台时消除窗口化小卡的那一帧）。
+- (void)maximizeWindow;
 - (void)minimizeWindowPiP;
 - (void)unminimizeWindowPiP;
 - (void)updateVerticalConstraints;

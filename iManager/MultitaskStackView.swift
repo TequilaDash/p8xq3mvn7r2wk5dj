@@ -644,6 +644,10 @@ public class MultitaskStackManager: NSObject, ObservableObject {
                 // 先摆内容，最后才恢复可见：反过来会在恢复那一帧露出旧帧，
                 // 用户实测"进入那一瞬间只占上半屏"。
                 if target.isStashed { target.unstash(animated: false) }
+                // 访客窗口可能是窗口化状态（isMaximized == false），恢复可见那一帧
+                // 就会露出"居中小卡 + 上下黑边"（用户截图 IMG_0666）。
+                // 在恢复可见之前就把它铺满，那一帧直接是全屏。
+                if !target.isMaximized { target.maximizeWindow() }
                 for other in controllers {
                     if let decorated = self.decoratedController(for: other), decorated !== target { decorated.minimizeWindow() }
                 }
@@ -2197,7 +2201,10 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
         transition = animator; animator.addAnimations(animations)
         animator.addCompletion { [weak self] position in
             self?.transition = nil
-            if position == .end { done() }
+            // 动画被中途打断（position != .end）时同样必须复位：否则
+            // transitioning 永久为 true，hitTest 会吞掉所有空白点击，
+            // 表现为"有卡片时空白怎么点都没反应、无卡片时反而正常"。
+            done()
         }
         animator.startAnimation()
     }
@@ -2267,7 +2274,8 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
         dock.alpha = 0; dockScroll.alpha = 0; clearButton.alpha = 0; emptyLabel.alpha = 0
     }
     private func dismissDeck() {
-        guard !transitioning else { return }
+        // 不再因 transitioning 直接放弃：卡住的标志位会让"点空白返回"彻底失效。
+        if transitioning { finishEntrance(); stopRebound(); transitioning = false }
         backdrop?(false, 0.28)
         runTransition(duration: 0.28, damping: 1, animations: { [weak self] in
             guard let self else { return }
