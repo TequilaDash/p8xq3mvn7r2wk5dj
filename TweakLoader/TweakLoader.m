@@ -1,6 +1,5 @@
 #import <Foundation/Foundation.h>
-#include <libproc.h>
-#include <sys/resource.h>
+#include <mach/mach.h>
 #import <UIKit/UIKit.h>
 #include <dlfcn.h>
 #include <objc/runtime.h>
@@ -105,10 +104,14 @@ static void TweakLoaderConstructor() {
         int iManagerPID = getpid();
         NSString *iManagerMemKey = [NSString stringWithFormat:@"TDLiveGuestMem.%d", iManagerPID];
         void (^iManagerReport)(void) = ^{
-            struct rusage_info_v2 iManagerInfo;
-            memset(&iManagerInfo, 0, sizeof(iManagerInfo));
-            if (proc_pid_rusage(iManagerPID, RUSAGE_INFO_V2, (rusage_info_t *)&iManagerInfo) == 0) {
-                [NSUserDefaults.lcSharedDefaults setObject:@(iManagerInfo.ri_phys_footprint)
+            // 用 task_info 而不是 proc_pid_rusage：后者不在工程自带的 libproc.h
+            // 声明里，而且读别的进程本来也会被内核拒绝。自己读自己只需要
+            // MACH_TASK_BASIC_INFO，返回 resident_size。
+            struct mach_task_basic_info iManagerInfo;
+            mach_msg_type_number_t iManagerCount = MACH_TASK_BASIC_INFO_COUNT;
+            if (task_info(mach_task_self(), MACH_TASK_BASIC_INFO,
+                          (task_info_t)&iManagerInfo, &iManagerCount) == KERN_SUCCESS) {
+                [NSUserDefaults.lcSharedDefaults setObject:@(iManagerInfo.resident_size)
                                                    forKey:iManagerMemKey];
             }
         };
