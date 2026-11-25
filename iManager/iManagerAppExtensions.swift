@@ -53,8 +53,8 @@ enum IManagerAppExtensionStore {
         guard let names = try? FileManager.default.contentsOfDirectory(atPath: pluginsURL.path) else {
             return []
         }
-        let appKey = app.homeKey ?? app.appInfo.displayName()
-        let appTitle = app.appInfo.displayName()
+        let appTitle = app.appInfo.displayName() ?? app.homeKey ?? "未命名 App"
+        let appKey = app.homeKey ?? appTitle
         var result: [IManagerAppExtension] = []
         for name in names.sorted() where name.hasSuffix(".appex") {
             let appexURL = pluginsURL.appendingPathComponent(name)
