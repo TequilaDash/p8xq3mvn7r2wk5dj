@@ -623,7 +623,8 @@ public class MultitaskStackManager: NSObject, ObservableObject {
                     self.message = "窗口暂时无法恢复"
                     return
                 }
-                self.restoreSuppressedWindows()
+                // 先摆内容，最后才恢复可见：反过来会在恢复那一帧露出旧帧，
+                // 用户实测"进入那一瞬间只占上半屏"。
                 if target.isStashed { target.unstash(animated: false) }
                 for other in controllers {
                     if let decorated = self.decoratedController(for: other), decorated !== target { decorated.minimizeWindow() }
@@ -636,6 +637,7 @@ public class MultitaskStackManager: NSObject, ObservableObject {
                     container.bringSubviewToFront(view)
                     target.revealWindowControls()
                 }
+                self.restoreSuppressedWindows()
                 MultitaskManager.recordUse(container: uuid)
                 self.finishAppSelection()
                 view.window?.makeKey()
@@ -1219,8 +1221,11 @@ private final class StackDeckCard: UIView, UIContextMenuInteractionDelegate {
         if let snapshot, sourceSize.width > 0, sourceSize.height > 0 {
             snapshot.transform = .identity
             snapshot.bounds = CGRect(origin: .zero, size: sourceSize)
-            snapshot.transform = CGAffineTransform(scaleX: preview.bounds.width / sourceSize.width,
-                                                 y: preview.bounds.height / sourceSize.height)
+            // 等比缩放（aspect fit）：分别缩放会把画面纵向压扁，
+            // 这就是"纵向排布还是有挤压感"的来源。
+            let scale = min(preview.bounds.width / sourceSize.width,
+                            preview.bounds.height / sourceSize.height)
+            snapshot.transform = CGAffineTransform(scaleX: scale, y: scale)
             snapshot.center = CGPoint(x: preview.bounds.midX, y: preview.bounds.midY)
         }
         blurView.frame = preview.bounds
@@ -1803,7 +1808,13 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
             let cardWidth = max(1, (width - side * 2 - gap) / 2)
             // 1.9 ≈ 手机屏幕高宽比（390:844）。用 1.45 会把卡片压扁，
             // 看起来就是"纵向排布被压缩"。
-            let previewHeight = max(1, cardWidth * 1.9)
+            // 卡片高度按访客真实画面比例算，取不到才退回 1.9。
+            let aspect = cards.first.map { card -> CGFloat in
+                let size = card.sourceSize
+                guard size.width > 1, size.height > 1 else { return 1.9 }
+                return size.height / size.width
+            } ?? 1.9
+            let previewHeight = max(1, min(cardWidth * min(max(aspect, 1.4), 2.3), gridHeight - 34))
             let cardHeight = previewHeight + 34
             let rowPitch = cardHeight + gap
             let rows = (cards.count + 1) / 2
@@ -1948,6 +1959,11 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
         if let pan = gestureRecognizer as? UIPanGestureRecognizer {
             let v = pan.velocity(in: self)
             if pan === blankPan {
+                // 轻点也会产生极小的速度；不设门槛时 pan 抢在 tap 之前开始，
+                // tap.require(toFail: blankPan) 于是永远失败——表现就是
+                // "空白处点了没反应、回不到上一级"。
+                let speed = max(abs(v.x), abs(v.y))
+                guard speed > 120 else { return false }
                 return isColumnLayout ? abs(v.y) > abs(v.x) * 1.2 : abs(v.x) > abs(v.y) * 1.2
             }
             // 纵向排布里，卡片上的竖滑必须让给网格滚动（否则卡片手势吃掉竖滑，
@@ -1979,8 +1995,25 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
         // 纵向排布里，卡片上的竖滑交给网格滚动（网格本身可上下翻），
         // 左右滑才是"清除这个多任务后台"，与堆叠排布的上滑关闭区分开。
         if isColumnLayout {
-            if pan.state == .ended, abs(translation.x) > 60, abs(translation.x) > abs(translation.y) * 1.2 {
-                close(card, velocity: velocity.x)
+            // 横滑跟手：卡片跟着手指走，松手超过阈值就清除这个后台。
+            if pan.state == .began { finishEntrance(); stopRebound(); draggingCard = card }
+            guard draggingCard === card else { return }
+            if pan.state == .changed {
+                var t = card.resting
+                t.tx += translation.x
+                card.transform = t
+            }
+            if pan.state == .ended || pan.state == .cancelled || pan.state == .failed {
+                draggingCard = nil
+                let horizontal = abs(translation.x) > 60 && abs(translation.x) > abs(translation.y) * 1.2
+                if pan.state == .ended && horizontal {
+                    closeHorizontally(card, direction: translation.x < 0 ? -1 : 1, velocity: velocity.x)
+                } else {
+                    UIView.animate(withDuration: 0.24, delay: 0, usingSpringWithDamping: 0.86,
+                                   initialSpringVelocity: 0, options: [.allowUserInteraction]) {
+                        card.transform = card.resting
+                    }
+                }
             }
             return
         }
@@ -2109,6 +2142,23 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
             DispatchQueue.main.async { [weak self] in self?.updateDeck(); self?.setNeedsLayout() }
         }
     }
+    /// 纵向排布的横滑关闭：卡片沿横向飞出，不做上滑位移。
+    private func closeHorizontally(_ card: StackDeckCard, direction: CGFloat, velocity: CGFloat) {
+        guard isCurrent(card) else { return }
+        finishEntrance(); stopRebound()
+        let travel = bounds.width + 80
+        runTransition(duration: 0.30, damping: 1, velocity: max(0, min(5, abs(velocity) / travel)), animations: {
+            var t = card.resting
+            t.tx += direction * travel
+            card.transform = t
+            card.alpha = 0
+        }) { [weak self, weak card] in
+            guard let self, let card, self.isCurrent(card) else { return }
+            self.manager?.closeApp(uuid: card.uuid)
+            DispatchQueue.main.async { [weak self] in self?.updateDeck(); self?.setNeedsLayout() }
+        }
+    }
+
     func activate(uuid: String) {
         if let card = cards.first(where: { $0.uuid == uuid }) { activate(card) }
         else { manager?.selectApp(uuid: uuid) }

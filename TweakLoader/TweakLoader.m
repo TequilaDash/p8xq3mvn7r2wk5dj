@@ -1,8 +1,13 @@
 #import <Foundation/Foundation.h>
+#include <libproc.h>
+#include <sys/resource.h>
 #import <UIKit/UIKit.h>
 #include <dlfcn.h>
 #include <objc/runtime.h>
 #import "../LiveContainer/utils.h"
+
+/// 访客自报内存的定时器；block 内不能声明 static，只能放文件作用域。
+static dispatch_source_t gIManagerMemoryTimer = NULL;
 
 static NSString *loadTweakAtURL(NSURL *url) {
     NSString *tweakPath = url.path;
@@ -92,6 +97,33 @@ static void TweakLoaderConstructor() {
         [iManagerShared synchronize];
     } @catch (NSException *iManagerExc) {
         NSLog(@"[iManager] guest pid registration failed: %@ - %@", iManagerExc.name, iManagerExc.reason);
+    }
+    // iManager(内存管理): 宿主读别的进程 footprint 会被内核拒绝（实测全部
+    // "不可读取"）。访客有权限读自己，所以由访客定期把自己的 footprint
+    // 写进 app group，宿主直接读这个值。放在早退之前，没装 tweak 也要上报。
+    @try {
+        int iManagerPID = getpid();
+        NSString *iManagerMemKey = [NSString stringWithFormat:@"TDLiveGuestMem.%d", iManagerPID];
+        void (^iManagerReport)(void) = ^{
+            struct rusage_info_v2 iManagerInfo;
+            memset(&iManagerInfo, 0, sizeof(iManagerInfo));
+            if (proc_pid_rusage(iManagerPID, RUSAGE_INFO_V2, (rusage_info_t *)&iManagerInfo) == 0) {
+                [NSUserDefaults.lcSharedDefaults setObject:@(iManagerInfo.ri_phys_footprint)
+                                                   forKey:iManagerMemKey];
+            }
+        };
+        iManagerReport();
+        dispatch_source_t iManagerTimer =
+            dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_global_queue(QOS_CLASS_UTILITY, 0));
+        if (iManagerTimer) {
+            dispatch_source_set_timer(iManagerTimer, dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC),
+                                      2 * NSEC_PER_SEC, NSEC_PER_SEC / 2);
+            dispatch_source_set_event_handler(iManagerTimer, iManagerReport);
+            dispatch_resume(iManagerTimer);
+            gIManagerMemoryTimer = iManagerTimer; // 必须持有，否则立刻释放
+        }
+    } @catch (NSException *iManagerMemExc) {
+        NSLog(@"[iManager] guest memory reporting failed: %@", iManagerMemExc.reason);
     }
     const char *tweakFolderC = getenv("LC_GLOBAL_TWEAKS_FOLDER");
     NSString *globalTweakFolder = tweakFolderC ? @(tweakFolderC) : nil;

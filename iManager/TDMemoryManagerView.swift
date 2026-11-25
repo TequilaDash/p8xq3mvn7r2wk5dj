@@ -148,7 +148,17 @@ struct TDMemoryManagerView: View {
         return result
     }
 
+    /// 访客自己上报的 footprint（宿主读别的进程会被内核拒绝）。
+    nonisolated static func reportedFootprint(pid: Int32) -> UInt64? {
+        guard pid > 0 else { return nil }
+        let defaults = LCUtils.appGroupUserDefault
+        guard let value = defaults.object(forKey: "TDLiveGuestMem.\(pid)") as? NSNumber else { return nil }
+        let bytes = value.uint64Value
+        return bytes > 0 ? bytes : nil
+    }
+
     nonisolated static func footprint(pid: Int32) -> UInt64? {
+        if let reported = reportedFootprint(pid: pid) { return reported }
         guard pid > 0 else { return nil }
         var info = Darwin.rusage_info_v2()
         let result = withUnsafeMutablePointer(to: &info) {
