@@ -167,3 +167,33 @@ struct IManagerAppExtensionsPage: View {
         }
     }
 }
+
+// MARK: - 阶段二：真正运行扩展内容（研究结论，尚未实现）
+//
+// 参考样本：Nyxian 0.11.2（emexlab/Nyxian）
+//   Nyxian/LindChain/ProcEnvironment/PEExtension.m（194 行）
+//
+// 它没有自己 dlopen appex 的 Mach-O，而是**借用系统的扩展宿主**：
+//
+//   NSExtension *ext = [NSExtension extensionWithIdentifier:<appex id> error:&err];
+//   ext.preferredLanguages = @[];
+//   NSUUID *req = [ext beginExtensionRequestWithInputItems:@[item] error:&err];
+//   pid_t pid   = [ext pidForRequestIdentifier:req];
+//   // 想当进程管再走 FrontBoard/RunningBoard：
+//   RBSProcessHandle *h = [PrivClass(RBSProcessHandle)
+//       handleForPredicate:[PrivClass(RBSProcessPredicate) predicateMatchingIdentifier:@(pid)]
+//                      error:&err];
+//   FBProcess *p = [FBProcessManager.sharedInstance registerProcessForAuditToken:h.auditToken];
+//   p.nsExtension = ext; p.identifier = req;      // 用 objc_setAssociatedObject 挂在分类上
+//
+// 权限探测：[[ext _plugIn] entitlements][@"get-task-allow"]
+//
+// 对 zContainer 的落点：
+//   1. 先用本文件的扫描拿到 appex 的 bundle id 与路径（阶段一已完成）；
+//   2. 若该 appex 已被系统注册，NSExtension extensionWithIdentifier: 可直接用；
+//      未注册则要先把它注册进系统扩展数据库（这一步是本阶段真正限制所在）；
+//   3. WidgetKit 的 timeline 渲染仍由系统宿主完成，我们只负责把宿主产出的
+//      View 取回来贴到主屏幕卡片上。
+//
+// 风险：FrontBoard/RunningBoard 属私有 API，越狱环境可用，jailed 下受 entitlements 限制。
+// 这条不做进当前版本，等与用户确认后再单独开工。
