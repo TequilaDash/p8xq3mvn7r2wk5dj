@@ -91,7 +91,8 @@ struct HomeScreenView: View {
         .environment(\.colorScheme, .dark)
         // Edit mode's buttons take the status bar's place, and an open folder
         // blurs it away with the rest of the Home Screen, as on iOS.
-        .homeStatusBarHidden(model.isEditing || model.isFolderShown)
+        // iManager(状态栏沉浸): 键 LCStatusBarImmersion，设置页在 iManager 里。
+        .homeStatusBarHidden(IManagerStatusBarImmersion.isOn || model.isEditing || model.isFolderShown)
         // A screen over the Home Screen, onboarding, or a sheet from edit
         // mode's Edit menu, keeps the setting, as iOS's widget gallery is
         // light or dark as iOS is.

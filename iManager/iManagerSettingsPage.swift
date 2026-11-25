@@ -38,6 +38,28 @@ struct IManagerSettingsPage: View {
                 }
 
                 NavigationLink {
+                    IManagerStatusImmersionPage()
+                } label: {
+                    IManagerRow(
+                        icon: "rectangle.topthird.inset.filled",
+                        color: .blue,
+                        title: "状态栏沉浸",
+                        detail: IManagerStatusBarImmersion.isOn ? "已开启" : "未开启"
+                    )
+                }
+
+                NavigationLink {
+                    IManagerAppExtensionsPage()
+                } label: {
+                    IManagerRow(
+                        icon: "square.grid.2x2.fill",
+                        color: .teal,
+                        title: "应用扩展",
+                        detail: "把访客 App 的扩展放到主屏幕"
+                    )
+                }
+
+                NavigationLink {
                     TDMemoryManagerView()
                         .settingsPageMargins()
                 } label: {
