@@ -366,28 +366,29 @@ public class MultitaskStackManager: NSObject, ObservableObject {
         hostingWindow?.windowScene = nil
         hostingController = nil
         hostingWindow = nil
-        previousKeyWindow = nil
         isVisible = false
         apps.removeAll()
         previews.removeAll()
         displayedControllers.removeAll()
         focus(index: 0)
         if restoreKey {
-            // 1.1.113: previous 已验证可用才 makeKey；不可用（已隐藏/scene 不在前台/
-            // 窗口被释放）时退化到 scene 里第一个可见 normal 窗口。此前直接 makeKey，
-            // 系统找不到合法 key 窗口时走回主屏再重新进入——用户实测“从堆叠后台回
-            // app 会二次进入”。
-            let fallback = previous?.windowScene?.windows.first { !$0.isHidden && $0.windowLevel == .normal && $0.rootViewController != nil }
+            // 回到"上一级"：优先恢复 deck 出现之前的那个 key window。
+            // 之前 fallback 只认 windowLevel == .normal，而访客窗口是 1000
+            // （TweakLoader 设的），永远匹配不到 → 退化成主屏，
+            // 用户看到的就是"从应用里退出再回主屏"。这里放宽到任意可见窗口。
+            func visible(_ win: UIWindow) -> Bool {
+                !win.isHidden && win.alpha > 0 && win.windowScene?.activationState == .foregroundActive
+            }
+            let restoreTarget: UIWindow? = previous.flatMap { visible($0) ? $0 : nil }
+                ?? previous?.windowScene?.windows.first { visible($0) && $0.rootViewController != nil }
                 ?? UIApplication.shared.connectedScenes
                     .compactMap { $0 as? UIWindowScene }
                     .filter { $0.activationState == .foregroundActive }
                     .flatMap(\.windows)
-                    .first { !$0.isHidden && $0.windowLevel == .normal && $0.rootViewController != nil }
-            let restoreTarget: UIWindow? = previous.flatMap { win in
-                (!win.isHidden && win.windowScene?.activationState == .foregroundActive) ? win : nil
-            } ?? fallback
+                    .first { visible($0) && $0.rootViewController != nil }
             restoreTarget?.makeKey()
         }
+        previousKeyWindow = nil
     }
 
     @objc private func applicationDidActivate() {
@@ -1494,11 +1495,10 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
             }
         }
         // No super.hitTest fallback: that would re-admit transparent card frames.
-        // 空白处交给 pages 本身：它是 UIScrollView，只有拿到触摸才滚得动。
-        // 挂在本视图上的 tap/pan 识别器仍会收到这些触摸（祖先识别器照收），
-        // 所以"点空白返回"和"空白拖动"都不受影响。
+        // 空白必须由本视图自己接收。交给 pages（UIScrollView）会让它吞掉轻点，
+        // 表现为"空白点不动、只有摸着卡片才划得动"（test34 实测）。
+        // 纵向排布的滚动由 blankPan 直接驱动 pages.contentOffset，不靠 UIScrollView。
         if let card = frontmostPreviewCard(at: point) { return card }
-        if !pages.isHidden, pages.alpha >= 0.01, pages.frame.contains(point) { return pages }
         return self
     }
 
@@ -1729,6 +1729,8 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
     }
 
     private func renderMemory() {
+        // 透明度/玻璃材质每次渲染都重读，设置改完立刻生效。
+        applyMemoryCapsuleStyle()
         let unit = LCUtils.appGroupUserDefault.string(forKey: "TDMemoryUnit") == "GB" ? "GB" : "MB"
         // 「显示内存信息」开关：键 TDAppStackShowMemory，未写入时缺省开。
         let showsMemory = LCUtils.appGroupUserDefault.object(forKey: "TDAppStackShowMemory") as? Bool ?? true
@@ -1850,8 +1852,11 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
             let rows = (cards.count + 1) / 2
             let usedHeight = CGFloat(rows) * cardHeight + CGFloat(max(0, rows - 1)) * gap
             stride = width
+            // 纵向排布下由 blankPan 直接改 contentOffset，关掉 UIScrollView 自己的
+            // 手势，否则它会延迟/吞掉空白处的触摸，点击就再也到不了 backgroundTapped。
+            pages.isScrollEnabled = false
             pages.alwaysBounceHorizontal = false
-            pages.alwaysBounceVertical = true
+            pages.alwaysBounceVertical = false
             pages.frame = CGRect(x: 0, y: gridTop, width: width, height: gridHeight)
             pages.contentSize = CGSize(width: width, height: max(gridHeight, usedHeight + 12))
             for card in cards {
@@ -1868,6 +1873,7 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
             }
             pages.contentOffset = CGPoint(x: 0, y: min(max(0, oldColumnY), max(0, pages.contentSize.height - gridHeight)))
         } else {
+            pages.isScrollEnabled = true
             pages.alwaysBounceHorizontal = true
             pages.alwaysBounceVertical = false
             stride = StackDeckMath.layout(width: width, height: height, safeTop: safe.top, safeBottom: safe.bottom,
@@ -1951,9 +1957,23 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
     }
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
         guard scrollView === pages, !layingOut, !transitioning else { return }
-        if !cards.isEmpty, !isColumnLayout {
-            let next = min(cards.count - 1, max(0, Int((pages.contentOffset.x / stride).rounded())))
-            if selected != next { selected = next; publishFocus(); updateMemoryTarget() }
+        if !cards.isEmpty {
+            if isColumnLayout {
+                // 纵向排布没有横向分页：选中"当前视口内最靠上的那张卡"。
+                // 之前这里被整段跳过，selected 恒为 0，若第 0 张卡没有
+                // launch controller，内存胶囊就永远不显示。
+                let top = pages.contentOffset.y
+                var best = 0
+                var bestDistance = CGFloat.greatestFiniteMagnitude
+                for card in cards {
+                    let distance = abs(card.frame.minY - top)
+                    if distance < bestDistance { bestDistance = distance; best = card.index }
+                }
+                if selected != best { selected = best; publishFocus(); updateMemoryTarget() }
+            } else {
+                let next = min(cards.count - 1, max(0, Int((pages.contentOffset.x / stride).rounded())))
+                if selected != next { selected = next; publishFocus(); updateMemoryTarget() }
+            }
         }
         UIView.performWithoutAnimation { updateDeck() }
     }
@@ -1993,7 +2013,7 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
                 // tap.require(toFail: blankPan) 于是永远失败——表现就是
                 // "空白处点了没反应、回不到上一级"。
                 let speed = max(abs(v.x), abs(v.y))
-                guard speed > 120 else { return false }
+                guard speed > 40 else { return false }
                 return isColumnLayout ? abs(v.y) > abs(v.x) * 1.2 : abs(v.x) > abs(v.y) * 1.2
             }
             // 纵向排布里，卡片上的竖滑必须让给网格滚动（否则卡片手势吃掉竖滑，
@@ -2004,10 +2024,7 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
         return true
     }
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
-        // 空白处的触摸现在落在 pages 上，所以 self 和 pages 都算"空白"。
-        if gestureRecognizer === blankPan {
-            return touch.view === self || touch.view === pages
-        }
+        if gestureRecognizer === blankPan { return touch.view === self }
         if gestureRecognizer.view === self {
             if touch.view?.isDescendant(of: dockScroll) == true || touch.view?.isDescendant(of: clearButton) == true { return false }
             // 注意 isDescendant(of:) 对自身返回 false，卡片必须单独判一次，
