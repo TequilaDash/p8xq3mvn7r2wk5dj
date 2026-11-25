@@ -379,13 +379,21 @@ public class MultitaskStackManager: NSObject, ObservableObject {
             func visible(_ win: UIWindow) -> Bool {
                 !win.isHidden && win.alpha > 0 && win.windowScene?.activationState == .foregroundActive
             }
-            let restoreTarget: UIWindow? = previous.flatMap { visible($0) ? $0 : nil }
-                ?? previous?.windowScene?.windows.first { visible($0) && $0.rootViewController != nil }
-                ?? UIApplication.shared.connectedScenes
-                    .compactMap { $0 as? UIWindowScene }
-                    .filter { $0.activationState == .foregroundActive }
-                    .flatMap(\.windows)
-                    .first { visible($0) && $0.rootViewController != nil }
+            // 拆成独立语句：写成一条 ?? 链会让类型检查超时（CI 实测）。
+            var restoreTarget: UIWindow? = nil
+            if let prev = previous, visible(prev) { restoreTarget = prev }
+            if restoreTarget == nil {
+                restoreTarget = previous?.windowScene?.windows.first { visible($0) && $0.rootViewController != nil }
+            }
+            if restoreTarget == nil {
+                let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+                for scene in scenes where scene.activationState == .foregroundActive {
+                    if let found = scene.windows.first(where: { visible($0) && $0.rootViewController != nil }) {
+                        restoreTarget = found
+                        break
+                    }
+                }
+            }
             restoreTarget?.makeKey()
         }
         previousKeyWindow = nil
