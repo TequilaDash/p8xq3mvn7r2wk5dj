@@ -48,12 +48,13 @@ struct IManagerAppExtension: Identifiable, Hashable {
 enum IManagerAppExtensionStore {
     /// 扫描某个 App 的 PlugIns 目录。
     static func extensions(for app: LCAppModel) -> [IManagerAppExtension] {
-        let bundlePath = app.appInfo.bundlePath()
-        guard !bundlePath.isEmpty else { return [] }
+        guard let bundlePath = app.appInfo.bundlePath(), !bundlePath.isEmpty else { return [] }
         let pluginsURL = URL(fileURLWithPath: bundlePath).appendingPathComponent("PlugIns")
         guard let names = try? FileManager.default.contentsOfDirectory(atPath: pluginsURL.path) else {
             return []
         }
+        let appKey = app.homeKey ?? app.appInfo.displayName()
+        let appTitle = app.appInfo.displayName()
         var result: [IManagerAppExtension] = []
         for name in names.sorted() where name.hasSuffix(".appex") {
             let appexURL = pluginsURL.appendingPathComponent(name)
@@ -64,14 +65,14 @@ enum IManagerAppExtensionStore {
             let point = (extensionDict?["NSExtensionPointIdentifier"] as? String) ?? ""
             let isWidget = point == "com.apple.widgetkit-extension"
             guard isWidget else { continue }
-            let display = (info["CFBundleDisplayName"] as? String)
+            let rawDisplay = (info["CFBundleDisplayName"] as? String)
                 ?? (info["CFBundleName"] as? String)
-                ?? (name as NSString).deletingPathExtension
+            let display: String = rawDisplay ?? (name as NSString).deletingPathExtension
             let bundleID = (info["CFBundleIdentifier"] as? String) ?? name
             result.append(IManagerAppExtension(
-                id: "\(app.appUUID)#\(bundleID)",
-                appUUID: app.appUUID,
-                appName: app.appName,
+                id: "\(appKey)#\(bundleID)",
+                appUUID: appKey,
+                appName: appTitle,
                 displayName: display,
                 bundleIdentifier: bundleID,
                 isWidget: isWidget,
