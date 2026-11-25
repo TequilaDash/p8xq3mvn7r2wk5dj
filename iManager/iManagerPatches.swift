@@ -76,14 +76,6 @@ enum IManagerPatchRegistry {
         ),
         IManagerPatch(
             id: "ZC-PATCH-004",
-            title: "多任务窗口恢复时的 scene 判定",
-            summary: "上游 bringMultitaskViewToFront 要求目标窗口与 keyWindow 同一个 scene；deck 成为 key 后两者不同，函数返回 false，窗口被恢复出来却没置前，主屏上多出一张缩小的小卡。现在以目标窗口自己的 scene 为准。",
-            files: [
-                "MultitaskSupport/MultitaskDockView.swift（1 行：window.windowScene ?? keyWindow?.windowScene）",
-            ]
-        ),
-        IManagerPatch(
-            id: "ZC-PATCH-005",
             title: "窗口化访客回到前台的那一帧",
             summary: "访客窗口可能是窗口化状态（isMaximized == false），从 deck 恢复可见的那一帧会露出居中小卡与上下黑边（用户截图 IMG_0666）。现在恢复可见之前先铺满。",
             files: [
