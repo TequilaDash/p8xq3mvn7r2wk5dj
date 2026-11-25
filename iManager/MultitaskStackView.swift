@@ -199,6 +199,15 @@ public class MultitaskStackManager: NSObject, ObservableObject {
         detachWindow(restoreKey: false)
     }
 
+    /// 关闭最近任务并回到"上一级"：上一层可能是某个 App，不一定是主屏。
+    /// 回主屏是辅助触控按钮的职责，不该由"点空白"顺手做掉。
+    func dismissDeckRestoringPrevious() {
+        precondition(Thread.isMainThread)
+        pendingPresentation = false
+        clearStoredRequest()
+        detachWindow(restoreKey: true)
+    }
+
     func dismissToHome() {
         precondition(Thread.isMainThread)
         restoreSuppressedWindows()
@@ -1338,13 +1347,30 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
     private func applyDockStyle() {
         let style = LCUtils.appGroupUserDefault.string(forKey: "TDAppStackDockStyle") ?? "frosted"
         if style == "clear" {
-            // 透明：去掉模糊，只留一层极淡的底与描边，能看见背后内容。
-            dock.effect = nil
-            dock.contentView.backgroundColor = UIColor.white.withAlphaComponent(0.06)
+            if #available(iOS 26.0, *), SharedModel.isLiquidGlassEnabled {
+                // Liquid Glass：系统玻璃材质，随背景折射，比纯透明更贴近系统。
+                dock.effect = UIGlassEffect(style: .clear)
+                dock.contentView.backgroundColor = .clear
+            } else {
+                // 老系统退化：去掉模糊，只留极淡的底，能看见背后内容。
+                dock.effect = nil
+                dock.contentView.backgroundColor = UIColor.white.withAlphaComponent(0.06)
+            }
         } else {
             dock.effect = UIBlurEffect(style: .systemThinMaterialDark)
             dock.contentView.backgroundColor = .clear
         }
+    }
+
+    /// 内存胶囊：同样适配 Liquid Glass，并支持透明度（键 iManagerMemoryCapsuleOpacity）。
+    private func applyMemoryCapsuleStyle() {
+        if #available(iOS 26.0, *), SharedModel.isLiquidGlassEnabled {
+            memoryCapsule.effect = UIGlassEffect(style: .clear)
+        } else {
+            memoryCapsule.effect = UIBlurEffect(style: .systemUltraThinMaterial)
+        }
+        let stored = LCUtils.appGroupUserDefault.object(forKey: "iManagerMemoryCapsuleOpacity") as? Double
+        memoryCapsule.alpha = CGFloat(min(max(stored ?? 0.85, 0.2), 1.0))
     }
     private let dockScroll = UIScrollView()
     private let clearButton = UIButton(type: .system)
@@ -1468,8 +1494,11 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
             }
         }
         // No super.hitTest fallback: that would re-admit transparent card frames.
-        // Empty space is consumed by self, never a live guest behind this window.
+        // 空白处交给 pages 本身：它是 UIScrollView，只有拿到触摸才滚得动。
+        // 挂在本视图上的 tap/pan 识别器仍会收到这些触摸（祖先识别器照收），
+        // 所以"点空白返回"和"空白拖动"都不受影响。
         if let card = frontmostPreviewCard(at: point) { return card }
+        if !pages.isHidden, pages.alpha >= 0.01, pages.frame.contains(point) { return pages }
         return self
     }
 
@@ -1740,6 +1769,7 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
     }
 
     private func layoutHeader() {
+        applyMemoryCapsuleStyle()
         let safe = safeAreaInsets
         let available = max(0, bounds.width - safe.left - safe.right - 32)
         // 32pt high; 12pt horizontal inset, 16pt right safe-area margin.
@@ -1974,10 +2004,15 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
         return true
     }
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
-        if gestureRecognizer === blankPan { return touch.view === self }
+        // 空白处的触摸现在落在 pages 上，所以 self 和 pages 都算"空白"。
+        if gestureRecognizer === blankPan {
+            return touch.view === self || touch.view === pages
+        }
         if gestureRecognizer.view === self {
             if touch.view?.isDescendant(of: dockScroll) == true || touch.view?.isDescendant(of: clearButton) == true { return false }
-            if cards.contains(where: { touch.view?.isDescendant(of: $0) == true }) { return false }
+            // 注意 isDescendant(of:) 对自身返回 false，卡片必须单独判一次，
+            // 否则点卡片会同时触发"点空白返回"，直接把 deck 关掉。
+            if cards.contains(where: { touch.view === $0 || touch.view?.isDescendant(of: $0) == true }) { return false }
         }
         return true
     }
@@ -2200,7 +2235,7 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
             guard let self else { return }
             self.hideDock(); self.pages.alpha = 0
             for card in self.cards { card.transform = card.resting.scaledBy(x: 0.86, y: 0.86); card.transform.ty += 46 }
-        }) { [weak self] in self?.manager?.dismissToHome() }
+        }) { [weak self] in self?.manager?.dismissDeckRestoringPrevious() }
         // Blank/escape means Home, unlike selecting a card, which must never
         // restore the old Home key window after revealing the target.
     }
