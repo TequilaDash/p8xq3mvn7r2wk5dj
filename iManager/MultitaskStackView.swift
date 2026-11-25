@@ -190,6 +190,15 @@ public class MultitaskStackManager: NSObject, ObservableObject {
         }
     }
 
+    /// 辅助触控单击回主屏：deck 是独立的 alert+1 窗口，不拆掉它会一直盖着主屏。
+    func dismissDeckForHome() {
+        guard Thread.isMainThread else { return }
+        pendingPresentation = false
+        clearStoredRequest()
+        restoreSuppressedWindows()
+        detachWindow(restoreKey: false)
+    }
+
     func dismissToHome() {
         precondition(Thread.isMainThread)
         restoreSuppressedWindows()
@@ -309,7 +318,14 @@ public class MultitaskStackManager: NSObject, ObservableObject {
         changingSuppressedWindows = true
         defer { changingSuppressedWindows = false }
         let windows = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.flatMap(\.windows)
-        for window in windows where window !== deck && window.windowLevel == .normal && !window.isHidden {
+        // 访客窗口不一定是 .normal：TweakLoader 会把窗口抬到 1000 或
+        // lastObject+1，那些窗口比 deck 的 alert+1 还高，只过滤 .normal
+        // 等于放它们继续收触摸——这就是"空白处点击仍然透传"的真正原因。
+        // 除了 deck 自己和辅助触控，其余全部隐藏，detach 时按原值恢复。
+        // deck 在 alert+1(2001)；访客窗口是 1000 或 lastObject+1，都在它下面；
+        // 辅助触控在 alert+2(2002) 之上。按层级区分即可，不用去问控制器。
+        for window in windows where window !== deck && !window.isHidden
+            && window.windowLevel < deck.windowLevel {
             if !suppressedWindows.contains(where: { $0.window === window }) {
                 suppressedWindows.append((window, window.isHidden, window.isUserInteractionEnabled))
             }
@@ -1785,7 +1801,9 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
             let gridTop = safe.top + 54
             let gridHeight = max(1, cardBottom - gridTop)
             let cardWidth = max(1, (width - side * 2 - gap) / 2)
-            let previewHeight = min(cardWidth * 1.45, max(1, gridHeight - 34))
+            // 1.9 ≈ 手机屏幕高宽比（390:844）。用 1.45 会把卡片压扁，
+            // 看起来就是"纵向排布被压缩"。
+            let previewHeight = max(1, cardWidth * 1.9)
             let cardHeight = previewHeight + 34
             let rowPitch = cardHeight + gap
             let rows = (cards.count + 1) / 2
@@ -1932,6 +1950,9 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
             if pan === blankPan {
                 return isColumnLayout ? abs(v.y) > abs(v.x) * 1.2 : abs(v.x) > abs(v.y) * 1.2
             }
+            // 纵向排布里，卡片上的竖滑必须让给网格滚动（否则卡片手势吃掉竖滑，
+            // 表现为"纵向排布无法上下滑动"）；横滑才是清除这个后台。
+            if isColumnLayout { return abs(v.x) > abs(v.y) * 1.2 }
             return abs(v.y) > abs(v.x) * 1.2
         }
         return true
@@ -1955,6 +1976,14 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
     @objc func cardPanned(_ pan: UIPanGestureRecognizer) {
         guard let card = pan.view as? StackDeckCard, !transitioning, !invalidated else { return }
         let translation = pan.translation(in: self), velocity = pan.velocity(in: self)
+        // 纵向排布里，卡片上的竖滑交给网格滚动（网格本身可上下翻），
+        // 左右滑才是"清除这个多任务后台"，与堆叠排布的上滑关闭区分开。
+        if isColumnLayout {
+            if pan.state == .ended, abs(translation.x) > 60, abs(translation.x) > abs(translation.y) * 1.2 {
+                close(card, velocity: velocity.x)
+            }
+            return
+        }
         if pan.state == .began {
             finishEntrance()
             let visible = reboundingCard === card ? card.layer.presentation()?.affineTransform().ty : nil

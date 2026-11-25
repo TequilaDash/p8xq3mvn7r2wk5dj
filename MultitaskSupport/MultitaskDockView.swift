@@ -653,13 +653,16 @@ class AppInfoProvider {
     
     // Find and bring corresponding multitask view to front
     func bringMultitaskViewToFront(uuid: String, from center: CGPoint? = nil, fromDeck: Bool = false) -> Bool {
-        guard let windowScene = keyWindow?.windowScene else {
-            return false
-        }
         attachWindowHostingView()
 
         guard let targetView = apps.first(where: { $0.appUUID == uuid })?.view,
-              let window = targetView.window, window.windowScene === windowScene else {
+              let window = targetView.window else {
+            return false
+        }
+        // 从 deck 回来时 keyWindow 可能就是 deck 自己的窗口，它的 scene 与访客
+        // 窗口未必相同；以目标窗口自己的 scene 为准，否则这里返回 false，
+        // 调用方只把窗口 restore 出来却不置前——表现为主屏上多出一张小卡。
+        guard let windowScene = window.windowScene ?? keyWindow?.windowScene else {
             return false
         }
         MultitaskManager.recordUse(container: uuid)

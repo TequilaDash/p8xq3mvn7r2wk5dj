@@ -352,6 +352,9 @@ final class IManagerAssistiveTouchController {
     private func rootView() -> some View {
         IManagerAssistiveTouchRoot(onPress: { [weak self] in
             // 同旧线 lcHostHomePressed：先把多任务窗口收起来，再回主屏。
+            // 最近任务的 deck 是独立窗口，必须先拆掉，否则它继续盖着主屏，
+            // 表现就是"点了辅助触控什么也没发生"。
+            MultitaskStackManager.shared.dismissDeckForHome()
             if #available(iOS 16.0, *) {
                 MultitaskDockManager.shared.minimizeAllWindows()
             }
