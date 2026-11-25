@@ -197,3 +197,36 @@ struct IManagerAppExtensionsPage: View {
 //
 // 风险：FrontBoard/RunningBoard 属私有 API，越狱环境可用，jailed 下受 entitlements 限制。
 // 这条不做进当前版本，等与用户确认后再单独开工。
+
+// MARK: - 阶段二之二：Switzach ROM 的做法（不是模拟，是重建宿主）
+//
+// 样本：switzach_v1.0.5.tipa.zip（67MB，是 Nyxian 的 ROM 包，manifest 写
+//       NXRomMinimumNyxianVersion 0.11.6、NXRomIdentifier org.emexlabs.switzach）
+//
+// 它没有虚拟化，而是**自己写一个精简 SpringBoard 去链接系统真框架**：
+//
+//   ROM/System/Library/CoreServices/SpringBoard.app/SpringBoard（570KB arm64 PIE）
+//     链接：SpringBoardHome.framework（私有）、SystemStatus / SystemStatusUI（私有）、
+//           UIKit / Foundation / CoreGraphics / QuartzCore
+//     使用系统真类：SBAppLayout、SBWindowScene、
+//                  SBWorkspaceApplicationSceneTransitionContext、iconModel、iconManager、
+//                  _loadSnapshotForRequest:withDisplayItem:inAppLayout:
+//     自研补齐（NX 前缀）：NXHomeScreenViewController、NXHomeScreenLayoutProvider、
+//                  NXHomeScreenApplicationIconDataSource、NXHomeScreenIconStateStore、
+//                  NXIconStyle、NXControlCenter、NXFloatingDockRecentlyUsed、NXPackageInstaller
+//     配置键：NXROM.RealSwitcher、NXROM-visible-pages、NXROM initial App Library
+//
+//   ROM/System/Rom/init（1.1MB）引导进程
+//     链接：FrontBoard.framework、BackBoardServices.framework、libarchive
+//     自研：NXBootstrap、NXHostingViewOwnerBox、NXHitSurfaceButton、NXHostOrientationPolicy_
+//           —— 即"宿主窗口 + 引导"这一层是自己实现的
+//
+//   ROM/usr/libexec/bootstrapd + org.emexlabs.bootstrapd.plist
+//     按 manifest 的 NXRomPaths 铺路径（权限 365 = 0555、需签名）
+//
+// 对我们的意义：
+//   真渲染访客 widget 有两条路——
+//   (a) 借系统扩展宿主（Nyxian 的 NSExtension 路线，见上）；
+//   (b) 自己实现宿主层去驱动 SpringBoardHome 的 icon/widget 类（Switzach 路线）。
+//   两条都依赖私有框架；jailed 下受 entitlements 限制，越狱/特权环境可行。
+//   当前版本不做，等与用户确认后单独开工。
