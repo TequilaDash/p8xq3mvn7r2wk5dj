@@ -9,3 +9,4 @@ Resources/Frameworks/OpenSSL.framework
 
 # Linux build (Scripts/zc)
 /build/
+build*.log
