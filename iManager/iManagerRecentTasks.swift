@@ -99,59 +99,60 @@ struct IManagerRecentTasksPage: View {
                         .font(.footnote)
                 }
 
-                Section {
-                    NavigationLink {
-                        IManagerBlurPreviewPage()
-                    } label: {
-                        LabeledContent {
-                            Text(blurSummary)
-                                .foregroundStyle(.secondary)
-                        } label: {
-                            Text("模糊预览图")
-                        }
-                    }
-                } footer: {
-                    Text("将最近任务的卡片内容模糊处理，保护隐私安全。可为每个 App 单独设置。")
-                        .font(.footnote)
-                }
-
-                Section {
-                    Picker("Dock 栏样式", selection: $dockStyle) {
-                        Text("透明（玻璃）").tag(IManagerRecentTasks.dockStyleClear)
-                        Text("磨砂").tag(IManagerRecentTasks.dockStyleFrosted)
-                    }
-                    .pickerStyle(.inline)
-                    .labelsHidden()
-                } header: {
-                    Text("Dock 栏样式")
-                } footer: {
-                    Text("透明：玻璃质感，能看见背后的壁纸或应用。磨砂：默认的模糊底，与系统多任务栏一致。")
-                        .font(.footnote)
-                }
-
-                Section {
-                    HStack {
-                        Text("内存胶囊透明度")
-                        Spacer()
-                        Text("\(Int(capsuleOpacity * 100))%")
-                            .foregroundStyle(.secondary)
-                            .monospacedDigit()
-                    }
-                    Slider(value: $capsuleOpacity, in: 0.2...1.0, step: 0.05) {
-                        Text("内存胶囊透明度")
-                    } minimumValueLabel: {
-                        Image(systemName: "circle.dotted")
-                    } maximumValueLabel: {
-                        Image(systemName: "circle.fill")
-                    }
-                    .disabled(!showsMemory)
-                } header: {
-                    Text("内存胶囊")
-                } footer: {
-                    Text("右上角内存胶囊的不透明度。关掉上面的「显示内存信息」时此项不可用。")
-                        .font(.footnote)
-                }
             }
+
+                    Section {
+                        NavigationLink {
+                            IManagerBlurPreviewPage()
+                        } label: {
+                            LabeledContent {
+                                Text(blurSummary)
+                                    .foregroundStyle(.secondary)
+                            } label: {
+                                Text("模糊预览图")
+                            }
+                        }
+                    } footer: {
+                        Text("将最近任务的卡片内容模糊处理，保护隐私安全。可为每个 App 单独设置。")
+                            .font(.footnote)
+                    }
+
+                    Section {
+                        Picker("Dock 栏样式", selection: $dockStyle) {
+                            Text("透明（玻璃）").tag(IManagerRecentTasks.dockStyleClear)
+                            Text("磨砂").tag(IManagerRecentTasks.dockStyleFrosted)
+                        }
+                        .pickerStyle(.inline)
+                        .labelsHidden()
+                    } header: {
+                        Text("Dock 栏样式")
+                    } footer: {
+                        Text("透明：玻璃质感，能看见背后的壁纸或应用。磨砂：默认的模糊底，与系统多任务栏一致。")
+                            .font(.footnote)
+                    }
+
+                    Section {
+                        HStack {
+                            Text("内存胶囊透明度")
+                            Spacer()
+                            Text("\(Int(capsuleOpacity * 100))%")
+                                .foregroundStyle(.secondary)
+                                .monospacedDigit()
+                        }
+                        Slider(value: $capsuleOpacity, in: 0.2...1.0, step: 0.05) {
+                            Text("内存胶囊透明度")
+                        } minimumValueLabel: {
+                            Image(systemName: "circle.dotted")
+                        } maximumValueLabel: {
+                            Image(systemName: "circle.fill")
+                        }
+                        .disabled(!showsMemory)
+                    } header: {
+                        Text("内存胶囊")
+                    } footer: {
+                        Text("右上角内存胶囊的不透明度。关掉上面的「显示内存信息」时此项不可用。")
+                            .font(.footnote)
+                    }
         }
         .listStyle(.insetGrouped)
         .navigationTitle("最近任务样式")
