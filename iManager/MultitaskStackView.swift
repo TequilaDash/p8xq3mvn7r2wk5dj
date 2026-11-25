@@ -1476,7 +1476,8 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
         blankPan.addTarget(self, action: #selector(blankPanned(_:)))
         blankPan.delegate = self
         addGestureRecognizer(blankPan)
-        tap.require(toFail: blankPan)
+        // 不要 require(toFail:)：一旦 pan 开始，tap 就被判失败，轻点永远不触发。
+        // 由 gestureRecognizerShouldBegin 的位移判定把两者分开即可。
         memoryCapsule.isUserInteractionEnabled = false
         memoryCapsule.clipsToBounds = true
         memoryCapsule.layer.cornerRadius = 16
@@ -2010,7 +2011,14 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
     }
     func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) { if scrollView === pages { finishScrolling() } }
     func scrollViewDidEndScrollingAnimation(_ scrollView: UIScrollView) { if scrollView === pages { finishScrolling() } }
-    private func finishScrolling() { scrolling = false; setNeedsLayout() }
+    private func finishScrolling() {
+        scrolling = false
+        // 停止滚动后重新定位选中卡片并重绘胶囊：只靠 selected 变化会漏掉
+        // "滚动停下来但选中索引没变"的情况，胶囊就停在不显示状态。
+        updateMemoryTarget()
+        renderMemory()
+        setNeedsLayout()
+    }
     // UIView 自带 gestureRecognizerShouldBegin:, 子类实现必须标 override（CI 类型检查抓出）。
     override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
         guard !transitioning, !invalidated else { return false }
@@ -2020,8 +2028,13 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
                 // 轻点也会产生极小的速度；不设门槛时 pan 抢在 tap 之前开始，
                 // tap.require(toFail: blankPan) 于是永远失败——表现就是
                 // "空白处点了没反应、回不到上一级"。
+                // 用"是否已经真的移动"判断，而不是速度阈值：轻点也会产生
+                // 几十点/秒的速度，阈值法必然误判（点空白没反应就是这么来的）。
+                // 手指没移动时 pan 不开始，tap 才能正常触发。
+                let moved = pan.translation(in: self)
+                let distance = max(abs(moved.x), abs(moved.y))
                 let speed = max(abs(v.x), abs(v.y))
-                guard speed > 40 else { return false }
+                guard distance > 8 || speed > 300 else { return false }
                 return isColumnLayout ? abs(v.y) > abs(v.x) * 1.2 : abs(v.x) > abs(v.y) * 1.2
             }
             // 纵向排布里，卡片上的竖滑必须让给网格滚动（否则卡片手势吃掉竖滑，
