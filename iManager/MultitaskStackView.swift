@@ -647,7 +647,15 @@ public class MultitaskStackManager: NSObject, ObservableObject {
                 // 访客窗口可能是窗口化状态（isMaximized == false），恢复可见那一帧
                 // 就会露出"居中小卡 + 上下黑边"（用户截图 IMG_0666）。
                 // 在恢复可见之前就把它铺满，那一帧直接是全屏。
-                if !target.isMaximized { target.maximizeWindow() }
+                if !target.isMaximized {
+                    target.maximizeWindow()
+                    // maximizeWindow 自带 0.3s 动画；恢复可见那一帧若还停在
+                    // 动画起点（窗口化姿态），就是"居中小卡+黑边"残留的来源。
+                    // 掐掉动画、落到终态，再恢复可见。
+                    target.view.window?.layer.removeAllAnimations()
+                    target.view.layer.removeAllAnimations()
+                    target.view.layoutIfNeeded()
+                }
                 for other in controllers {
                     if let decorated = self.decoratedController(for: other), decorated !== target { decorated.minimizeWindow() }
                 }
@@ -1632,7 +1640,7 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
             pages.setContentOffset(pages.contentOffset, animated: false)
             if transitioning {
                 transition?.stopAnimation(true); transition = nil
-                transitioning = false; pages.isScrollEnabled = true; isUserInteractionEnabled = true
+                transitioning = false; pages.isScrollEnabled = !isColumnLayout; isUserInteractionEnabled = true
                 DispatchQueue.main.async { [weak self] in self?.backdrop?(true, 0.15) }
             }
             pages.alpha = 1; emptyLabel.alpha = 1
@@ -2025,8 +2033,9 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
     }
     // UIView 自带 gestureRecognizerShouldBegin:, 子类实现必须标 override（CI 类型检查抓出）。
     override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
-        guard !transitioning, !invalidated else { return false }
+        guard !invalidated else { return false }
         if let pan = gestureRecognizer as? UIPanGestureRecognizer {
+            guard !transitioning else { return false }
             let v = pan.velocity(in: self)
             if pan === blankPan {
                 // 轻点也会产生极小的速度；不设门槛时 pan 抢在 tap 之前开始，
@@ -2045,6 +2054,13 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
             // 表现为"纵向排布无法上下滑动"）；横滑才是清除这个后台。
             if isColumnLayout { return abs(v.x) > abs(v.y) * 1.2 }
             return abs(v.y) > abs(v.x) * 1.2
+        }
+        // 轻点（空白返回）是这里唯一入口：transitioning 一旦卡住，tap 永远
+        // 进不来 dismissDeck，空白点从此失效。复位后放行。
+        if transitioning {
+            transition?.stopAnimation(true); transition = nil
+            transitioning = false
+            pages.isScrollEnabled = !isColumnLayout
         }
         return true
     }
@@ -2193,7 +2209,7 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
         transitioning = true; pages.isScrollEnabled = false; isUserInteractionEnabled = true
         let done = { [weak self] in
             guard let self, !self.invalidated else { return }
-            self.transitioning = false; self.pages.isScrollEnabled = true; self.isUserInteractionEnabled = true
+            self.transitioning = false; self.pages.isScrollEnabled = !isColumnLayout; self.isUserInteractionEnabled = true
             completion()
         }
         if UIAccessibility.isReduceMotionEnabled { animations(); done(); return }

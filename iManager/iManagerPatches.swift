@@ -74,15 +74,6 @@ enum IManagerPatchRegistry {
                 "LiveContainerSwiftUI/Models/LCAppInfo.m（门控后加 1 段判断）",
             ]
         ),
-        IManagerPatch(
-            id: "ZC-PATCH-004",
-            title: "窗口化访客回到前台的那一帧",
-            summary: "访客窗口可能是窗口化状态（isMaximized == false），从 deck 恢复可见的那一帧会露出居中小卡与上下黑边（用户截图 IMG_0666）。现在恢复可见之前先铺满。",
-            files: [
-                "iManager/MultitaskStackView.swift（选卡回前台处 1 行）",
-                "MultitaskSupport/DecoratedAppSceneViewController.h（补 maximizeWindow 声明）",
-            ]
-        ),
     ]
 }
 

@@ -43,8 +43,7 @@ struct IManagerSettingsPage: View {
                     IManagerRow(
                         icon: "rectangle.topthird.inset.filled",
                         color: .blue,
-                        title: "状态栏沉浸",
-                        detail: IManagerStatusBarImmersion.isOn ? "已开启" : "未开启"
+                        title: "隐藏状态栏"
                     )
                 }
 
@@ -107,7 +106,7 @@ private struct IManagerRow: View {
     let icon: String
     let color: Color
     let title: String
-    let detail: String
+    var detail: String = ""
 
     var body: some View {
         LabeledContent {
