@@ -394,6 +394,10 @@ public class MultitaskStackManager: NSObject, ObservableObject {
                     }
                 }
             }
+            NSLog("[deck] detach restoreKey=%d cards=%d target=%@ prev=%@",
+                  restoreKey ? 1 : 0, apps.count,
+                  restoreTarget.map { String(describing: type(of: $0)) } ?? "nil",
+                  previous == nil ? "nil" : "set")
             restoreTarget?.makeKey()
         }
         previousKeyWindow = nil
@@ -1399,6 +1403,10 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
     private let messageLabel = UILabel()
     private var cards: [StackDeckCard] = []
     private let blankPan = UIPanGestureRecognizer()
+    /// 专门承接"空白区域"触摸的视图：轻点=返回上一级，拖动=滚动。
+    /// 不再依赖 viewport 自己接触摸——hitTest 返回哪个视图，只有那个视图
+    /// 的手势会参与，之前空白点失效就是这个前提被别的东西破坏导致的。
+    private let blankTarget = UIView()
     private var blankStartX: CGFloat = 0
     private var blankStartY: CGFloat = 0
     private let memoryCapsule = UIVisualEffectView(effect: UIBlurEffect(style: .systemUltraThinMaterial))
@@ -1482,14 +1490,18 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
         addSubview(messageLabel)
         dockScroll.layer.cornerRadius = 19
         dockScroll.layer.cornerCurve = .continuous
+        // 空白区域由 blankTarget 专管：它自己收轻点（返回上一级）与拖动（滚动）。
+        // 两个手势挂在同一个视图上，UIKit 自己按"有没有移动"仲裁，不需要
+        // require(toFail:)，也不受 pages 这个 UIScrollView 的手势延迟影响。
+        blankTarget.backgroundColor = .clear
+        blankTarget.isUserInteractionEnabled = true
+        insertSubview(blankTarget, at: 0)
         let tap = UITapGestureRecognizer(target: self, action: #selector(backgroundTapped))
         tap.delegate = self
-        addGestureRecognizer(tap)
+        blankTarget.addGestureRecognizer(tap)
         blankPan.addTarget(self, action: #selector(blankPanned(_:)))
         blankPan.delegate = self
-        addGestureRecognizer(blankPan)
-        // 不要 require(toFail:)：一旦 pan 开始，tap 就被判失败，轻点永远不触发。
-        // 由 gestureRecognizerShouldBegin 的位移判定把两者分开即可。
+        blankTarget.addGestureRecognizer(blankPan)
         memoryCapsule.isUserInteractionEnabled = false
         memoryCapsule.clipsToBounds = true
         memoryCapsule.layer.cornerRadius = 16
@@ -1520,7 +1532,9 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
         // 表现为"空白点不动、只有摸着卡片才划得动"（test34 实测）。
         // 纵向排布的滚动由 blankPan 直接驱动 pages.contentOffset，不靠 UIScrollView。
         if let card = frontmostPreviewCard(at: point) { return card }
-        return self
+        // 空白处交给 blankTarget，由它自己的轻点/拖动手势处理；
+        // 返回 self 时若被滚动视图或别的手势链挡下，轻点就永远到不了 backgroundTapped。
+        return blankTarget
     }
 
     private func frontmostPreviewCard(at point: CGPoint) -> StackDeckCard? {
@@ -1814,6 +1828,7 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
     override func safeAreaInsetsDidChange() { super.safeAreaInsetsDidChange(); setNeedsLayout() }
     override func layoutSubviews() {
         super.layoutSubviews()
+        blankTarget.frame = bounds
         layoutHeader()
         guard !invalidated, !transitioning, draggingCard == nil, !scrolling,
               !pages.isDragging, !pages.isDecelerating, bounds.width > 0, bounds.height > 0 else { return }
@@ -2065,17 +2080,19 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
         return true
     }
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
-        if gestureRecognizer === blankPan { return touch.view === self }
-        if gestureRecognizer.view === self {
-            if touch.view?.isDescendant(of: dockScroll) == true || touch.view?.isDescendant(of: clearButton) == true { return false }
-            // 注意 isDescendant(of:) 对自身返回 false，卡片必须单独判一次，
-            // 否则点卡片会同时触发"点空白返回"，直接把 deck 关掉。
-            if cards.contains(where: { touch.view === $0 || touch.view?.isDescendant(of: $0) == true }) { return false }
+        // 空白区域的轻点与拖动只认 blankTarget 自己收到的触摸；
+        // 落在卡片、dock、清除按钮上的一律不接管。
+        if gestureRecognizer === blankPan || gestureRecognizer.view === blankTarget {
+            return touch.view === blankTarget
         }
+        if cards.contains(where: { touch.view === $0 || touch.view?.isDescendant(of: $0) == true }) { return false }
         return true
     }
     @objc func cardTapped(_ tap: UITapGestureRecognizer) { if let card = tap.view as? StackDeckCard { activate(card) } }
-    @objc private func backgroundTapped() { dismissDeck() }
+    @objc private func backgroundTapped() {
+        NSLog("[deck] blank-tap")
+        dismissDeck()
+    }
     @objc private func clearAll() { manager?.closeAll() }
     func isCurrent(_ card: StackDeckCard) -> Bool {
         guard !invalidated, !transitioning, cards.contains(where: { $0 === card }), let manager,
@@ -2268,7 +2285,9 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
             guard let self else { return }
             self.hideDock()
             for other in self.cards { other.icon.alpha = 0; other.name.alpha = 0; if other !== card { other.alpha = 0 } }
-            self.align(card, to: card.expandedFrame ?? self.bounds)
+            // 回前台一律全屏：用 expandedFrame（访客当前窗口矩形）会让卡片
+            // 先飞进一个窗口化小矩形再跳到全屏，就是"进入瞬间居中小卡+黑边"。
+            self.align(card, to: self.bounds)
             card.preview.layer.cornerRadius = 0
         }) { [weak self, weak card] in
             guard let self, let card, self.isCurrent(card) else { return }
@@ -2290,6 +2309,7 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
         dock.alpha = 0; dockScroll.alpha = 0; clearButton.alpha = 0; emptyLabel.alpha = 0
     }
     private func dismissDeck() {
+        NSLog("[deck] dismissDeck transitioning=%d cards=%d", transitioning ? 1 : 0, cards.count)
         // 不再因 transitioning 直接放弃：卡住的标志位会让"点空白返回"彻底失效。
         if transitioning { finishEntrance(); stopRebound(); transitioning = false }
         backdrop?(false, 0.28)
