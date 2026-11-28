@@ -1537,38 +1537,18 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
     }
 
     private func frontmostPreviewCard(at point: CGPoint) -> StackDeckCard? {
-        guard !pages.isHidden, pages.alpha >= 0.01 else { return nil }
-        let root = layer.presentation() ?? layer
-        let pageLayer = root === layer ? pages.layer : (pages.layer.presentation() ?? pages.layer)
-        // Use one tree consistently; never mix a presentation source with a
-        // model destination if a layer hasn't committed yet.
-        let usePresentation = root !== layer && pageLayer !== pages.layer
-        let source = usePresentation ? root : layer
-        let clipping = usePresentation ? pageLayer : pages.layer
-        guard clipping.opacity >= 0.01, clipping.bounds.contains(clipping.convert(point, from: source)) else { return nil }
+        guard !pages.isHidden, pages.alpha >= 0.01, pages.frame.contains(point) else { return nil }
         var winner: StackDeckCard?
         var bestZ = -CGFloat.greatestFiniteMagnitude
-        for card in cards where !card.isHidden && card.isUserInteractionEnabled && !card.preview.isHidden {
-            let candidate = usePresentation ? card.preview.layer.presentation() : nil
-            let cardLayer = usePresentation ? card.layer.presentation() : nil
-            // Both or neither: coordinates remain in a coherent layer tree.
-            let surface = candidate != nil && cardLayer != nil ? candidate! : card.preview.layer
-            let from = candidate != nil && cardLayer != nil ? source : layer
-            let visualCard = cardLayer ?? card.layer
-            guard visualCard.opacity >= 0.01 else { continue }
-            // Column cards include a 34pt title row above the preview. Hit-test
-            // the entire card there so a horizontal dismiss begun on its title
-            // reaches cardPanned instead of the blank-area vertical pan.
-            // 只把 preview 的圆形区域算作卡片：标题带与网格空隙必须归空白，
-            // 否则空白点击会被判成点卡片而毫无反应。
-            let previewPoint = surface.convert(point, from: from)
-            guard surface.opacity >= 0.01,
-                  StackDeckCard.previewPath(bounds: surface.bounds, radius: surface.cornerRadius).contains(previewPoint)
-            else { continue }
-            let z = visualCard.zPosition
-            if winner == nil || z > bestZ || (z == bestZ && card.index > winner!.index) {
-                winner = card; bestZ = z
-            }
+        for card in cards where !card.isHidden && card.isUserInteractionEnabled
+            && !card.preview.isHidden && card.alpha >= 0.01 {
+            // 用 UIView 自己的坐标换算：它会把 card 的 transform 一并算进去，
+            // 比手写 CALayer 换算可靠。之前的 presentation-layer 版本一旦算错，
+            // 空白点会被判成"点在卡片上"，空白处就完全没有反应。
+            let local = card.preview.convert(point, from: self)
+            guard card.preview.bounds.contains(local) else { continue }
+            let z = card.layer.zPosition
+            if winner == nil || z > bestZ { winner = card; bestZ = z }
         }
         return winner
     }
