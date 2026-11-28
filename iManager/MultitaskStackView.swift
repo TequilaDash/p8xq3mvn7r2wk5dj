@@ -19,6 +19,17 @@ import Combine
 
 @available(iOS 16.0, *)
 @objcMembers
+/// deck 自己的窗口。SwiftUI 里某个点若返回 nil，窗口默认会让触摸落到下一层
+/// 窗口（访客/主屏）——表现就是"点空闲处完全没反应"。这里保证窗口内任何点
+/// 都属于 deck 自己。
+private final class StackDeckWindow: UIWindow {
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        if let hit = super.hitTest(point, with: event) { return hit }
+        guard bounds.contains(point) else { return nil }
+        return rootViewController?.view
+    }
+}
+
 public class MultitaskStackManager: NSObject, ObservableObject {
     @Published public private(set) var isVisible = false
     @Published public var selectedIndex = 0
@@ -293,7 +304,7 @@ public class MultitaskStackManager: NSObject, ObservableObject {
         let host = UIHostingController(rootView: AnyView(MultitaskStackView().environmentObject(self)))
         host.view.backgroundColor = .clear
         host.view.isOpaque = false
-        let window = UIWindow(windowScene: scene)
+        let window = StackDeckWindow(windowScene: scene)
         // 1.1.113: 全屏盖住。此前 frame=target.frame（上一个前台访客窗口的区域），
         // deck 覆盖不到的屏幕空白处触摸会直接落到底下的访客窗口——用户实测
         // “从堆叠后台空闲处点击能操作多任务 app 界面”。窗口盖满屏后，viewport

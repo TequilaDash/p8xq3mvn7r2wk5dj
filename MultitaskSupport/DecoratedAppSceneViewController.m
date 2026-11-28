@@ -1001,8 +1001,15 @@ static NSNotificationName const LCWindowTouchedNotification = @"LCWindowTouchedN
         UIView *surface = self.appSceneVC.contentView;
         if (!surface) { completion(); return; } // 旧 presenter 有独立几何发布，无需等待
         CGSize got = surface.bounds.size;
-        BOOL filled = want.width < 1 || want.height < 1
-            || (fabs(got.width - want.width) <= 2 && fabs(got.height - want.height) <= 2);
+        // 访客 VC 的视图由 scene 几何决定，是比 wrapper 更可信的信号；
+        // 两边都到位才算真正的 surface 就绪。
+        UIView *guest = self.appSceneVC.viewIfLoaded;
+        CGSize guestSize = guest ? guest.bounds.size : CGSizeZero;
+        CGSize full = self.view.bounds.size;
+        BOOL guestFilled = !guest || (fabs(guestSize.width - full.width) <= 2
+                                      && fabs(guestSize.height - full.height) <= 2);
+        BOOL filled = guestFilled && (want.width < 1 || want.height < 1
+            || (fabs(got.width - want.width) <= 2 && fabs(got.height - want.height) <= 2));
         if (filled) {
             stableFrames += 1;
             // scene 设值之后再等一帧，避免"尺寸已变、画面还没提交"的中间态。
