@@ -2358,8 +2358,14 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
         // hitTest consumes transition touches instead of exposing live guests.
         transitioning = true; pages.isScrollEnabled = false; isUserInteractionEnabled = true
         let done = { [weak self] in
-            guard let self, !self.invalidated else { return }
-            self.transitioning = false; self.pages.isScrollEnabled = !isColumnLayout; self.isUserInteractionEnabled = true
+            // 状态复位只在有效时做，但 completion 必须无条件执行：视图一旦在
+            // 转场中被卸载，隐藏窗口那一步会被静默丢弃，结果就是"点了返回，
+            // deck 原样留在屏幕上"（dock 与内存胶囊都还在）。
+            if let self, !self.invalidated {
+                self.transitioning = false
+                self.pages.isScrollEnabled = !self.isColumnLayout
+                self.isUserInteractionEnabled = true
+            }
             completion()
         }
         if UIAccessibility.isReduceMotionEnabled { animations(); done(); return }
@@ -2453,12 +2459,14 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
         dismissing = true
         // 不再因 transitioning 直接放弃：卡住的标志位会让"点空白返回"彻底失效。
         if transitioning { finishEntrance(); stopRebound(); transitioning = false }
+        // 转场期间视图可能被卸载（manager 被清空），先把要调用的对象抓住。
+        let manager = self.manager
         backdrop?(false, 0.28)
         runTransition(duration: 0.28, damping: 1, animations: { [weak self] in
             guard let self else { return }
             self.hideDock(); self.pages.alpha = 0
             for card in self.cards { card.transform = card.resting.scaledBy(x: 0.86, y: 0.86); card.transform.ty += 46 }
-        }) { [weak self] in self?.manager?.dismissDeckRestoringPrevious() }
+        }) { manager?.dismissDeckRestoringPrevious() }
         // Blank/escape means Home, unlike selecting a card, which must never
         // restore the old Home key window after revealing the target.
     }
