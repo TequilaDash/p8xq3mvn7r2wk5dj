@@ -1484,6 +1484,9 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
     }
     private let dockScroll = UIScrollView()
     private let clearButton = UIButton(type: .system)
+    /// 明确的返回按钮：header 带（与内存胶囊同一块可用触摸区），
+    /// 走 UIButton 的 touch tracking，不依赖任何手势识别器。
+    private let backButton = UIButton(type: .system)
     private let emptyLabel = UILabel()
     private let messageLabel = UILabel()
     private var cards: [StackDeckCard] = []
@@ -1557,6 +1560,13 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
         dockScroll.contentInsetAdjustmentBehavior = .never
         // Artwork and glass are siblings, not inside effect.contentView (:373-379).
         addSubview(dockScroll)
+        backButton.setImage(UIImage(systemName: "chevron.left"), for: .normal)
+        backButton.tintColor = .white
+        backButton.backgroundColor = UIColor.white.withAlphaComponent(0.18)
+        backButton.layer.cornerRadius = 16
+        backButton.accessibilityLabel = "返回"
+        backButton.addTarget(self, action: #selector(backTapped), for: .touchUpInside)
+        addSubview(backButton)
         clearButton.setImage(UIImage(systemName: "trash"), for: .normal)
         clearButton.tintColor = .white
         clearButton.backgroundColor = UIColor.white.withAlphaComponent(0.18)
@@ -1619,6 +1629,12 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
         // 空白必须由本视图自己接收。交给 pages（UIScrollView）会让它吞掉轻点，
         // 表现为"空白点不动、只有摸着卡片才划得动"（test34 实测）。
         // 纵向排布的滚动由 blankPan 直接驱动 pages.contentOffset，不靠 UIScrollView。
+        // 明确的返回按钮优先：它是 UIControl，必须由它自己接收触摸，
+        // 否则会被下面的卡片判定或"空白交给 viewport"吞掉。
+        if !backButton.isHidden, backButton.alpha >= 0.01 {
+            let local = backButton.convert(point, from: self)
+            if backButton.point(inside: local, with: event) { return backButton }
+        }
         if let card = frontmostPreviewCard(at: point) { return card }
         return self
     }
@@ -1922,13 +1938,14 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
         memoryCapsule.frame = CGRect(x: bounds.maxX - safe.right - 16 - width,
                                      y: safe.top + 10, width: width, height: 32)
         memoryLabel.frame = memoryCapsule.bounds.insetBy(dx: 12, dy: 7)
+        backButton.frame = CGRect(x: safe.left + 12, y: safe.top + 8, width: 44, height: 34)
         let reserve = memoryCapsule.isHidden ? 0 : width + 12
         let messageWidth = available - reserve
         if !memoryCapsule.isHidden && messageWidth < 120 {
             // Narrow split/native viewport: message goes below, never overlays.
             messageLabel.frame = CGRect(x: safe.left + 16, y: safe.top + 54, width: max(1, available), height: 44)
         } else {
-            messageLabel.frame = CGRect(x: safe.left + 16, y: safe.top + 4, width: max(1, messageWidth), height: 44)
+            messageLabel.frame = CGRect(x: safe.left + 64, y: safe.top + 4, width: max(1, messageWidth - 48), height: 44)
         }
     }
 
@@ -2238,6 +2255,7 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
         blankTouchStart = nil
     }
     @objc private func clearAll() { manager?.closeAll() }
+    @objc private func backTapped() { dismissDeck() }
     func isCurrent(_ card: StackDeckCard) -> Bool {
         guard !invalidated, !transitioning, cards.contains(where: { $0 === card }), let manager,
               manager.apps.contains(where: { $0.appUUID == card.uuid }) else { return false }
