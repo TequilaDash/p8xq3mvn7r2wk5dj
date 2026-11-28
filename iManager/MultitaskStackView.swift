@@ -1522,8 +1522,6 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
     private var stride: CGFloat = 1
     private var selected = 0
     private var dragStartPage: CGFloat = 0
-    /// 纵向排布卡片拖动的方向：0 未定、1 横滑清除、2 竖滑滚动。
-    private var columnDragAxis = 0
     private var scrolling = false
     private var layingOut = false
     private var transitioning = false
@@ -1753,7 +1751,7 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
             pages.setContentOffset(pages.contentOffset, animated: false)
             if transitioning {
                 transition?.stopAnimation(true); transition = nil
-                transitioning = false; pages.isScrollEnabled = !isColumnLayout; isUserInteractionEnabled = true
+                transitioning = false; pages.isScrollEnabled = true; isUserInteractionEnabled = true
                 DispatchQueue.main.async { [weak self] in self?.backdrop?(true, 0.15) }
             }
             pages.alpha = 1; emptyLabel.alpha = 1
@@ -2021,11 +2019,11 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
             let rows = (cards.count + 1) / 2
             let usedHeight = CGFloat(rows) * cardHeight + CGFloat(max(0, rows - 1)) * gap
             stride = width
-            // 纵向排布下由 blankPan 直接改 contentOffset，关掉 UIScrollView 自己的
-            // 手势，否则它会延迟/吞掉空白处的触摸，点击就再也到不了 backgroundTapped。
-            pages.isScrollEnabled = false
+            // Keep native scrolling enabled for vertical drags that begin on a
+            // card; the card pan recognizer only claims horizontal dismissal.
+            pages.isScrollEnabled = true
             pages.alwaysBounceHorizontal = false
-            pages.alwaysBounceVertical = false
+            pages.alwaysBounceVertical = true
             pages.frame = CGRect(x: 0, y: gridTop, width: width, height: gridHeight)
             pages.contentSize = CGSize(width: width, height: max(gridHeight, usedHeight + 12))
             for card in cards {
@@ -2197,12 +2195,14 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
                 let distance = max(abs(moved.x), abs(moved.y))
                 let speed = max(abs(v.x), abs(v.y))
                 guard distance > 8 || speed > 300 else { return false }
-                return isColumnLayout ? abs(v.y) > abs(v.x) * 1.2 : abs(v.x) > abs(v.y) * 1.2
+                return isColumnLayout ? abs(moved.y) > abs(moved.x) * 1.2 : abs(moved.x) > abs(moved.y) * 1.2
             }
-            // 纵向排布：横滑清除、竖滑滚动网格，都由 cardPanned 按实际位移
-            // 分流。这里预判方向会把竖滑判 false，而空白手势又不接收落在
-            // 卡片上的触摸，竖滑就无主（"无法滑动浏览"就是这么来的）。
-            if isColumnLayout { return true }
+            // In column layout, vertical card drags fail this recognizer so the
+            // ancestor scroll view owns them; horizontal drags dismiss the card.
+            if isColumnLayout {
+                let moved = pan.translation(in: self)
+                return abs(moved.x) > abs(moved.y) * 1.2
+            }
             return abs(v.y) > abs(v.x) * 1.2
         }
         // 轻点（空白返回）是这里唯一入口：transitioning 一旦卡住，tap 永远
@@ -2210,7 +2210,7 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
         if transitioning {
             transition?.stopAnimation(true); transition = nil
             transitioning = false
-            pages.isScrollEnabled = !isColumnLayout
+            pages.isScrollEnabled = true
         }
         return true
     }
@@ -2267,33 +2267,18 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
     @objc func cardPanned(_ pan: UIPanGestureRecognizer) {
         guard let card = pan.view as? StackDeckCard, !transitioning, !invalidated else { return }
         let translation = pan.translation(in: self), velocity = pan.velocity(in: self)
-        // 纵向排布里，卡片上的竖滑交给网格滚动（网格本身可上下翻），
-        // 左右滑才是"清除这个多任务后台"，与堆叠排布的上滑关闭区分开。
+        // In column layout, vertical movement belongs to pages' native pan;
+        // this card recognizer only handles horizontal dismissal.
         if isColumnLayout {
-            // 一个手势两种用途：竖滑滚网格（卡片不动），横滑清除这个后台。
-            // 方向只在真的动起来之后才定，避免轻点被判成拖动。
             switch pan.state {
             case .began:
                 finishEntrance(); stopRebound()
-                dragStartOffset = pages.contentOffset.y
-                columnDragAxis = 0
+                draggingCard = card
             case .changed:
-                if columnDragAxis == 0 {
-                    let settled = max(abs(translation.x), abs(translation.y)) > 8
-                    if settled {
-                        columnDragAxis = abs(translation.y) > abs(translation.x) ? 2 : 1
-                        if columnDragAxis == 1 { draggingCard = card } else { scrolling = true }
-                    }
-                }
-                if draggingCard === card {
-                    var t = card.resting
-                    t.tx += translation.x
-                    card.transform = t
-                } else if columnDragAxis == 2 {
-                    let limit = max(0, pages.contentSize.height - pages.bounds.height)
-                    pages.contentOffset = CGPoint(x: 0, y: min(max(0, dragStartOffset - translation.y), limit))
-                }
-            default:
+                var t = card.resting
+                t.tx += translation.x
+                card.transform = t
+            case .ended, .cancelled, .failed:
                 let wasCard = draggingCard === card
                 draggingCard = nil
                 let horizontal = abs(translation.x) > 60 && abs(translation.x) > abs(translation.y) * 1.2
@@ -2308,7 +2293,8 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
                     }
                     finishScrolling()
                 }
-                columnDragAxis = 0
+            default:
+                break
             }
             return
         }
@@ -2415,7 +2401,7 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
             // deck 原样留在屏幕上"（dock 与内存胶囊都还在）。
             if let self, !self.invalidated {
                 self.transitioning = false
-                self.pages.isScrollEnabled = !self.isColumnLayout
+                self.pages.isScrollEnabled = true
                 self.isUserInteractionEnabled = true
             }
             completion()

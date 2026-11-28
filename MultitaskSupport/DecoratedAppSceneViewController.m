@@ -990,35 +990,33 @@ static NSNotificationName const LCWindowTouchedNotification = @"LCWindowTouchedN
 - (void)revealWhenSurfaceFillsWindow:(void (^)(void))completion {
     if (!completion) { return; }
     CGFloat scale = self.scaleRatio > 0 ? self.scaleRatio : 1;
-    CGSize want = CGSizeMake(self.view.bounds.size.width / scale, self.view.bounds.size.height / scale);
-    __block NSInteger remaining = 40; // ~0.64s 上限
-    __block NSInteger stableFrames = 0; // 连续两次填满才算真的落地
+    __block NSInteger stableFrames = 0;
+    __block NSInteger remaining = 90; // 约 1.4 秒；防止 surface 不上报时永久卡在 deck
     __weak typeof(self) weakSelf = self;
     __block void (^attempt)(void);
     attempt = ^{
         typeof(self) self = weakSelf;
-        if (!self) { completion(); return; }
+        if (!self) { attempt = nil; completion(); return; }
+        CGSize full = self.view.bounds.size;
+        CGSize want = CGSizeMake(full.width / scale, full.height / scale);
         UIView *surface = self.appSceneVC.contentView;
-        if (!surface) { completion(); return; } // 旧 presenter 有独立几何发布，无需等待
-        CGSize got = surface.bounds.size;
-        // 访客 VC 的视图由 scene 几何决定，是比 wrapper 更可信的信号；
-        // 两边都到位才算真正的 surface 就绪。
         UIView *guest = self.appSceneVC.viewIfLoaded;
         CGSize guestSize = guest ? guest.bounds.size : CGSizeZero;
-        CGSize full = self.view.bounds.size;
-        BOOL guestFilled = !guest || (fabs(guestSize.width - full.width) <= 2
-                                      && fabs(guestSize.height - full.height) <= 2);
-        BOOL filled = guestFilled && (want.width < 1 || want.height < 1
-            || (fabs(got.width - want.width) <= 2 && fabs(got.height - want.height) <= 2));
-        if (filled) {
+        BOOL guestFilled = guest && fabs(guestSize.width - full.width) <= 2
+            && fabs(guestSize.height - full.height) <= 2;
+        BOOL surfaceFilled = YES;
+        if (surface) {
+            CGSize got = surface.bounds.size;
+            surfaceFilled = want.width >= 1 && want.height >= 1
+                && fabs(got.width - want.width) <= 2 && fabs(got.height - want.height) <= 2;
+        }
+        if (guestFilled && surfaceFilled) {
             stableFrames += 1;
-            // scene 设值之后再等一帧，避免"尺寸已变、画面还没提交"的中间态。
-            if (stableFrames >= 2) { completion(); return; }
+            if (stableFrames >= 2) { attempt = nil; completion(); return; }
         } else {
             stableFrames = 0;
-            if (remaining <= 0) { completion(); return; } // 兜底，绝不把 deck 卡死
+            if (--remaining <= 0) { attempt = nil; completion(); return; } // 有界兜底
         }
-        remaining -= 1;
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(16 * NSEC_PER_MSEC)), dispatch_get_main_queue(), attempt);
     };
     attempt();
@@ -1026,38 +1024,35 @@ static NSNotificationName const LCWindowTouchedNotification = @"LCWindowTouchedN
 
 - (void)maximizeWindowWithoutAnimation {
     UIView *hostView = self.view.superview;
-    // isMaximized 在 iPhone 上初值就是 YES，光看它会把"其实还是窗口化"的窗口
-    // 直接放过去；必须以真实的 frame 与 transform 为准。
-    if (self.isMaximized && self.snapSlot == LCWindowSnapSlotNone && hostView
-        && CGRectEqualToRect(self.view.frame, hostView.bounds)
-        && fabs(self.view.transform.a - 1) < 0.001 && fabs(self.view.transform.d - 1) < 0.001) {
-        return;
+    BOOL alreadyFull = self.isMaximized && self.snapSlot == LCWindowSnapSlotNone && !self.isStashed
+        && hostView && CGRectEqualToRect(self.view.frame, hostView.bounds)
+        && CGAffineTransformIsIdentity(self.view.transform);
+    if (!alreadyFull) {
+        if (self.isStashed) { [self unstashAnimated:NO]; }
+        // Deck selection means true full screen, never the phone split half.
+        if (self.snapSlot != LCWindowSnapSlotNone) {
+            CGRect before = self.frameBeforeSnap;
+            [LCWindowSnapManager.shared releaseWindow:self];
+            if (LCWindowSnapManager.usesPhoneLayout) { [self didLeavePhoneSplitAnimated:NO]; }
+            if (!CGRectIsEmpty(before)) { [self updateOriginalFrameFromFrame:before]; }
+        } else {
+            [self updateOriginalFrame];
+        }
+        [UIView performWithoutAnimation:^{
+            self.isMaximized = YES;
+            self.view.transform = CGAffineTransformIdentity;
+            if (self.view.superview) { self.view.frame = self.view.superview.bounds; }
+            [self updateVerticalConstraints];
+            [self applyWindowStyleMaximized:YES];
+            self.resizeHandle.alpha = 0;
+            [self.view setNeedsLayout];
+            [self.view layoutIfNeeded];
+        }];
     }
-    if (self.isStashed) { [self unstashAnimated:NO]; }
-    // 这里是"铺满屏幕"，不是布局菜单里的分屏：手机布局也必须真全屏。
-    // 照搬 maximizeWindow 的 usesPhoneLayout 分支会把窗口塞进上半屏，
-    // 露出时正是"居中小卡 + 上下黑边"。
-    if (self.snapSlot != LCWindowSnapSlotNone) {
-        CGRect before = self.frameBeforeSnap;
-        [LCWindowSnapManager.shared releaseWindow:self];
-        // releaseWindow 在手机上只清 manager 的槽位引用，窗口自己的 snapSlot 还在，
-        // 不清掉的话这里仍会按"半屏"处理。didLeavePhoneSplit 会清槽位并铺满。
-        if (LCWindowSnapManager.usesPhoneLayout) { [self didLeavePhoneSplitAnimated:NO]; }
-        if (!CGRectIsEmpty(before)) { [self updateOriginalFrameFromFrame:before]; }
-    } else {
-        [self updateOriginalFrame];
-    }
+    // Publish geometry only after the decorated view and app viewport have
+    // both been laid out at their final full-screen size.
     [self.appSceneVC updateSettingsWithBlock:^(UIMutableApplicationSceneSettings *settings) {
         [self updateMaximizedFrameWithSettings:settings];
-    }];
-    [UIView performWithoutAnimation:^{
-        self.isMaximized = YES;
-        [self updateVerticalConstraints];
-        [self applyWindowStyleMaximized:YES];
-        self.resizeHandle.alpha = 0;
-        if (self.view.superview) { self.view.frame = self.view.superview.bounds; }
-        [self.view setNeedsLayout];
-        [self.view layoutIfNeeded];
     }];
 }
 
