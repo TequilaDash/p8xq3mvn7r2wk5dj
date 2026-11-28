@@ -25,11 +25,13 @@ private final class StackDeckWindow: UIWindow {
     /// deck 自己的内容视图（viewport）。系统对某点返回 nil 或只返回托管根视图时，
     /// 把该点交给它，好让 viewport 自己的轻点/拖动识别器参与。
     weak var deckView: UIView?
-    /// 这个点是否属于"不该返回"的区域（卡片、dock）。由 viewport 提供。
-    var shouldIgnoreTap: ((CGPoint) -> Bool)?
+    /// 这个命中视图是否属于"不该返回"的区域（卡片、dock）。由 viewport 提供。
+    /// 用视图身份而不是坐标：坐标换算出过一次错就够毁掉整个轻点。
+    var isInteractiveHit: ((UIView?) -> Bool)?
     /// 窗口级轻点回调：在 sendEvent 里判定，任何手势链都截不走。
     var onWindowTap: (() -> Void)?
     private var tapBegan: (time: TimeInterval, point: CGPoint)?
+    private weak var tapHitView: UIView?
 
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
         let hit = super.hitTest(point, with: event)
@@ -47,18 +49,20 @@ private final class StackDeckWindow: UIWindow {
             switch touch.phase {
             case .began:
                 tapBegan = (CACurrentMediaTime(), touch.location(in: self))
+                tapHitView = touch.view
             case .ended:
                 if let began = tapBegan {
                     let end = touch.location(in: self)
                     let moved = hypot(end.x - began.point.x, end.y - began.point.y)
                     let quick = CACurrentMediaTime() - began.time < 0.7
-                    if moved < 10, quick, shouldIgnoreTap?(end) != true {
+                    // 只排除"按在卡片或 dock 上"的轻点，其余一律算空白。
+                    if moved < 10, quick, isInteractiveHit?(tapHitView) != true {
                         onWindowTap?()
                     }
                 }
-                tapBegan = nil
+                tapBegan = nil; tapHitView = nil
             case .cancelled:
-                tapBegan = nil
+                tapBegan = nil; tapHitView = nil
             default:
                 break
             }
@@ -1782,17 +1786,13 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
         windowTap = nil
         // 窗口级 sendEvent 判定：不经过任何手势识别器，子层吞不掉。
         // 每次都要重新绑定：窗口若被复用，旧闭包指向已失效的 viewport，
-        // shouldIgnoreTap 会恒为 true，兜底就永远不触发。
+        // isInteractiveHit 会恒判"卡片/dock"，兜底就永远不触发。
         if let deckWindow = window as? StackDeckWindow {
             deckWindow.deckView = self
-            deckWindow.shouldIgnoreTap = { [weak self] point in
-                guard let self, !self.invalidated else { return true }
-                let local = self.convert(point, from: self.window)
-                if self.frontmostPreviewCard(at: local) != nil { return true }
-                if !self.dockScroll.isHidden,
-                   self.dockScroll.point(inside: self.dockScroll.convert(local, from: self), with: nil) {
-                    return true
-                }
+            deckWindow.isInteractiveHit = { [weak self] view in
+                guard let self, !self.invalidated, let view else { return false }
+                if view === self.dockScroll || view.isDescendant(of: self.dockScroll) { return true }
+                if self.cards.contains(where: { view === $0 || view.isDescendant(of: $0) }) { return true }
                 return false
             }
             deckWindow.onWindowTap = { [weak self] in self?.backgroundTapped() }
