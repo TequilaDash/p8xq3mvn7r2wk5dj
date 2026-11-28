@@ -1479,6 +1479,8 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
     private var scrolling = false
     private var layingOut = false
     private var transitioning = false
+    /// 一旦开始关闭，就不再允许布局/入场/重绘把 deck 重新显示出来。
+    private var dismissing = false
     private var invalidated = false
     private var hasEntered = false
     private var showClearAll = false
@@ -1904,6 +1906,7 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
         super.layoutSubviews()
         // 窗口/根控制器可能晚于 didMoveToWindow 就绪，这里补挂一次。
         if windowTap == nil { installWindowTap() }
+        guard !dismissing else { return }
         layoutHeader()
         guard !invalidated, !transitioning, draggingCard == nil, !scrolling,
               !pages.isDragging, !pages.isDecelerating, bounds.width > 0, bounds.height > 0 else { return }
@@ -2015,6 +2018,7 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
     }
 
     private func updateDeck() {
+        guard !dismissing else { return }
         if isColumnLayout {
             // 网格模式不做形变，卡片按行排好即可。
             for card in cards {
@@ -2301,7 +2305,7 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
                                            ty: target.midY - card.center.y - sy * (card.preview.frame.midY - card.bounds.midY))
     }
     private func beginEntrance() {
-        guard !invalidated, !transitioning else { return }
+        guard !invalidated, !transitioning, !dismissing else { return }
         finishEntrance()
         cards.forEach { $0.updateExpandedFrame() }
         let duration: TimeInterval = UIAccessibility.isReduceMotionEnabled ? 0 : 0.38
@@ -2439,10 +2443,14 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
         dock.alpha = 0; dockScroll.alpha = 0; clearButton.alpha = 0; emptyLabel.alpha = 0
     }
     private func dismissDeck() {
-        // tap 手势与 touchesEnded 兜底可能同时命中，0.45s 内只执行一次。
+        // tap 手势、touchesEnded 兜底与窗口级判定可能同时命中，只执行一次。
         let now = CACurrentMediaTime()
         guard now - lastBlankDismiss > 0.45 else { return }
         lastBlankDismiss = now
+        // 关闭期间禁止布局/入场/updateDeck 把内容重新显示：
+        // 卡片尺寸变化会触发 lastBounds = .null → 整屏重排 + beginEntrance，
+        // 表现就是"点了返回，deck 又原地复活"。
+        dismissing = true
         // 不再因 transitioning 直接放弃：卡住的标志位会让"点空白返回"彻底失效。
         if transitioning { finishEntrance(); stopRebound(); transitioning = false }
         backdrop?(false, 0.28)
@@ -2456,7 +2464,7 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
     }
     override func accessibilityPerformEscape() -> Bool { dismissDeck(); return true }
     func invalidate() {
-        invalidated = true; focusGeneration += 1
+        invalidated = true; dismissing = true; focusGeneration += 1
         memoryTimer?.invalidate(); memoryTimer = nil
         memoryBytes = nil; memoryPID = nil; memoryControllerID = nil; memoryCapsule.isHidden = true
         entrance?.stopAnimation(true); transition?.stopAnimation(true); rebound?.stopAnimation(true)
