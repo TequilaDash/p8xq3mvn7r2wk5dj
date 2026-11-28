@@ -22,6 +22,9 @@ import Combine
 /// 窗口（访客/主屏）——表现就是"点空闲处完全没反应"。这里保证窗口内任何点
 /// 都属于 deck 自己。
 private final class StackDeckWindow: UIWindow {
+    /// deck 自己的内容视图（viewport）。系统对某点返回 nil 或只返回托管根视图时，
+    /// 把该点交给它，好让 viewport 自己的轻点/拖动识别器参与。
+    weak var deckView: UIView?
     /// 这个点是否属于"不该返回"的区域（卡片、dock）。由 viewport 提供。
     var shouldIgnoreTap: ((CGPoint) -> Bool)?
     /// 窗口级轻点回调：在 sendEvent 里判定，任何手势链都截不走。
@@ -29,9 +32,14 @@ private final class StackDeckWindow: UIWindow {
     private var tapBegan: (time: TimeInterval, point: CGPoint)?
 
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
-        if let hit = super.hitTest(point, with: event) { return hit }
-        guard bounds.contains(point) else { return nil }
-        return rootViewController?.view
+        let hit = super.hitTest(point, with: event)
+        let bare = hit == nil || hit === rootViewController?.view
+        if bare, let deckView, deckView.window === self, bounds.contains(point) {
+            let local = deckView.convert(point, from: self)
+            if deckView.point(inside: local, with: event) { return deckView }
+        }
+        if let hit { return hit }
+        return bounds.contains(point) ? rootViewController?.view : nil
     }
 
     override func sendEvent(_ event: UIEvent) {
@@ -1768,6 +1776,7 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
         // 每次都要重新绑定：窗口若被复用，旧闭包指向已失效的 viewport，
         // shouldIgnoreTap 会恒为 true，兜底就永远不触发。
         if let deckWindow = window as? StackDeckWindow {
+            deckWindow.deckView = self
             deckWindow.shouldIgnoreTap = { [weak self] point in
                 guard let self, !self.invalidated else { return true }
                 let local = self.convert(point, from: self.window)
@@ -2160,7 +2169,9 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
         // 识别器需要排除卡片/dock；卡片自己的识别器必须放行，否则卡片既
         // 滑不掉也点不开。
         if gestureRecognizer.view === self {
-            if touch.view === self { return true }
+            // pages 本身就是卡片容器：落在它身上（而不是某张卡或 dock）的触摸
+            // 属于空白，必须放行给背景轻点。
+            if touch.view === self || touch.view === pages { return true }
             if touch.view?.isDescendant(of: dockScroll) == true { return false }
             if cards.contains(where: { touch.view === $0 || touch.view?.isDescendant(of: $0) == true }) { return false }
         }
