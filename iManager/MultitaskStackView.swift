@@ -1765,7 +1765,9 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
         if let tap = windowTap { tap.view?.removeGestureRecognizer(tap) }
         windowTap = nil
         // 窗口级 sendEvent 判定：不经过任何手势识别器，子层吞不掉。
-        if let deckWindow = window as? StackDeckWindow, deckWindow.onWindowTap == nil {
+        // 每次都要重新绑定：窗口若被复用，旧闭包指向已失效的 viewport，
+        // shouldIgnoreTap 会恒为 true，兜底就永远不触发。
+        if let deckWindow = window as? StackDeckWindow {
             deckWindow.shouldIgnoreTap = { [weak self] point in
                 guard let self, !self.invalidated else { return true }
                 let local = self.convert(point, from: self.window)
