@@ -18,7 +18,6 @@ import UIKit
 import Combine
 
 @available(iOS 16.0, *)
-@objcMembers
 /// deck 自己的窗口。SwiftUI 里某个点若返回 nil，窗口默认会让触摸落到下一层
 /// 窗口（访客/主屏）——表现就是"点空闲处完全没反应"。这里保证窗口内任何点
 /// 都属于 deck 自己。
@@ -30,6 +29,8 @@ private final class StackDeckWindow: UIWindow {
     }
 }
 
+@available(iOS 16.0, *)
+@objcMembers
 public class MultitaskStackManager: NSObject, ObservableObject {
     @Published public private(set) var isVisible = false
     @Published public var selectedIndex = 0
