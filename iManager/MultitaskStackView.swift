@@ -22,10 +22,40 @@ import Combine
 /// 窗口（访客/主屏）——表现就是"点空闲处完全没反应"。这里保证窗口内任何点
 /// 都属于 deck 自己。
 private final class StackDeckWindow: UIWindow {
+    /// 这个点是否属于"不该返回"的区域（卡片、dock）。由 viewport 提供。
+    var shouldIgnoreTap: ((CGPoint) -> Bool)?
+    /// 窗口级轻点回调：在 sendEvent 里判定，任何手势链都截不走。
+    var onWindowTap: (() -> Void)?
+    private var tapBegan: (time: TimeInterval, point: CGPoint)?
+
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
         if let hit = super.hitTest(point, with: event) { return hit }
         guard bounds.contains(point) else { return nil }
         return rootViewController?.view
+    }
+
+    override func sendEvent(_ event: UIEvent) {
+        if event.type == .touches, let touch = event.allTouches?.first {
+            switch touch.phase {
+            case .began:
+                tapBegan = (CACurrentMediaTime(), touch.location(in: self))
+            case .ended:
+                if let began = tapBegan {
+                    let end = touch.location(in: self)
+                    let moved = hypot(end.x - began.point.x, end.y - began.point.y)
+                    let quick = CACurrentMediaTime() - began.time < 0.7
+                    if moved < 10, quick, shouldIgnoreTap?(end) != true {
+                        onWindowTap?()
+                    }
+                }
+                tapBegan = nil
+            case .cancelled:
+                tapBegan = nil
+            default:
+                break
+            }
+        }
+        super.sendEvent(event)
     }
 }
 
@@ -1730,6 +1760,20 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
     private func installWindowTap() {
         if let tap = windowTap { tap.view?.removeGestureRecognizer(tap) }
         windowTap = nil
+        // 窗口级 sendEvent 判定：不经过任何手势识别器，子层吞不掉。
+        if let deckWindow = window as? StackDeckWindow, deckWindow.onWindowTap == nil {
+            deckWindow.shouldIgnoreTap = { [weak self] point in
+                guard let self, !self.invalidated else { return true }
+                let local = self.convert(point, from: self.window)
+                if self.frontmostPreviewCard(at: local) != nil { return true }
+                if !self.dockScroll.isHidden,
+                   self.dockScroll.point(inside: self.dockScroll.convert(local, from: self), with: nil) {
+                    return true
+                }
+                return false
+            }
+            deckWindow.onWindowTap = { [weak self] in self?.backgroundTapped() }
+        }
         // 挂在窗口本身上：它是本窗口所有视图的祖先，窗口内任何触摸它都能看到，
         // 不依赖 hitTest 把空白交给谁，也不会被任何子层手势链抢先。
         guard let host = window, !invalidated else { return }
