@@ -1588,7 +1588,11 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
             // 比手写 CALayer 换算可靠。之前的 presentation-layer 版本一旦算错，
             // 空白点会被判成"点在卡片上"，空白处就完全没有反应。
             let local = card.preview.convert(point, from: self)
-            guard card.preview.bounds.contains(local) else { continue }
+            // 两套独立空间都同意才算命中：卡片在 pages 坐标里的 frame，
+            // 与 preview 自己的局部坐标。任何一边说不算，就按空白处理，
+            // 避免"空白点被算成点了卡片而毫无反应"。
+            let inPages = pages.convert(point, from: self)
+            guard card.frame.contains(inPages), card.preview.bounds.contains(local) else { continue }
             let z = card.layer.zPosition
             if winner == nil || z > bestZ { winner = card; bestZ = z }
         }
@@ -2404,15 +2408,16 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
         }) { [weak self, weak card] in
             guard let self, let card, self.isCurrent(card) else { return }
             self.manager?.selectApp(uuid: card.uuid)
+            // 这里只有在"选卡没成功"时才需要把 deck 还原。成功路径下 manager
+            // 正在等访客画面就绪、isVisible 仍为 true，若在这里 updateDeck()，
+            // 刚铺满的卡片会被按网格姿态重算——那就是进入瞬间的"居中小卡"。
             DispatchQueue.main.async { [weak self] in
                 guard let self, self.manager?.isVisible == true else { return }
-                DispatchQueue.main.async { [weak self] in
-                    guard let self, self.manager?.isVisible == true else { return }
-                    card.preview.layer.cornerRadius = 28; self.updateDeck(); self.backdrop?(true, 0.15)
-                    self.dock.alpha = 1; self.dockScroll.alpha = 1; self.clearButton.alpha = 1
-                    self.dock.transform = .identity; self.dockScroll.transform = .identity
-                    self.emptyLabel.alpha = 1
-                }
+                guard self.manager?.message != nil else { return } // 成功路径不还原
+                card.preview.layer.cornerRadius = 28; self.updateDeck(); self.backdrop?(true, 0.15)
+                self.dock.alpha = 1; self.dockScroll.alpha = 1; self.clearButton.alpha = 1
+                self.dock.transform = .identity; self.dockScroll.transform = .identity
+                self.emptyLabel.alpha = 1
             }
         }
     }
