@@ -26,12 +26,6 @@ jobs:
             sudo xcode-select -s "$XC/Contents/Developer"
           fi
           xcodebuild -version
-      - name: Stamp unique version for this build
-        # 每个 tag 包必须有唯一 CFBundleVersion，否则侧载安装器可能把新包
-        # 当成同版本而拒绝覆盖，表现就是"装了最新版却跟没改一样"。
-        run: |
-          xcrun agvtool new-version -all "${GITHUB_RUN_NUMBER}"
-          xcrun agvtool new-marketing-version "2.0.0"
       - name: Archive
         # 不再用 xcpretty：它会把 error: 行吞掉，导致失败时日志里看不到原因。
         # 原始输出保留完整错误，且不影响构建本身。
