@@ -34,6 +34,8 @@ API_AVAILABLE(ios(16.0))
 - (void)restoreFromDock;
 /// 铺满屏幕（deck 选卡回前台时消除窗口化小卡的那一帧）。
 - (void)maximizeWindow;
+/// 铺满屏幕，不加动画：deck 选卡回前台时，恢复可见那一帧必须已经是全屏。
+- (void)maximizeWindowWithoutAnimation;
 - (void)minimizeWindowPiP;
 - (void)unminimizeWindowPiP;
 - (void)updateVerticalConstraints;

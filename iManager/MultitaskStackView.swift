@@ -652,13 +652,9 @@ public class MultitaskStackManager: NSObject, ObservableObject {
                 // 就会露出"居中小卡 + 上下黑边"（用户截图 IMG_0666）。
                 // 在恢复可见之前就把它铺满，那一帧直接是全屏。
                 if !target.isMaximized {
-                    target.maximizeWindow()
-                    // maximizeWindow 自带 0.3s 动画；恢复可见那一帧若还停在
-                    // 动画起点（窗口化姿态），就是"居中小卡+黑边"残留的来源。
-                    // 掐掉动画、落到终态，再恢复可见。
-                    target.view.window?.layer.removeAllAnimations()
-                    target.view.layer.removeAllAnimations()
-                    target.view.layoutIfNeeded()
+                    // maximizeWindow 自带 0.3s 动画，恢复可见那一帧仍停在窗口化
+                    // 姿态（居中小卡+黑边）。无动画版本同步落到全屏。
+                    target.maximizeWindowWithoutAnimation()
                 }
                 for other in controllers {
                     if let decorated = self.decoratedController(for: other), decorated !== target { decorated.minimizeWindow() }
@@ -1403,10 +1399,9 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
     private let messageLabel = UILabel()
     private var cards: [StackDeckCard] = []
     private let blankPan = UIPanGestureRecognizer()
-    /// 专门承接"空白区域"触摸的视图：轻点=返回上一级，拖动=滚动。
-    /// 不再依赖 viewport 自己接触摸——hitTest 返回哪个视图，只有那个视图
-    /// 的手势会参与，之前空白点失效就是这个前提被别的东西破坏导致的。
-    private let blankTarget = UIView()
+    /// 空白处按下时的位置：用于 touchesEnded 兜底判定"这是一次轻点"。
+    private var blankTouchStart: CGPoint?
+    private var lastBlankDismiss: TimeInterval = 0
     private var blankStartX: CGFloat = 0
     private var blankStartY: CGFloat = 0
     private let memoryCapsule = UIVisualEffectView(effect: UIBlurEffect(style: .systemUltraThinMaterial))
@@ -1422,6 +1417,8 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
     private var stride: CGFloat = 1
     private var selected = 0
     private var dragStartPage: CGFloat = 0
+    /// 纵向排布卡片拖动的方向：0 未定、1 横滑清除、2 竖滑滚动。
+    private var columnDragAxis = 0
     private var scrolling = false
     private var layingOut = false
     private var transitioning = false
@@ -1490,18 +1487,15 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
         addSubview(messageLabel)
         dockScroll.layer.cornerRadius = 19
         dockScroll.layer.cornerCurve = .continuous
-        // 空白区域由 blankTarget 专管：它自己收轻点（返回上一级）与拖动（滚动）。
-        // 两个手势挂在同一个视图上，UIKit 自己按"有没有移动"仲裁，不需要
-        // require(toFail:)，也不受 pages 这个 UIScrollView 的手势延迟影响。
-        blankTarget.backgroundColor = .clear
-        blankTarget.isUserInteractionEnabled = true
-        insertSubview(blankTarget, at: 0)
+        // 空白处的轻点与拖动挂在 viewport 自己身上：只有 hitTest 把触摸交给
+        // 哪个视图，那个视图上的手势才参与。把空白单独交给一个垫底视图，
+        // 会让网格区的拖动/卡片手势整体失效（卡片滑不掉、上下翻不动）。
         let tap = UITapGestureRecognizer(target: self, action: #selector(backgroundTapped))
         tap.delegate = self
-        blankTarget.addGestureRecognizer(tap)
+        addGestureRecognizer(tap)
         blankPan.addTarget(self, action: #selector(blankPanned(_:)))
         blankPan.delegate = self
-        blankTarget.addGestureRecognizer(blankPan)
+        addGestureRecognizer(blankPan)
         memoryCapsule.isUserInteractionEnabled = false
         memoryCapsule.clipsToBounds = true
         memoryCapsule.layer.cornerRadius = 16
@@ -1532,9 +1526,7 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
         // 表现为"空白点不动、只有摸着卡片才划得动"（test34 实测）。
         // 纵向排布的滚动由 blankPan 直接驱动 pages.contentOffset，不靠 UIScrollView。
         if let card = frontmostPreviewCard(at: point) { return card }
-        // 空白处交给 blankTarget，由它自己的轻点/拖动手势处理；
-        // 返回 self 时若被滚动视图或别的手势链挡下，轻点就永远到不了 backgroundTapped。
-        return blankTarget
+        return self
     }
 
     private func frontmostPreviewCard(at point: CGPoint) -> StackDeckCard? {
@@ -1556,9 +1548,19 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
             let surface = candidate != nil && cardLayer != nil ? candidate! : card.preview.layer
             let from = candidate != nil && cardLayer != nil ? source : layer
             let visualCard = cardLayer ?? card.layer
-            guard visualCard.opacity >= 0.01, surface.opacity >= 0.01 else { continue }
-            let local = surface.convert(point, from: from)
-            guard StackDeckCard.previewPath(bounds: surface.bounds, radius: surface.cornerRadius).contains(local) else { continue }
+            guard visualCard.opacity >= 0.01 else { continue }
+            // Column cards include a 34pt title row above the preview. Hit-test
+            // the entire card there so a horizontal dismiss begun on its title
+            // reaches cardPanned instead of the blank-area vertical pan.
+            let local = visualCard.convert(point, from: from)
+            let hitsCard: Bool
+            if isColumnLayout {
+                hitsCard = visualCard.bounds.contains(local)
+            } else {
+                let previewPoint = surface.convert(point, from: from)
+                hitsCard = surface.opacity >= 0.01 && StackDeckCard.previewPath(bounds: surface.bounds, radius: surface.cornerRadius).contains(previewPoint)
+            }
+            guard hitsCard else { continue }
             let z = visualCard.zPosition
             if winner == nil || z > bestZ || (z == bestZ && card.index > winner!.index) {
                 winner = card; bestZ = z
@@ -1828,7 +1830,6 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
     override func safeAreaInsetsDidChange() { super.safeAreaInsetsDidChange(); setNeedsLayout() }
     override func layoutSubviews() {
         super.layoutSubviews()
-        blankTarget.frame = bounds
         layoutHeader()
         guard !invalidated, !transitioning, draggingCard == nil, !scrolling,
               !pages.isDragging, !pages.isDecelerating, bounds.width > 0, bounds.height > 0 else { return }
@@ -2065,9 +2066,10 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
                 guard distance > 8 || speed > 300 else { return false }
                 return isColumnLayout ? abs(v.y) > abs(v.x) * 1.2 : abs(v.x) > abs(v.y) * 1.2
             }
-            // 纵向排布里，卡片上的竖滑必须让给网格滚动（否则卡片手势吃掉竖滑，
-            // 表现为"纵向排布无法上下滑动"）；横滑才是清除这个后台。
-            if isColumnLayout { return abs(v.x) > abs(v.y) * 1.2 }
+            // 纵向排布：横滑清除、竖滑滚动网格，都由 cardPanned 按实际位移
+            // 分流。这里预判方向会把竖滑判 false，而空白手势又不接收落在
+            // 卡片上的触摸，竖滑就无主（"无法滑动浏览"就是这么来的）。
+            if isColumnLayout { return true }
             return abs(v.y) > abs(v.x) * 1.2
         }
         // 轻点（空白返回）是这里唯一入口：transitioning 一旦卡住，tap 永远
@@ -2080,18 +2082,40 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
         return true
     }
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
-        // 空白区域的轻点与拖动只认 blankTarget 自己收到的触摸；
-        // 落在卡片、dock、清除按钮上的一律不接管。
-        if gestureRecognizer === blankPan || gestureRecognizer.view === blankTarget {
-            return touch.view === blankTarget
+        // 空白拖动只认落在 viewport 本身的触摸。
+        if gestureRecognizer === blankPan { return touch.view === self }
+        // 背景轻点与卡片手势共用本 delegate：只有挂在 viewport 自己身上的
+        // 识别器需要排除卡片/dock；卡片自己的识别器必须放行，否则卡片既
+        // 滑不掉也点不开。
+        if gestureRecognizer.view === self {
+            if touch.view === self { return true }
+            if touch.view?.isDescendant(of: dockScroll) == true { return false }
+            if cards.contains(where: { touch.view === $0 || touch.view?.isDescendant(of: $0) == true }) { return false }
         }
-        if cards.contains(where: { touch.view === $0 || touch.view?.isDescendant(of: $0) == true }) { return false }
         return true
     }
     @objc func cardTapped(_ tap: UITapGestureRecognizer) { if let card = tap.view as? StackDeckCard { activate(card) } }
     @objc private func backgroundTapped() {
         NSLog("[deck] blank-tap")
         dismissDeck()
+    }
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        super.touchesBegan(touches, with: event)
+        blankTouchStart = touches.first.flatMap { $0.view === self ? $0.location(in: self) : nil }
+    }
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
+        super.touchesEnded(touches, with: event)
+        defer { blankTouchStart = nil }
+        guard let start = blankTouchStart, let touch = touches.first, touch.view === self else { return }
+        let end = touch.location(in: self)
+        // 位移超过 10pt 视为拖动（滚动），不当作轻点。
+        guard hypot(end.x - start.x, end.y - start.y) < 10 else { return }
+        NSLog("[deck] blank-tap (touch)")
+        dismissDeck()
+    }
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
+        super.touchesCancelled(touches, with: event)
+        blankTouchStart = nil
     }
     @objc private func clearAll() { manager?.closeAll() }
     func isCurrent(_ card: StackDeckCard) -> Bool {
@@ -2105,25 +2129,45 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
         // 纵向排布里，卡片上的竖滑交给网格滚动（网格本身可上下翻），
         // 左右滑才是"清除这个多任务后台"，与堆叠排布的上滑关闭区分开。
         if isColumnLayout {
-            // 横滑跟手：卡片跟着手指走，松手超过阈值就清除这个后台。
-            if pan.state == .began { finishEntrance(); stopRebound(); draggingCard = card }
-            guard draggingCard === card else { return }
-            if pan.state == .changed {
-                var t = card.resting
-                t.tx += translation.x
-                card.transform = t
-            }
-            if pan.state == .ended || pan.state == .cancelled || pan.state == .failed {
-                draggingCard = nil
-                let horizontal = abs(translation.x) > 60 && abs(translation.x) > abs(translation.y) * 1.2
-                if pan.state == .ended && horizontal {
-                    closeHorizontally(card, direction: translation.x < 0 ? -1 : 1, velocity: velocity.x)
-                } else {
-                    UIView.animate(withDuration: 0.24, delay: 0, usingSpringWithDamping: 0.86,
-                                   initialSpringVelocity: 0, options: [.allowUserInteraction]) {
-                        card.transform = card.resting
+            // 一个手势两种用途：竖滑滚网格（卡片不动），横滑清除这个后台。
+            // 方向只在真的动起来之后才定，避免轻点被判成拖动。
+            switch pan.state {
+            case .began:
+                finishEntrance(); stopRebound()
+                dragStartOffset = pages.contentOffset.y
+                columnDragAxis = 0
+            case .changed:
+                if columnDragAxis == 0 {
+                    let settled = max(abs(translation.x), abs(translation.y)) > 8
+                    if settled {
+                        columnDragAxis = abs(translation.y) > abs(translation.x) ? 2 : 1
+                        if columnDragAxis == 1 { draggingCard = card } else { scrolling = true }
                     }
                 }
+                if draggingCard === card {
+                    var t = card.resting
+                    t.tx += translation.x
+                    card.transform = t
+                } else if columnDragAxis == 2 {
+                    let limit = max(0, pages.contentSize.height - pages.bounds.height)
+                    pages.contentOffset = CGPoint(x: 0, y: min(max(0, dragStartOffset - translation.y), limit))
+                }
+            default:
+                let wasCard = draggingCard === card
+                draggingCard = nil
+                let horizontal = abs(translation.x) > 60 && abs(translation.x) > abs(translation.y) * 1.2
+                if pan.state == .ended && wasCard && horizontal {
+                    closeHorizontally(card, direction: translation.x < 0 ? -1 : 1, velocity: velocity.x)
+                } else {
+                    if wasCard {
+                        UIView.animate(withDuration: 0.24, delay: 0, usingSpringWithDamping: 0.86,
+                                       initialSpringVelocity: 0, options: [.allowUserInteraction]) {
+                            card.transform = card.resting
+                        }
+                    }
+                    finishScrolling()
+                }
+                columnDragAxis = 0
             }
             return
         }
@@ -2309,6 +2353,10 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
         dock.alpha = 0; dockScroll.alpha = 0; clearButton.alpha = 0; emptyLabel.alpha = 0
     }
     private func dismissDeck() {
+        // tap 手势与 touchesEnded 兜底可能同时命中，0.45s 内只执行一次。
+        let now = CACurrentMediaTime()
+        guard now - lastBlankDismiss > 0.45 else { return }
+        lastBlankDismiss = now
         NSLog("[deck] dismissDeck transitioning=%d cards=%d", transitioning ? 1 : 0, cards.count)
         // 不再因 transitioning 直接放弃：卡住的标志位会让"点空白返回"彻底失效。
         if transitioning { finishEntrance(); stopRebound(); transitioning = false }

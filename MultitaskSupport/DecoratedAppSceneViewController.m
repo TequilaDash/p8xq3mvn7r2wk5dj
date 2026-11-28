@@ -987,6 +987,40 @@ static NSNotificationName const LCWindowTouchedNotification = @"LCWindowTouchedN
     }
 }
 
+- (void)maximizeWindowWithoutAnimation {
+    if (LCWindowSnapManager.usesPhoneLayout) {
+        // 手机布局的分屏走 snap 管理器，那里本身就是同步改 frame。
+        if (self.isPhoneSplit) {
+            [LCWindowSnapManager.shared makeFullScreenFromPhoneSplit:self];
+        } else {
+            [LCWindowSnapManager.shared startPhoneSplitWithWindow:self];
+        }
+        return;
+    }
+    if (self.isMaximized) { return; }
+    if (self.isStashed) { [self unstashAnimated:NO]; }
+    if (self.snapSlot != LCWindowSnapSlotNone) {
+        CGRect before = self.frameBeforeSnap;
+        [LCWindowSnapManager.shared releaseWindow:self];
+        if (!CGRectIsEmpty(before)) { [self updateOriginalFrameFromFrame:before]; }
+    } else {
+        [self updateOriginalFrame];
+    }
+    // 先把 scene 尺寸定到最大化值，再在没有动画的块里落 frame：
+    // 顺序反过来会在显示那一帧看到窗口化的小矩形。
+    [self.appSceneVC updateSettingsWithBlock:^(UIMutableApplicationSceneSettings *settings) {
+        [self updateMaximizedFrameWithSettings:settings];
+    }];
+    [UIView performWithoutAnimation:^{
+        self.isMaximized = YES;
+        [self updateVerticalConstraints];
+        [self applyWindowStyleMaximized:YES];
+        self.resizeHandle.alpha = 0;
+        [self.view setNeedsLayout];
+        [self.view layoutIfNeeded];
+    }];
+}
+
 - (void)appSceneVCAppDidExit:(AppSceneViewController*)vc {
     BOOL skipTerminationScreen = [NSUserDefaults.lcSharedDefaults boolForKey:@"LCSkipTerminatedScreen"];
     BOOL isManual = _isAppTerminationRequested;
