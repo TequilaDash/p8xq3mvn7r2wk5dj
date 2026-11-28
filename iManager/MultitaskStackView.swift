@@ -662,7 +662,7 @@ public class MultitaskStackManager: NSObject, ObservableObject {
                 // 访客的真实画面由 scene 异步设值决定尺寸：decorated 视图已经是
                 // 全屏，但 surface 还停在窗口化大小。等它跟上再露出、再收回 deck
                 // 窗口，否则那一帧就是"居中小卡+上下黑边"（IMG_0666）。
-                target.revealWhenSurfaceFillsWindow { [weak self, weak target, weak view, weak container] in
+                target.reveal(whenSurfaceFillsWindow: { [weak self, weak target, weak view, weak container] in
                     guard let self, let target, let view, let container else { return }
                     if !MultitaskDockManager.shared.bringMultitaskViewToFront(uuid: uuid, fromDeck: true) {
                         if let pip = PiPManager.shared, pip.isPiP(withDecoratedVC: target) { pip.stopPiP() }
@@ -676,7 +676,7 @@ public class MultitaskStackManager: NSObject, ObservableObject {
                     MultitaskManager.recordUse(container: uuid)
                     self.finishAppSelection()
                     view.window?.makeKey()
-                }
+                })
             } else if let targetWindow = controller.viewIfLoaded?.window,
                       let scene = targetWindow.windowScene {
                 self.selectingTargetWindow = true
