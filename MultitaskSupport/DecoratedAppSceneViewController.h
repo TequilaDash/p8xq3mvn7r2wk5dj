@@ -36,6 +36,9 @@ API_AVAILABLE(ios(16.0))
 - (void)maximizeWindow;
 /// 铺满屏幕，不加动画：deck 选卡回前台时，恢复可见那一帧必须已经是全屏。
 - (void)maximizeWindowWithoutAnimation;
+/// 访客真实画面（scene surface）由 scene 异步设值，decorated 视图先变全屏。
+/// 等 surface 尺寸追上后再执行 completion，避免露出窗口化小画面那一帧。
+- (void)revealWhenSurfaceFillsWindow:(void (^)(void))completion;
 - (void)minimizeWindowPiP;
 - (void)unminimizeWindowPiP;
 - (void)updateVerticalConstraints;

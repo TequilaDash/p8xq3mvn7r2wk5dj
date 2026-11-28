@@ -659,18 +659,24 @@ public class MultitaskStackManager: NSObject, ObservableObject {
                 for other in controllers {
                     if let decorated = self.decoratedController(for: other), decorated !== target { decorated.minimizeWindow() }
                 }
-                if !MultitaskDockManager.shared.bringMultitaskViewToFront(uuid: uuid, fromDeck: true) {
-                    if let pip = PiPManager.shared, pip.isPiP(withDecoratedVC: target) { pip.stopPiP() }
-                    // The deck snapshot already performed the entrance. Reveal
-                    // the real surface in its final pose, without a second fly-in.
-                    MultitaskDockManager.shared.revealForDeckSelection(target)
-                    container.bringSubviewToFront(view)
-                    target.revealWindowControls()
+                // 访客的真实画面由 scene 异步设值决定尺寸：decorated 视图已经是
+                // 全屏，但 surface 还停在窗口化大小。等它跟上再露出、再收回 deck
+                // 窗口，否则那一帧就是"居中小卡+上下黑边"（IMG_0666）。
+                target.revealWhenSurfaceFillsWindow { [weak self, weak target, weak view, weak container] in
+                    guard let self, let target, let view, let container else { return }
+                    if !MultitaskDockManager.shared.bringMultitaskViewToFront(uuid: uuid, fromDeck: true) {
+                        if let pip = PiPManager.shared, pip.isPiP(withDecoratedVC: target) { pip.stopPiP() }
+                        // The deck snapshot already performed the entrance. Reveal
+                        // the real surface in its final pose, without a second fly-in.
+                        MultitaskDockManager.shared.revealForDeckSelection(target)
+                        container.bringSubviewToFront(view)
+                        target.revealWindowControls()
+                    }
+                    self.restoreSuppressedWindows()
+                    MultitaskManager.recordUse(container: uuid)
+                    self.finishAppSelection()
+                    view.window?.makeKey()
                 }
-                self.restoreSuppressedWindows()
-                MultitaskManager.recordUse(container: uuid)
-                self.finishAppSelection()
-                view.window?.makeKey()
             } else if let targetWindow = controller.viewIfLoaded?.window,
                       let scene = targetWindow.windowScene {
                 self.selectingTargetWindow = true
@@ -2072,6 +2078,9 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
             if isColumnLayout { return true }
             return abs(v.y) > abs(v.x) * 1.2
         }
+        if gestureRecognizer is UITapGestureRecognizer {
+            NSLog("[deck] tap shouldBegin transitioning=%d", transitioning ? 1 : 0)
+        }
         // 轻点（空白返回）是这里唯一入口：transitioning 一旦卡住，tap 永远
         // 进不来 dismissDeck，空白点从此失效。复位后放行。
         if transitioning {
@@ -2088,6 +2097,12 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
         // 识别器需要排除卡片/dock；卡片自己的识别器必须放行，否则卡片既
         // 滑不掉也点不开。
         if gestureRecognizer.view === self {
+            let accept = touch.view === self
+                || (touch.view?.isDescendant(of: dockScroll) != true
+                    && !cards.contains(where: { touch.view === $0 || touch.view?.isDescendant(of: $0) == true }))
+            if gestureRecognizer is UITapGestureRecognizer, !accept {
+                NSLog("[deck] tap rejected by %@", touch.view.map { String(describing: type(of: $0)) } ?? "nil")
+            }
             if touch.view === self { return true }
             if touch.view?.isDescendant(of: dockScroll) == true { return false }
             if cards.contains(where: { touch.view === $0 || touch.view?.isDescendant(of: $0) == true }) { return false }

@@ -987,6 +987,27 @@ static NSNotificationName const LCWindowTouchedNotification = @"LCWindowTouchedN
     }
 }
 
+- (void)revealWhenSurfaceFillsWindow:(void (^)(void))completion {
+    if (!completion) { return; }
+    CGFloat scale = self.scaleRatio > 0 ? self.scaleRatio : 1;
+    CGSize want = CGSizeMake(self.view.bounds.size.width / scale, self.view.bounds.size.height / scale);
+    __block NSInteger remaining = 24; // ~0.4s 上限
+    __weak typeof(self) weakSelf = self;
+    __block void (^attempt)(void);
+    attempt = ^{
+        typeof(self) self = weakSelf;
+        if (!self) { completion(); return; }
+        UIView *surface = self.appSceneVC.contentView;
+        CGSize got = surface ? surface.bounds.size : CGSizeZero;
+        BOOL filled = want.width < 1 || want.height < 1
+            || (fabs(got.width - want.width) <= 2 && fabs(got.height - want.height) <= 2);
+        if (filled || remaining <= 0) { completion(); return; }
+        remaining -= 1;
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(16 * NSEC_PER_MSEC)), dispatch_get_main_queue(), attempt);
+    };
+    attempt();
+}
+
 - (void)maximizeWindowWithoutAnimation {
     if (LCWindowSnapManager.usesPhoneLayout) {
         // 手机布局的分屏走 snap 管理器，那里本身就是同步改 frame。
