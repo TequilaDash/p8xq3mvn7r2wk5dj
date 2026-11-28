@@ -394,10 +394,6 @@ public class MultitaskStackManager: NSObject, ObservableObject {
                     }
                 }
             }
-            NSLog("[deck] detach restoreKey=%d cards=%d target=%@ prev=%@",
-                  restoreKey ? 1 : 0, apps.count,
-                  restoreTarget.map { String(describing: type(of: $0)) } ?? "nil",
-                  previous == nil ? "nil" : "set")
             restoreTarget?.makeKey()
         }
         previousKeyWindow = nil
@@ -1406,6 +1402,9 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
     private var cards: [StackDeckCard] = []
     private let blankPan = UIPanGestureRecognizer()
     /// 空白处按下时的位置：用于 touchesEnded 兜底判定"这是一次轻点"。
+    /// 挂在 deck 窗口根视图（祖先层）上的返回手势：它能看到本窗口内所有触摸，
+    /// 不受 hitTest 把空白交给谁、也不受子层手势链截断的影响。
+    private weak var windowTap: UITapGestureRecognizer?
     private var blankTouchStart: CGPoint?
     private var lastBlankDismiss: TimeInterval = 0
     private var blankStartX: CGFloat = 0
@@ -1531,17 +1530,7 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
         // 空白必须由本视图自己接收。交给 pages（UIScrollView）会让它吞掉轻点，
         // 表现为"空白点不动、只有摸着卡片才划得动"（test34 实测）。
         // 纵向排布的滚动由 blankPan 直接驱动 pages.contentOffset，不靠 UIScrollView。
-        if let card = frontmostPreviewCard(at: point) {
-            if event?.allTouches?.contains(where: { $0.phase == .began }) == true {
-                NSLog("[deck] hit card idx=%d at %.0f,%.0f cards=%d column=%d",
-                      card.index, point.x, point.y, cards.count, isColumnLayout ? 1 : 0)
-            }
-            return card
-        }
-        if event?.allTouches?.contains(where: { $0.phase == .began }) == true {
-            NSLog("[deck] hit blank at %.0f,%.0f pagesY=%.0f cards=%d",
-                  point.x, point.y, pages.frame.minY, cards.count)
-        }
+        if let card = frontmostPreviewCard(at: point) { return card }
         return self
     }
 
@@ -1568,15 +1557,12 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
             // Column cards include a 34pt title row above the preview. Hit-test
             // the entire card there so a horizontal dismiss begun on its title
             // reaches cardPanned instead of the blank-area vertical pan.
-            let local = visualCard.convert(point, from: from)
-            let hitsCard: Bool
-            if isColumnLayout {
-                hitsCard = visualCard.bounds.contains(local)
-            } else {
-                let previewPoint = surface.convert(point, from: from)
-                hitsCard = surface.opacity >= 0.01 && StackDeckCard.previewPath(bounds: surface.bounds, radius: surface.cornerRadius).contains(previewPoint)
-            }
-            guard hitsCard else { continue }
+            // 只把 preview 的圆形区域算作卡片：标题带与网格空隙必须归空白，
+            // 否则空白点击会被判成点卡片而毫无反应。
+            let previewPoint = surface.convert(point, from: from)
+            guard surface.opacity >= 0.01,
+                  StackDeckCard.previewPath(bounds: surface.bounds, radius: surface.cornerRadius).contains(previewPoint)
+            else { continue }
             let z = visualCard.zPosition
             if winner == nil || z > bestZ || (z == bestZ && card.index > winner!.index) {
                 winner = card; bestZ = z
@@ -1744,8 +1730,24 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
         setNeedsLayout()
     }
 
+    /// 返回手势挂在 deck 窗口根视图（祖先层）上：本窗口内所有触摸它都看得到，
+    /// 不受 hitTest 把空白交给谁、也不受子层手势链截断的影响。只在卡片与 dock
+    /// 之外的区域接管。窗口变更时先摘旧的再挂新的。
+    private func installWindowTap() {
+        if let tap = windowTap { tap.view?.removeGestureRecognizer(tap) }
+        windowTap = nil
+        guard window != nil, !invalidated,
+              let root = window?.rootViewController?.view else { return }
+        let tap = UITapGestureRecognizer(target: self, action: #selector(backgroundTapped))
+        tap.delegate = self
+        tap.cancelsTouchesInView = false
+        root.addGestureRecognizer(tap)
+        windowTap = tap
+    }
+
     override func didMoveToWindow() {
         super.didMoveToWindow()
+        installWindowTap()
         if window != nil, !invalidated {
             lastBounds = .null; setNeedsLayout()
             if memoryTimer == nil {
@@ -1846,6 +1848,8 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
     override func safeAreaInsetsDidChange() { super.safeAreaInsetsDidChange(); setNeedsLayout() }
     override func layoutSubviews() {
         super.layoutSubviews()
+        // 窗口/根控制器可能晚于 didMoveToWindow 就绪，这里补挂一次。
+        if windowTap == nil { installWindowTap() }
         layoutHeader()
         guard !invalidated, !transitioning, draggingCard == nil, !scrolling,
               !pages.isDragging, !pages.isDecelerating, bounds.width > 0, bounds.height > 0 else { return }
@@ -2088,9 +2092,6 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
             if isColumnLayout { return true }
             return abs(v.y) > abs(v.x) * 1.2
         }
-        if gestureRecognizer is UITapGestureRecognizer {
-            NSLog("[deck] tap shouldBegin transitioning=%d", transitioning ? 1 : 0)
-        }
         // 轻点（空白返回）是这里唯一入口：transitioning 一旦卡住，tap 永远
         // 进不来 dismissDeck，空白点从此失效。复位后放行。
         if transitioning {
@@ -2101,18 +2102,19 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
         return true
     }
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+        // 祖先层返回手势：只排除卡片与 dock，其余位置（含所有空格）都接管。
+        if gestureRecognizer === windowTap {
+            guard let hit = touch.view, bounds.contains(touch.location(in: self)) else { return false }
+            if hit === dockScroll || hit.isDescendant(of: dockScroll) { return false }
+            if cards.contains(where: { hit === $0 || hit.isDescendant(of: $0) }) { return false }
+            return true
+        }
         // 空白拖动只认落在 viewport 本身的触摸。
         if gestureRecognizer === blankPan { return touch.view === self }
         // 背景轻点与卡片手势共用本 delegate：只有挂在 viewport 自己身上的
         // 识别器需要排除卡片/dock；卡片自己的识别器必须放行，否则卡片既
         // 滑不掉也点不开。
         if gestureRecognizer.view === self {
-            let accept = touch.view === self
-                || (touch.view?.isDescendant(of: dockScroll) != true
-                    && !cards.contains(where: { touch.view === $0 || touch.view?.isDescendant(of: $0) == true }))
-            if gestureRecognizer is UITapGestureRecognizer, !accept {
-                NSLog("[deck] tap rejected by %@", touch.view.map { String(describing: type(of: $0)) } ?? "nil")
-            }
             if touch.view === self { return true }
             if touch.view?.isDescendant(of: dockScroll) == true { return false }
             if cards.contains(where: { touch.view === $0 || touch.view?.isDescendant(of: $0) == true }) { return false }
@@ -2122,15 +2124,11 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
     @objc func cardTapped(_ tap: UITapGestureRecognizer) {
         guard let card = tap.view as? StackDeckCard else { return }
         if isCurrent(card) { activate(card); return }
-        // 命中的卡片不是当前这张（示例：网格空隙被命中判定算进卡片矩形），
-        // 什么都不做会让"点空白回上一级"彻底失效，这里按空白处理。
-        NSLog("[deck] card tap not current -> dismiss")
+        // 命中的卡片不是当前这张时，什么都不做会让"点空白回上一级"失效，
+        // 这里按空白处理。
         dismissDeck()
     }
-    @objc private func backgroundTapped() {
-        NSLog("[deck] blank-tap")
-        dismissDeck()
-    }
+    @objc private func backgroundTapped() { dismissDeck() }
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
         super.touchesBegan(touches, with: event)
         blankTouchStart = touches.first.flatMap { $0.view === self ? $0.location(in: self) : nil }
@@ -2142,7 +2140,6 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
         let end = touch.location(in: self)
         // 位移超过 10pt 视为拖动（滚动），不当作轻点。
         guard hypot(end.x - start.x, end.y - start.y) < 10 else { return }
-        NSLog("[deck] blank-tap (touch)")
         dismissDeck()
     }
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
@@ -2389,7 +2386,6 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
         let now = CACurrentMediaTime()
         guard now - lastBlankDismiss > 0.45 else { return }
         lastBlankDismiss = now
-        NSLog("[deck] dismissDeck transitioning=%d cards=%d", transitioning ? 1 : 0, cards.count)
         // 不再因 transitioning 直接放弃：卡住的标志位会让"点空白返回"彻底失效。
         if transitioning { finishEntrance(); stopRebound(); transitioning = false }
         backdrop?(false, 0.28)
