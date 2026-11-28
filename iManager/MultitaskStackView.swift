@@ -79,6 +79,9 @@ public class MultitaskStackManager: NSObject, ObservableObject {
     // dismissal. Retaining only host.view does not retain a hosting controller.
     private var hostingController: UIHostingController<AnyView>?
     private var hostingWindow: UIWindow?
+    /// 实际在屏的 deck 窗口。hostingWindow 有可能在某种路径上被提前清空，
+    /// 这里留一个独立引用，保证"关闭"一定能把窗口从屏幕上撤掉。
+    private static weak var liveDeckWindow: UIWindow?
     // Hide the actual hosting windows, not merely UIKit hit testing: remote
     // scene event-deferring regions can otherwise remain eligible for input.
     private var suppressedWindows: [(window: UIWindow, hidden: Bool, interactive: Bool)] = []
@@ -355,6 +358,7 @@ public class MultitaskStackManager: NSObject, ObservableObject {
         previousKeyWindow = scene.windows.first(where: \.isKeyWindow) ?? target
         hostingController = host
         hostingWindow = window
+        Self.liveDeckWindow = window
         window.makeKeyAndVisible()
         // Capture pictures before hiding. A hidden hosting window removes its
         // remote surfaces from the input/display tree as well as UIKit hits.
@@ -412,6 +416,8 @@ public class MultitaskStackManager: NSObject, ObservableObject {
         restoreSuppressedWindows()
         let previous = previousKeyWindow
         hostingWindow?.isHidden = true
+        Self.liveDeckWindow?.isHidden = true
+        Self.liveDeckWindow = nil
         hostingWindow?.rootViewController = nil
         hostingWindow?.windowScene = nil
         hostingController = nil
@@ -2466,7 +2472,15 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
             guard let self else { return }
             self.hideDock(); self.pages.alpha = 0
             for card in self.cards { card.transform = card.resting.scaledBy(x: 0.86, y: 0.86); card.transform.ty += 46 }
-        }) { manager?.dismissDeckRestoringPrevious() }
+        }) { [weak self] in
+            if let manager {
+                manager.dismissDeckRestoringPrevious()
+            } else {
+                // manager 已失效（视图被卸载等）：至少把窗口从屏幕上撤掉，
+                // 否则用户点完返回，deck 会一直留在最上层。
+                self?.window?.isHidden = true
+            }
+        }
         // Blank/escape means Home, unlike selecting a card, which must never
         // restore the old Home key window after revealing the target.
     }
