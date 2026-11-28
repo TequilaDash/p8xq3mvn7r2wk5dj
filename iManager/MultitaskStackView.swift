@@ -22,26 +22,26 @@ import Combine
 /// 窗口（访客/主屏）——表现就是"点空闲处完全没反应"。这里保证窗口内任何点
 /// 都属于 deck 自己。
 private final class StackDeckWindow: UIWindow {
-    /// deck 自己的内容视图（viewport）。系统对某点返回 nil 或只返回托管根视图时，
-    /// 把该点交给它，好让 viewport 自己的轻点/拖动识别器参与。
+    /// The full-screen button dismisses blank taps. The deck's own hit test
+    /// returns cards and Dock views directly so their controls stay interactive.
     weak var deckView: UIView?
-    /// 这个命中视图是否属于"不该返回"的区域（卡片、dock）。由 viewport 提供。
-    /// 用视图身份而不是坐标：坐标换算出过一次错就够毁掉整个轻点。
+    weak var blankTapButton: UIButton?
     var isInteractiveHit: ((UIView?) -> Bool)?
-    /// 窗口级轻点回调：在 sendEvent 里判定，任何手势链都截不走。
     var onWindowTap: (() -> Void)?
     private var tapBegan: (time: TimeInterval, point: CGPoint)?
     private weak var tapHitView: UIView?
 
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
-        let hit = super.hitTest(point, with: event)
-        let bare = hit == nil || hit === rootViewController?.view
-        if bare, let deckView, deckView.window === self, bounds.contains(point) {
+        guard bounds.contains(point) else { return nil }
+        if let deckView, deckView.window === self, let blankTapButton {
             let local = deckView.convert(point, from: self)
-            if deckView.point(inside: local, with: event) { return deckView }
+            if deckView.point(inside: local, with: event),
+               let hit = deckView.hitTest(local, with: event), hit !== deckView {
+                return hit
+            }
+            return blankTapButton
         }
-        if let hit { return hit }
-        return bounds.contains(point) ? rootViewController?.view : nil
+        return super.hitTest(point, with: event)
     }
 
     override func sendEvent(_ event: UIEvent) {
@@ -55,7 +55,6 @@ private final class StackDeckWindow: UIWindow {
                     let end = touch.location(in: self)
                     let moved = hypot(end.x - began.point.x, end.y - began.point.y)
                     let quick = CACurrentMediaTime() - began.time < 0.7
-                    // 只排除"按在卡片或 dock 上"的轻点，其余一律算空白。
                     if moved < 10, quick, isInteractiveHit?(tapHitView) != true {
                         onWindowTap?()
                     }
@@ -362,6 +361,15 @@ public class MultitaskStackManager: NSObject, ObservableObject, UIGestureRecogni
         // 直接把 deck 抬到足够高，保证它是同屏最高层。
         window.windowLevel = UIWindow.Level(rawValue: UIWindow.Level.alert.rawValue + 60)
         window.rootViewController = host
+        let blankTapButton = UIButton(type: .custom)
+        blankTapButton.frame = window.bounds
+        blankTapButton.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        blankTapButton.backgroundColor = .clear
+        blankTapButton.addTarget(self, action: #selector(dismissDeckRestoringPrevious), for: .touchUpInside)
+        window.blankTapButton = blankTapButton
+        window.addSubview(blankTapButton)
+        window.sendSubviewToBack(blankTapButton)
+        window.bringSubviewToFront(host.view)
         previousKeyWindow = scene.windows.first(where: \.isKeyWindow) ?? target
         hostingController = host
         hostingWindow = window
@@ -369,10 +377,6 @@ public class MultitaskStackManager: NSObject, ObservableObject, UIGestureRecogni
         // manager 自己的返回手势：不依赖 SwiftUI 内容视图是否存活。
         // 之前所有返回路径都挂在 viewport 上，viewport 一旦失效（或它的手势
         // 被别的东西截走），整个 deck 就无法退出。
-        let dismissTap = UITapGestureRecognizer(target: self, action: #selector(deckWindowTapped))
-        dismissTap.delegate = self
-        dismissTap.cancelsTouchesInView = false
-        window.addGestureRecognizer(dismissTap)
         window.makeKeyAndVisible()
         // Capture pictures before hiding. A hidden hosting window removes its
         // remote surfaces from the input/display tree as well as UIKit hits.
@@ -1600,12 +1604,8 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
         // 空白处的轻点与拖动挂在 viewport 自己身上：只有 hitTest 把触摸交给
         // 哪个视图，那个视图上的手势才参与。把空白单独交给一个垫底视图，
         // 会让网格区的拖动/卡片手势整体失效（卡片滑不掉、上下翻不动）。
-        let tap = UITapGestureRecognizer(target: self, action: #selector(backgroundTapped))
-        tap.delegate = self
-        addGestureRecognizer(tap)
         blankPan.addTarget(self, action: #selector(blankPanned(_:)))
         blankPan.delegate = self
-        addGestureRecognizer(blankPan)
         memoryCapsule.isUserInteractionEnabled = false
         memoryCapsule.clipsToBounds = true
         memoryCapsule.layer.cornerRadius = 16
@@ -1831,26 +1831,27 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
     private func installWindowTap() {
         if let tap = windowTap { tap.view?.removeGestureRecognizer(tap) }
         windowTap = nil
-        // 窗口级 sendEvent 判定：不经过任何手势识别器，子层吞不掉。
-        // 每次都要重新绑定：窗口若被复用，旧闭包指向已失效的 viewport，
-        // isInteractiveHit 会恒判"卡片/dock"，兜底就永远不触发。
-        if let deckWindow = window as? StackDeckWindow {
-            deckWindow.deckView = self
-            deckWindow.isInteractiveHit = { [weak self] view in
-                guard let self, !self.invalidated, let view else { return false }
-                if view === self.dockScroll || view.isDescendant(of: self.dockScroll) { return true }
-                if self.cards.contains(where: { view === $0 || view.isDescendant(of: $0) }) { return true }
-                return false
-            }
-            deckWindow.onWindowTap = { [weak self] in self?.backgroundTapped() }
+        guard let deckWindow = window as? StackDeckWindow else {
+            blankPan.view?.removeGestureRecognizer(blankPan)
+            return
         }
-        // 挂在窗口本身上：它是本窗口所有视图的祖先，窗口内任何触摸它都能看到，
-        // 不依赖 hitTest 把空白交给谁，也不会被任何子层手势链抢先。
-        guard let host = window, !invalidated else { return }
+        deckWindow.deckView = self
+        if blankPan.view !== deckWindow.blankTapButton {
+            blankPan.view?.removeGestureRecognizer(blankPan)
+            deckWindow.blankTapButton?.addGestureRecognizer(blankPan)
+        }
+        deckWindow.isInteractiveHit = { [weak self, weak deckWindow] view in
+            guard let self, let deckWindow, !self.invalidated, let view else { return false }
+            if view === deckWindow.blankTapButton { return true }
+            if view === self.dockScroll || view.isDescendant(of: self.dockScroll) { return true }
+            if self.cards.contains(where: { view === $0 || view.isDescendant(of: $0) }) { return true }
+            return false
+        }
+        deckWindow.onWindowTap = { [weak self] in self?.backgroundTapped() }
         let tap = UITapGestureRecognizer(target: self, action: #selector(backgroundTapped))
         tap.delegate = self
         tap.cancelsTouchesInView = false
-        host.addGestureRecognizer(tap)
+        deckWindow.addGestureRecognizer(tap)
         windowTap = tap
     }
 
@@ -2214,21 +2215,17 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
         return true
     }
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
-        // 祖先层返回手势：只排除卡片与 dock，其余位置（含所有空格）都接管。
         if gestureRecognizer === windowTap {
             guard let hit = touch.view else { return false }
+            if hit === (window as? StackDeckWindow)?.blankTapButton { return false }
             if hit === dockScroll || hit.isDescendant(of: dockScroll) { return false }
             if cards.contains(where: { hit === $0 || hit.isDescendant(of: $0) }) { return false }
             return true
         }
-        // 空白拖动只认落在 viewport 本身的触摸。
-        if gestureRecognizer === blankPan { return touch.view === self }
-        // 背景轻点与卡片手势共用本 delegate：只有挂在 viewport 自己身上的
-        // 识别器需要排除卡片/dock；卡片自己的识别器必须放行，否则卡片既
-        // 滑不掉也点不开。
+        if gestureRecognizer === blankPan {
+            return touch.view === (window as? StackDeckWindow)?.blankTapButton
+        }
         if gestureRecognizer.view === self {
-            // pages 本身就是卡片容器：落在它身上（而不是某张卡或 dock）的触摸
-            // 属于空白，必须放行给背景轻点。
             if touch.view === self || touch.view === pages { return true }
             if touch.view?.isDescendant(of: dockScroll) == true { return false }
             if cards.contains(where: { touch.view === $0 || touch.view?.isDescendant(of: $0) == true }) { return false }
