@@ -647,11 +647,9 @@ public class MultitaskStackManager: NSObject, ObservableObject {
                 // 访客窗口可能是窗口化状态（isMaximized == false），恢复可见那一帧
                 // 就会露出"居中小卡 + 上下黑边"（用户截图 IMG_0666）。
                 // 在恢复可见之前就把它铺满，那一帧直接是全屏。
-                if !target.isMaximized {
-                    // maximizeWindow 自带 0.3s 动画，恢复可见那一帧仍停在窗口化
-                    // 姿态（居中小卡+黑边）。无动画版本同步落到全屏。
-                    target.maximizeWindowWithoutAnimation()
-                }
+                // 不能只看 isMaximized：iPhone 上它默认就是 YES，而窗口可能正处在
+                // 手机分屏的一格里。方法自身幂等，已全屏且未吸附时立即返回。
+                target.maximizeWindowWithoutAnimation()
                 for other in controllers {
                     if let decorated = self.decoratedController(for: other), decorated !== target { decorated.minimizeWindow() }
                 }
@@ -1736,12 +1734,13 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
     private func installWindowTap() {
         if let tap = windowTap { tap.view?.removeGestureRecognizer(tap) }
         windowTap = nil
-        guard window != nil, !invalidated,
-              let root = window?.rootViewController?.view else { return }
+        // 挂在窗口本身上：它是本窗口所有视图的祖先，窗口内任何触摸它都能看到，
+        // 不依赖 hitTest 把空白交给谁，也不会被任何子层手势链抢先。
+        guard let host = window, !invalidated else { return }
         let tap = UITapGestureRecognizer(target: self, action: #selector(backgroundTapped))
         tap.delegate = self
         tap.cancelsTouchesInView = false
-        root.addGestureRecognizer(tap)
+        host.addGestureRecognizer(tap)
         windowTap = tap
     }
 
@@ -2104,7 +2103,7 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
         // 祖先层返回手势：只排除卡片与 dock，其余位置（含所有空格）都接管。
         if gestureRecognizer === windowTap {
-            guard let hit = touch.view, bounds.contains(touch.location(in: self)) else { return false }
+            guard let hit = touch.view else { return false }
             if hit === dockScroll || hit.isDescendant(of: dockScroll) { return false }
             if cards.contains(where: { hit === $0 || hit.isDescendant(of: $0) }) { return false }
             return true
