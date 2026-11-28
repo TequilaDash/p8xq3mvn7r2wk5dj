@@ -73,7 +73,7 @@ private final class StackDeckWindow: UIWindow {
 
 @available(iOS 16.0, *)
 @objcMembers
-public class MultitaskStackManager: NSObject, ObservableObject {
+public class MultitaskStackManager: NSObject, ObservableObject, UIGestureRecognizerDelegate {
     @Published public private(set) var isVisible = false
     @Published public var selectedIndex = 0
     @Published private(set) var apps: [DockAppModel] = []
@@ -363,6 +363,13 @@ public class MultitaskStackManager: NSObject, ObservableObject {
         hostingController = host
         hostingWindow = window
         Self.liveDeckWindow = window
+        // manager 自己的返回手势：不依赖 SwiftUI 内容视图是否存活。
+        // 之前所有返回路径都挂在 viewport 上，viewport 一旦失效（或它的手势
+        // 被别的东西截走），整个 deck 就无法退出。
+        let dismissTap = UITapGestureRecognizer(target: self, action: #selector(deckWindowTapped))
+        dismissTap.delegate = self
+        dismissTap.cancelsTouchesInView = false
+        window.addGestureRecognizer(dismissTap)
         window.makeKeyAndVisible()
         // Capture pictures before hiding. A hidden hosting window removes its
         // remote surfaces from the input/display tree as well as UIKit hits.
@@ -378,6 +385,24 @@ public class MultitaskStackManager: NSObject, ObservableObject {
         pendingPresentation = false
         clearStoredRequest()
         NSLog("[TDHome] app stack attached: scene=%@ cards=%ld", scene.session.persistentIdentifier, apps.count)
+    }
+
+    @objc private func deckWindowTapped() {
+        dismissDeckRestoringPrevious()
+    }
+
+    /// 只排除"按在卡片或按钮上"的轻点：卡片带 stack.card.<uuid> 标记，
+    /// 与坐标无关，viewport 是否需要参与都不影响这里。
+    public func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+                                  shouldReceive touch: UITouch) -> Bool {
+        guard gestureRecognizer.view === hostingWindow else { return true }
+        var view: UIView? = touch.view
+        while let current = view {
+            if let id = current.accessibilityIdentifier, id.hasPrefix("stack.card.") { return false }
+            if current is UIControl { return false }
+            view = current.superview
+        }
+        return true
     }
 
     private func suppressUnderlyingWindows() {
