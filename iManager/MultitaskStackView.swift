@@ -647,6 +647,10 @@ public class MultitaskStackManager: NSObject, ObservableObject {
                 // 访客窗口可能是窗口化状态（isMaximized == false），恢复可见那一帧
                 // 就会露出"居中小卡 + 上下黑边"（用户截图 IMG_0666）。
                 // 在恢复可见之前就把它铺满，那一帧直接是全屏。
+                // 有挂起的分屏请求时，后面 bringMultitaskViewToFront 里的
+                // claimPhoneSplitRequestForWindow 会把窗口重新塞回一格，把这里
+                // 刚做的全屏覆盖掉。deck 选卡要的是整屏，先清掉挂起请求。
+                LCWindowSnapManager.shared.cancelPhoneSplitRequest()
                 // 不能只看 isMaximized：iPhone 上它默认就是 YES，而窗口可能正处在
                 // 手机分屏的一格里。方法自身幂等，已全屏且未吸附时立即返回。
                 target.maximizeWindowWithoutAnimation()
