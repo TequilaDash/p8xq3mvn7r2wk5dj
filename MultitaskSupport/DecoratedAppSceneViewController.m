@@ -998,7 +998,8 @@ static NSNotificationName const LCWindowTouchedNotification = @"LCWindowTouchedN
         typeof(self) self = weakSelf;
         if (!self) { completion(); return; }
         UIView *surface = self.appSceneVC.contentView;
-        CGSize got = surface ? surface.bounds.size : CGSizeZero;
+        if (!surface) { completion(); return; } // 旧 presenter 有独立几何发布，无需等待
+        CGSize got = surface.bounds.size;
         BOOL filled = want.width < 1 || want.height < 1
             || (fabs(got.width - want.width) <= 2 && fabs(got.height - want.height) <= 2);
         if (filled || remaining <= 0) { completion(); return; }

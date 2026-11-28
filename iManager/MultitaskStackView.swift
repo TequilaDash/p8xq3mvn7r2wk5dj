@@ -1531,7 +1531,17 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
         // 空白必须由本视图自己接收。交给 pages（UIScrollView）会让它吞掉轻点，
         // 表现为"空白点不动、只有摸着卡片才划得动"（test34 实测）。
         // 纵向排布的滚动由 blankPan 直接驱动 pages.contentOffset，不靠 UIScrollView。
-        if let card = frontmostPreviewCard(at: point) { return card }
+        if let card = frontmostPreviewCard(at: point) {
+            if event?.allTouches?.contains(where: { $0.phase == .began }) == true {
+                NSLog("[deck] hit card idx=%d at %.0f,%.0f cards=%d column=%d",
+                      card.index, point.x, point.y, cards.count, isColumnLayout ? 1 : 0)
+            }
+            return card
+        }
+        if event?.allTouches?.contains(where: { $0.phase == .began }) == true {
+            NSLog("[deck] hit blank at %.0f,%.0f pagesY=%.0f cards=%d",
+                  point.x, point.y, pages.frame.minY, cards.count)
+        }
         return self
     }
 
@@ -2109,7 +2119,14 @@ private final class StackDeckViewport: UIView, UIScrollViewDelegate, UIGestureRe
         }
         return true
     }
-    @objc func cardTapped(_ tap: UITapGestureRecognizer) { if let card = tap.view as? StackDeckCard { activate(card) } }
+    @objc func cardTapped(_ tap: UITapGestureRecognizer) {
+        guard let card = tap.view as? StackDeckCard else { return }
+        if isCurrent(card) { activate(card); return }
+        // 命中的卡片不是当前这张（示例：网格空隙被命中判定算进卡片矩形），
+        // 什么都不做会让"点空白回上一级"彻底失效，这里按空白处理。
+        NSLog("[deck] card tap not current -> dismiss")
+        dismissDeck()
+    }
     @objc private func backgroundTapped() {
         NSLog("[deck] blank-tap")
         dismissDeck()
