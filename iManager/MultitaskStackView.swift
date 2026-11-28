@@ -357,7 +357,10 @@ public class MultitaskStackManager: NSObject, ObservableObject, UIGestureRecogni
         // 的 hitTest 对空白返回 self 消费，卡片/dock 之外的任何触摸都不再漏。
         window.frame = scene.coordinateSpace.bounds
         window.backgroundColor = .clear
-        window.windowLevel = UIWindow.Level(rawValue: UIWindow.Level.alert.rawValue + 1)
+        // 访客窗口会被 TweakLoader 抬到 lastObject+1，可能高过 alert+1，
+        // 那样 deck 就收不到触摸（卡片是子视图照常，空白却落到上层窗口）。
+        // 直接把 deck 抬到足够高，保证它是同屏最高层。
+        window.windowLevel = UIWindow.Level(rawValue: UIWindow.Level.alert.rawValue + 60)
         window.rootViewController = host
         previousKeyWindow = scene.windows.first(where: \.isKeyWindow) ?? target
         hostingController = host
@@ -375,6 +378,9 @@ public class MultitaskStackManager: NSObject, ObservableObject, UIGestureRecogni
         // remote surfaces from the input/display tree as well as UIKit hits.
         // Do not hide AssistiveTouch/alerts, and never move a guest to a new scene.
         suppressUnderlyingWindows()
+        // deck 抬高后，让辅助触控窗口重新按"最高 +1"排到 deck 之上，
+        // 否则它会掉到 deck 下面，按钮就点不到了。
+        IManagerAssistiveTouchController.shared.attach()
         window.makeKey() // hiding the former key must not leave focus elsewhere
         guard window.isKeyWindow, !window.isHidden, host.view.window === window,
               scene.activationState == .foregroundActive else {
